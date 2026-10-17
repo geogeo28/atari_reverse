@@ -51,6 +51,7 @@ import aes
 import aes_event
 import aes_switch
 import aes_accessory_turns_pinned
+import aes_desk_turns_pinned
 import aes_takeover
 import aes_turns_pinned
 import case
@@ -72,9 +73,16 @@ OURS = "ours"
 SCREEN_MANAGER = aes.SCREEN_MANAGER_PD
 # WHOSE TURN A WINDOW IS, by WHO is entered (both shores alike: the ROM's shore reads no kind off its PCs): the screen
 # manager's, a loaded program's — an accessory's: told apart from the rest ONLY BEHIND A DOOR (`Switching`'s `door`),
-# where its turn is our build's code as the screen manager's is — or another process's (the desk's; and, on a machine
-# with no door of ours, an accessory's with it).
+# where its turn is our build's code as the screen manager's is —, THE DESK'S (PD0's, on every run of ours since band
+# 6's slice B0: the Line-F table is OURS at every Tier 3 run's entry and in the door, so the ROM's desk calls OUR AES
+# through it and parks through our dispatcher — a turn OF OURS priced as an accessory's is, ruling W6-R7, the desk's
+# own text in its `shared` as an accessory's is), or another process's (an accessory's, on a machine with no door).
 THE_MANAGER_S, AN_ACCESSORY_S, ANOTHER_PROCESS_S = "the screen manager's", "an accessory's", "another process's"
+THE_DESK_S = "the desk's"
+# THE TURNS OF A PROCESS WHOSE OWN TEXT IS THE ROM'S AND RUNS OVER OUR AES ON OUR SHORE (band 6's binding): the desk's,
+# and another process's resumed in the ROM's AES text on a machine with no door — priced net of what both shores ran
+# of the ROM's text (`tier3.Turn`), their saved context and stack by nature (`foreign_windows_of`).
+TEXT_OVER_OUR_AES = (THE_DESK_S, ANOTHER_PROCESS_S)
 # Every longword of the machine that can hold a relocated code address (`aes_event.CODE_RELOCATIONS`): what a
 # foreign window is watched to have stored.
 CODE_SLOTS = tuple(slot for relocation in aes_event.CODE_RELOCATIONS for slot in relocation.slots)
@@ -134,9 +142,11 @@ class Switching:
     trapping into our handler, parked by our dispatcher), the ROM's shore's the ROM-booted one. Said to BOTH shores'
     watches, because it is by WHO is entered that windows are split: AN ACCESSORY'S TURN IS A WINDOW OF ITS OWN
     (`window_whose`: AN_ACCESSORY_S), apart from the desk's — on our shore OUR code (its AES calls our door, marshal,
-    switch and routines; its own text the same bytes on both shores), priced by itself as the screen manager's is.
-    REFUSED BY NAME behind a door: an accessory resumed in the ROM's text (the door did not take it), the desk
-    resumed in ours (PD0 is the ROM's until its own flip). `programs`: `((pd, (lo, top)), ...)` — each loaded
+    switch and routines; its own text the same bytes on both shores), priced by itself as the screen manager's is —
+    AND, SINCE BAND 6's SLICE B0, ON EVERY MACHINE, THE DESK'S TURN (`window_whose`: THE_DESK_S; ruling W6-R7): our
+    shore's Line-F table is ours at every run's entry, so the ROM's desk calls our AES; its window is A TURN OF OURS on
+    our shore wherever the desk resumes (`_class_of`), priced the same way, its own text (the ROM's, on both shores) in
+    `shared`. REFUSED BY NAME behind a door: an accessory resumed in the ROM's text (the door did not take it). `programs`: `((pd, (lo, top)), ...)` — each loaded
     program's stack span, as the door's takeover found it: ITS SAVED CONTEXT AND ITS STACK ARE HELD BY CONTENT
     WHEREVER IT DOES NOT RUN, on both shores (below: they are out of every compare of the two, as the screen
     manager's are). `images`: `pages(memory)` — the image's digest, what differs
@@ -292,26 +302,34 @@ class Switching:
             raise Refused(f"A ROW ON A TAKEOVER MACHINE WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT ({pc:#x}): the "
                           f"machine's screen manager was to be ours (`aes_takeover`), and it stands parked in the "
                           f"ROM's frames — its turn would be the ROM's code, priced as a window of ours")
-        if not self._takeover and whose == OURS:
+        its = self._whose_turn(self._entering)
+        if not self._takeover and whose == OURS and its != THE_DESK_S:
             raise Refused(f"{entered}, ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT ({pc:#x}) on a "
                           f"machine whose screen manager is not ours: a foreign window is the ROM's own code")
-        its = self._whose_turn(self._entering)
-        if whose == OURS and its != THE_MANAGER_S and not (self._door and its == AN_ACCESSORY_S):
-            raise Refused(f"{entered}, A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT ({pc:#x}): "
-                          + ("behind our door the desk is still the ROM's (its own flip is wave 4's)" if self._door else
-                             "the one process of a machine that is ours is its screen manager")
-                          + " — this window would be priced as a turn of ours")
+        if whose == OURS and its not in (THE_MANAGER_S, AN_ACCESSORY_S, THE_DESK_S):
+            raise Refused(f"{entered}, A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT ({pc:#x}) "
+                          f"on a machine with no door of ours: the one process of a machine that is ours is its screen "
+                          f"manager — this window would be priced as a turn of ours")
         if self._door and self._takeover and its == AN_ACCESSORY_S and whose != OURS:
             raise Refused(f"A ROW BEHIND OUR DOOR WHOSE ACCESSORY RESUMES IN THE ROM'S TEXT ({pc:#x}; {entered}): the "
                           f"door was to have taken every loaded program (`aes_boot.ours_of`, handed a door), and this one "
                           f"stands parked by the ROM's trap handler — its turn would be the ROM's code, priced as ours")
 
     def _whose_turn(self, pd):
-        """WHOSE TURN the process `pd`'s is (THE_MANAGER_S, AN_ACCESSORY_S, ANOTHER_PROCESS_S), by who it is — an
-        accessory's told from the desk's only behind a door (the module's note)."""
+        """WHOSE TURN the process `pd`'s is (THE_MANAGER_S, THE_DESK_S, AN_ACCESSORY_S, ANOTHER_PROCESS_S), by who it
+        is — an accessory's told from another process's only behind a door (the module's note)."""
         if pd == SCREEN_MANAGER:
             return THE_MANAGER_S
-        return AN_ACCESSORY_S if self._door and pd != aes.SHELL_PD else ANOTHER_PROCESS_S
+        if pd == aes.SHELL_PD:
+            return THE_DESK_S
+        return AN_ACCESSORY_S if self._door else ANOTHER_PROCESS_S
+
+    def _class_of(self, whose, its):
+        """THE KIND OF A WINDOW: whose code the process resumed in — but, ON OUR SHORE, A TURN OF A PROCESS WHOSE TEXT
+        IS THE ROM'S (the desk's; another process's on a machine with no door, resumed in the ROM's AES where the ROM's
+        dispatcher parked it), which is a turn OF OURS whatever it resumes in: our Line-F table is under every Line-F
+        call its text makes (`TEXT_OVER_OUR_AES`)."""
+        return OURS if its in TEXT_OVER_OUR_AES and self._ours is not None else whose
 
     def _resumed(self, pc, sp, memory):
         self._resumes_at = None
@@ -327,19 +345,20 @@ class Switching:
         # each priced as what it is). Split by WHO is entered, on both shores alike — the ROM's shore reads no kind
         # off its PCs — and so by kind on ours (`_vet_whose` holds the two to agree).
         its = self._whose_turn(self._entering)
+        klass = self._class_of(whose, its)
         if its == THE_MANAGER_S:        # ...its own turn begins: what it stood parked in must be as it left it
             self.vet_the_manager_s_spans_stood(memory, f"where the screen manager is resumed at {pc:#x}", handed_back=True)
             self._manager_stood = None
-        if self._window is not None and (not foreign or whose != self._window_class or its != self._window_whose):
+        if self._window is not None and (not foreign or klass != self._window_class or its != self._window_whose):
             self._close_the_window(memory)
         if foreign and self._window is None:
-            if whose != OURS:           # ...the dispatcher changes hands at a window of the ROM's code alone
+            if klass != OURS:           # ...the dispatcher changes hands at a window of the ROM's code alone
                 self._vet_no_fork_is_queued(memory, "entered")
             self._stores_outside_so_far()
-            self._window, self._slots_found, self._window_class = self._tally(), self._code_slots(memory), whose
+            self._window, self._slots_found, self._window_class = self._tally(), self._code_slots(memory), klass
             self._window_whose = its
             if self.inner is not None:
-                self.inner.window_class = whose
+                self.inner.window_class = klass
                 self.inner.foreign_window_opened()
         if not foreign:
             self._see_the_qpbs(memory, sp)
@@ -854,6 +873,76 @@ def left_by(name, arguments, machine, at_idle):
     return left
 
 
+# THE DESK'S TWO SPANS BY NATURE (band 6 slice B0, ruling W6-R7): on our shore the ROM's desk calls our AES through
+# our table and parks through our dispatcher, so — as for a screen manager of ours (`aes_takeover`) — PD0's SAVED
+# CONTEXT in its UDA (savestate's: the CPU state of the AES routine that called dsptch, the ROM's on its shore, ours on
+# ours) and ITS STACK below the desk's own frames (each build's AES frames under them, other depths) differ by nature.
+DESK_CONTEXT_WHY = ("THE DESK'S saved context in PD0's UDA, its turn ours (band 6's binding: savestate's — the CPU state of "
+                    "the AES routine that called dsptch, the ROM's on its shore, our build's on ours); dropped WHOLE")
+DESK_STACK_WHY = ("THE DESK'S own stack, its turn ours (band 6's binding): each build's AES frames under the desk's own "
+                  "(the ROM's routines' on its shore, our build's on ours — other depths)")
+# ...and A WAIT OF THE DESK'S WHOSE PARAMETER NAMES A PLACE IN ITS OWN STACK (a message wait keeps its QPB's address:
+# a local of the AES's frame under the desk's — two builds' frames, two addresses), the doors' own class for PD0.
+DESK_PARKED_WHY = "a wait's parameter in an EVB: an address in THE DESK'S own stack, two builds' AES frames under it"
+DESK_WHYS = (DESK_CONTEXT_WHY, DESK_STACK_WHY, DESK_PARKED_WHY)
+
+
+# ...AND THE SAME TWO SPANS OF THE SPARE STATIC PD (`AES_PD_TABLE`'s third: the first accessory's, where one is
+# loaded) when a run resumes it in the ROM's AES text on a machine with no door: its turn runs over our AES too.
+SPARE_PD = aes.AES_PD_TABLE + 2 * aes.PD_BYTES
+OTHER_CONTEXT_WHY = ("ANOTHER PROCESS'S saved context in its UDA, its turn over our AES (band 6's binding: savestate's — the "
+                     "ROM's on its shore, our build's on ours); dropped WHOLE")
+OTHER_STACK_WHY = ("ANOTHER PROCESS'S own stack, its turn over our AES (band 6's binding): each build's AES frames under the "
+                   "ROM's text it resumed in")
+STACK_TOPS = {aes.SHELL_PD: aes.AES_UDA1, SPARE_PD: aes.AES_UDA2_STACK_TOP}     # each static UDA's top: the next's, or its own
+WHYS_OF = {aes.SHELL_PD: (DESK_CONTEXT_WHY, DESK_STACK_WHY), SPARE_PD: (OTHER_CONTEXT_WHY, OTHER_STACK_WHY)}
+
+
+def foreign_windows_of(pd, image):
+    """THE TWO SPANS of the static process `pd` (the desk, or the spare PD) over `image`, as `(lo, hi, why)` windows,
+    through its own pointer to its UDA: its saved context, and its stack from the UDA's state block to its top.
+    REFUSED BY NAME for any other process: a run that resumes one in the ROM's text over our AES is not measured."""
+    assert pd in STACK_TOPS, f"a run resumes the process {pd:#x} in the ROM's text over our AES: no static stack of it is known"
+    uda = aes_event.uda_of(pd, image)
+    (lo, hi, _why), = aes_switch.uda_context_drop(uda)
+    context_why, stack_why = WHYS_OF[pd]
+    return (lo, hi, context_why), (uda + aes.UDA_STATE_BYTES, STACK_TOPS[pd], stack_why)
+
+
+def desk_windows_of(image):
+    """The desk's two spans over `image` (`foreign_windows_of`): its saved context, its stack to UDA0's top."""
+    return foreign_windows_of(aes.SHELL_PD, image)
+
+
+def desk_parked_windows(image):
+    """`(lo, hi, why)` of every EVB parameter longword over `image` that names a place inside the desk's stack."""
+    _context, (lo, top, _why) = desk_windows_of(image)
+    return tuple((at, at + aes.LONG_BYTES, DESK_PARKED_WHY) for at in (evb + aes.EVB_PARM for evb in aes_event.EVBS)
+                 if lo <= case.long_in(image, at) & BUS < top)
+
+
+def desk_drops(image, stored):
+    """THE TIER 3 DROPS of a run that enters the desk as another process than its own: the desk's windows and its
+    parked addresses, each cut to the bytes the ROM's run STORED (`aes_event.stored_spans`)."""
+    windows = (*desk_windows_of(image), *desk_parked_windows(image))
+    return tuple(span for window in windows for span in aes_event.stored_spans(window, stored))
+
+
+FOREIGN_STACK_WHYS = (DESK_STACK_WHY, OTHER_STACK_WHY)
+
+
+def names_the_desk(dropped):
+    """Does a row that drops `dropped` run with a turn of the ROM's text over our AES? (It names such a stack.)"""
+    return any(why in FOREIGN_STACK_WHYS for _lo, _hi, why in dropped)
+
+
+def foreign_stacks_named(dropped, image):
+    """...and the windows of each process whose stack it names (`foreign_windows_of`), over `image`."""
+    named = {why for _lo, _hi, why in dropped}
+    return tuple(window for pd, (_context, stack_why) in WHYS_OF.items() if stack_why in named
+                 for window in foreign_windows_of(pd, image))
+
+
 @derived.kept
 def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, budget=None):
     """A switching row SETTLED FROM THE ROM'S OWN RUNS (a derivation, kept by content): the scheduled run takes the
@@ -874,7 +963,17 @@ def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, bu
     # run's entry (its parked context, its frames), where the caller's own saved context is dead.
     enters_the_manager = switches.process != SCREEN_MANAGER and SCREEN_MANAGER in reference.entered
     its_spans = aes_takeover.drops(final, stored) if enters_the_manager else ()
-    return Settled(pokes, drops + qpb_address_drops(qpbs) + its_spans, switches, tuple(reference.entered), qpbs)
+    # ...AND THE DESK'S, FOR A RUN THAT ENTERS IT AS ANOTHER PROCESS THAN ITS OWN (`desk_drops`): its turn is ours —
+    # and the spare PD's, entered on a machine with no door (`foreign_windows_of`: its turn over our AES).
+    enters_the_desk = switches.process != aes.SHELL_PD and aes.SHELL_PD in reference.entered
+    the_desk_s = desk_drops(final, stored) if enters_the_desk else ()
+    # (an allocated accessory's stack is a Malloc's and no static span: entered so, it is compared exactly — a red
+    # where its turn left our build's frames, not a drop guessed)
+    others = sorted({pd for pd in reference.entered if pd in STACK_TOPS} - {switches.process, aes.SHELL_PD})
+    of_others = tuple(span for pd in others for window in foreign_windows_of(pd, final)
+                      for span in aes_event.stored_spans(window, stored))
+    return Settled(pokes, drops + qpb_address_drops(qpbs) + its_spans + the_desk_s + of_others, switches,
+                   tuple(reference.entered), qpbs)
 
 
 def _qpbs_left(name, final, writes, watch):
@@ -1178,15 +1277,29 @@ def accessory_turns_pinned(who, directory):
     return tuple(tuple(turn) for turn in aes_accessory_turns_pinned.PINNED.get(who, {}).get(directory, ()))
 
 
+def desk_turns_measured(measured):
+    """...and THE TURNS OF A PROCESS WHOSE TEXT IS THE ROM'S, over our AES (the desk's: band 6's binding; `TEXT_OVER_OUR_AES`),
+    spelt the same way."""
+    return _as_pinned(turn for turn in getattr(measured, "turns", ()) if turn.whose in TEXT_OVER_OUR_AES)
+
+
+def desk_turns_pinned(who, directory):
+    """...and the ones pinned (`aes_desk_turns_pinned`: a data file of its own, the same shape)."""
+    return tuple(tuple(turn) for turn in aes_desk_turns_pinned.PINNED.get(who, {}).get(directory, ()))
+
+
 def vet_its_turns(who, blob, measured):
-    """THE TURNS OF OURS INSIDE THE RUN ARE THE PINNED ONES — the screen manager's (`aes_turns_pinned`) and, behind our
-    door, the accessories' (`aes_accessory_turns_pinned`), each by the row's name and the blob's directory; none for a
+    """THE TURNS OF OURS INSIDE THE RUN ARE THE PINNED ONES — the screen manager's (`aes_turns_pinned`), behind our
+    door the accessories' (`aes_accessory_turns_pinned`), and since band 6's binding the desk's — the ROM's text over
+    our AES (`aes_desk_turns_pinned`) —, each by the row's name and the blob's directory; none for a
     row with no line there — each the turn's whole AES subtree, ours against the ROM's (the table's convention), in
     the same window — AND EACH IS AT OR UNDER THE BAR BY ITSELF, its thunks counted. A turn that moves says why."""
     directory = blob.elf.parent.name
     tier3 = bench_tier3()
     for whose, measures, held in (("the screen manager's", turns_measured(measured), turns_pinned(who, directory)),
-                                  ("the accessories'", accessory_turns_measured(measured), accessory_turns_pinned(who, directory))):
+                                  ("the accessories'", accessory_turns_measured(measured), accessory_turns_pinned(who, directory)),
+                                  ("the desk's (the ROM's text over our AES)", desk_turns_measured(measured),
+                                   desk_turns_pinned(who, directory))):
         assert measures == held, (
             f"{who}: on {directory} {whose} turns inside the run measure {measures} (ours, the ROM's, thunks) where "
             f"{held} is pinned: say why they moved")

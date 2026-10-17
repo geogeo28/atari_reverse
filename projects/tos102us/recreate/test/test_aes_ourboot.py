@@ -26,6 +26,7 @@ loop's `bra` goes back past the test: held by the pin, and by a labelled craft h
 """
 import functools
 import struct
+import types
 
 import pytest
 
@@ -131,7 +132,7 @@ def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_who_ran_is_cut_t
     assert in_ours > 0 and (in_the_rom_s_text, in_the_copy) == (0, 0)
     assert at_the_desk.our_boot == made and at_the_desk.idle is None and at_the_desk.registers["pc"] == DESKMAIN
     assert (at_the_desk.boot.instructions, at_the_desk.registers["isp"]) == (instructions, sp)
-    assert booted.idle == aes_boot.THE_ROM_S, "the desk — the ROM's — parks last, through the ROM's dispatcher"
+    assert booted.idle == aes_boot.OURS, "the desk — the ROM's text, over our AES since the binding — parks last, through OUR dispatcher"
     assert bytes(booted.ram[made.ours.base:made.ours.base + len(made.ours.image)]) == made.ours.image
 
 
@@ -399,8 +400,8 @@ LINE_F_VECTOR = addrs.VECTOR_LINE_F
 def test_labelled_staging_gem_entry_s_arms_are_the_rom_s_at_each_checkpoint(blob):
     """gem_entry's OWN ARMS, on the our-boot machine, each at its checkpoint (the megabyte there is the ROM's: the
     test above) — said here in what each one is. THE `$2c` TEST, taken: the BIOS's vector had a non-zero high byte,
-    so a block was Malloc'ed, OUR hundred bytes copied into it — the ROM's own, its `movea.l #$fee900` the ROM's
-    table (ruling W4-R3) — and the vector pointed at the copy. THE CLEAR: THEGLO zero from its first word to the
+    so a block was Malloc'ed, OUR hundred bytes copied into it — the ROM's own but its `movea.l #<table>` OURS (band 6's
+    binding: `$cc24` our table) — and the vector pointed at the copy. THE CLEAR: THEGLO zero from its first word to the
     count size_theglo answered. THE THREE STORES: `$947a`, `$947e` and `$8c32` hold THE BLOB'S OWN justretf, tick
     glue and trampoline where the ROM's machine holds the ROM's. THE STACK MOVE: UDA0's saved SP and the CPU's are
     PD0's top. And its OWN INSTRUCTIONS' CYCLES are the ROM's to the cycle (the pin's bytes, run)."""
@@ -408,8 +409,10 @@ def test_labelled_staging_gem_entry_s_arms_are_the_rom_s_at_each_checkpoint(blob
     the_rom_s, ours = ob.checkpoints_of(both.the_rom_s), ob.checkpoints_of(both.ours)
     copy = case.long_in(ours[ob.THE_COPY_MADE].ram, LINE_F_VECTOR)
     assert case.long_in(aes_boot.preinit().ram, LINE_F_VECTOR) >> 24 and not copy >> 24 and copy == case.long_in(the_rom_s[ob.THE_COPY_MADE].ram, LINE_F_VECTOR)
-    handler = addrs.AES_ROM_LINEF_HANDLER
-    assert ours[ob.THE_COPY_MADE].ram[copy:copy + aes.LINEF_COPY_BYTES] == bytes(BASE_IMAGE[handler:handler + aes.LINEF_COPY_BYTES])
+    handler, operand = addrs.AES_ROM_LINEF_HANDLER, aes.LINEF_TABLE_OPERAND
+    copied, theirs = ours[ob.THE_COPY_MADE].ram[copy:copy + aes.LINEF_COPY_BYTES], bytes(BASE_IMAGE[handler:handler + aes.LINEF_COPY_BYTES])
+    assert copied[:operand] == theirs[:operand] and copied[operand + LONG_BYTES:] == theirs[operand + LONG_BYTES:]
+    assert case.long_in(copied, operand) == both.blob.entry("aes_linef_table"), "the copy's table is not the blob's own: the binding"
     assert (copy, copy + aes.LINEF_COPY_BYTES) == aes_boot.LINE_F_COPY, "the span who-ran profiles is where this machine's copy lies"
     cleared = ours[ob.THE_CLEAR]
     words = cleared.registers["a0"] - aes.AES_THEGLO
@@ -561,7 +564,8 @@ def test_labelled_staging_noise_in_a_live_longword_is_found_where_the_run_arrive
 # is no declaration: the first stack's top, a code address of gem_entry's.
 GEM_ENTRY_S_THREE = tuple(declared.what for declared in aes_event.STORED_BY_GEM_ENTRY)
 NEEDED_AT_THE_DESK = {aes_event.GLUE_CODES.what, aes_event.SCREEN_MANAGER_ENTRY.what, aes_event.GEM_TRAP_VECTOR.what,
-                      aes_event.CRITICAL_ERROR_VECTOR.what, *GEM_ENTRY_S_THREE}
+                      aes_event.CRITICAL_ERROR_VECTOR.what, *GEM_ENTRY_S_THREE,
+                      aes_event.LINEF_TABLE_SLOT.what}     # (band 6's binding: our gem_entry's copy stored our table)
 
 
 @every_blob
@@ -584,7 +588,8 @@ def test_labelled_staging_each_mapping_is_needed_where_our_boot_arrives_and_gem_
         if differing:
             needed.add(relocation.what)
     assert needed == NEEDED_AT_THE_DESK
-    assert {what: aes_event.MAPPING_PROVED_BY[what] for what in GEM_ENTRY_S_THREE} == dict.fromkeys(GEM_ENTRY_S_THREE, ("aes_rom_gem_main",))
+    proved_here = (*GEM_ENTRY_S_THREE, aes_event.LINEF_TABLE_SLOT.what)
+    assert {what: aes_event.MAPPING_PROVED_BY[what] for what in proved_here} == dict.fromkeys(proved_here, ("aes_rom_gem_main",))
     assert all(row.symbol == "aes_rom_gem_main" for row in bench_tier3().ROWS if row.address == GEM_MAIN) and not aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
     top = ob.THE_FIRST_STACK_S_TOP_LONGWORD
     assert [at for at, _length in ob.compared(the_rom_s, ours, both.blob, without=(top,)).differing] == [top + 1]
@@ -857,7 +862,8 @@ def test_labelled_staging_argument_class_deskmain_served_the_shell_in_the_blob_i
 
 
 # ---- PAST THE CLAIM'S CUT: the our-boot machine at its first idle, measured for ruling W4-R10 ---------------------------------
-# NOT A CLAIM THAT OURS RAN THE DESK (ruling W4-R3: from deskmain's entry the desk — the ROM's — calls the ROM's AES).
+# NOT A CLAIM THAT OURS RAN THE DESK (from deskmain's entry the desk is the ROM's text — over OUR AES, through our Line-F
+# table, since band 6's binding: the desk's own claim is band 6's campaign's, `test_aes_desk_ours.py`).
 # What it says is how far the two machines are apart once the ROM's desk has run over each: nowhere outside the
 # classes of deskmain's entry and PD0's own stack and context — where the desk saved the registers the shell entered
 # it with (D3, D7, A3, A6: each build's own) and left its frames over two builds' residue.
@@ -865,19 +871,39 @@ def test_labelled_staging_argument_class_deskmain_served_the_shell_in_the_blob_i
 @every_machine
 def test_labelled_staging_past_the_claim_s_cut_the_machine_at_its_first_idle_differs_in_the_classes_alone(disk, blob):
     """THE OUR-BOOT MACHINE RUN ON TO THE DESKTOP'S FIRST IDLE, beside the ROM-booted one (measured for ruling W4-R10;
-    no claim past deskmain's entry): both idle in the ROM's dispatcher; with every code address mapped back the two
+    no claim past deskmain's entry): ours idles in OUR dispatcher since band 6's binding (the ROM's desk calls our AES
+    through our table and parks through ours), the ROM's in its own; with every code address mapped back the two
     megabytes differ ONLY in the classes — and of those, beside the dead ones, in PD0's stack (whole: the desk's live
-    frames over each build's) and the screen manager's saved context and stack."""
+    frames over each build's), the desk's wait's parameter (its QPB in each build's AES frame) and the screen
+    manager's saved context and stack."""
     ours_boots, the_rom_boots = THE_MACHINES[disk]
     ours, the_rom_s = ours_boots(the_blob(blob)), the_rom_boots()
-    assert ours.idle == the_rom_s.idle == aes_boot.THE_ROM_S and ours.registers["isp"] == the_rom_s.registers["isp"]
+    assert (ours.idle, the_rom_s.idle) == (aes_boot.OURS, aes_boot.THE_ROM_S)
 
     def as_a_stop(machine):         # ...placed at PD0's stack's bottom: its whole stack is then one class, the live frames
         return ob.Stop("the first idle", pinned.PD0_S[0], machine.registers, machine.boot.instructions, machine.boot.cycles, 0, (),
                        machine.ram, aes.SHELL_PD)
     found = ob.compared(as_a_stop(the_rom_s), as_a_stop(ours), the_blob(blob))
     assert found.differing == (), [(f"{at:#x}", length) for at, length in found.differing[:8]]
-    assert {name for name in found.within if name in ob.LIVE_CLASSES} == {ob.PD0_FRAMES, ob.MANAGER_CONTEXT, ob.MANAGER_STACK}
-    # HOW MANY BYTES, all told, is each blob's own layout's (343 on the shipped blob and 326 on the bench one today, on
-    # both disks; 30 more before the mapping, the code addresses): the frames a compiler lays — a bound, not a pin.
-    assert 0 < sum(count for name, count in found.within.items() if name != ob.THE_BLOB) < 512, "a few hundred bytes, all told"
+    assert {name for name in found.within if name in ob.LIVE_CLASSES} == {ob.PD0_FRAMES, ob.MANAGER_CONTEXT, ob.MANAGER_STACK, ob.PD0_PARKED}
+    # HOW MANY BYTES, all told, is each blob's own layout's (863 on the shipped blob and 734 on the bench one since band
+    # 6's binding — 343 / 326 before it, when the desk ran over the ROM's AES and parked in its dispatcher —, on both
+    # disks): the frames a compiler lays, now under the desk's own too — a bound, not a pin.
+    assert 0 < sum(count for name, count in found.within.items() if name != ob.THE_BLOB) < 1024, "under a kilobyte, all told"
+
+
+def test_a_wait_s_parameter_is_the_parked_class_only_where_both_shores_name_pd0_s_stack():
+    """`ob.PD0_PARKED` (band 6's binding) IS A CLASS OF BOTH SHORES (the fix pass, reviewer A's mutant R7): an EVB's
+    parameter naming a place in PD0's stack on ONE shore alone is no class — compared exactly, and the difference said —
+    and one naming it on both is. Two stops laid by hand over the base image, at PD0's stack, one EVB's parameter set."""
+    pd0_lo, pd0_top = aes_stack.gem_entry_s_stacks()[aes_stack.PD0_S_STACK]
+    slot, blob_span = aes_event.EVBS[0] + aes.EVB_PARM, (aes.OS_BUS_ADDR_MASK - 1, aes.OS_BUS_ADDR_MASK)
+    inside, outside = pd0_top - 2 * aes.LONG_BYTES, pd0_lo - aes.LONG_BYTES
+
+    def stop(parameter):
+        ram = bytearray(BASE_IMAGE[:addrs.ST_RAM_BYTES])
+        ram[slot:slot + aes.LONG_BYTES] = struct.pack(">I", parameter)
+        return types.SimpleNamespace(what="a checkpoint", sp=(pd0_lo + pd0_top) // 2, registers={}, ram=bytes(ram))
+    assert (slot, slot + aes.LONG_BYTES) in ob.classes_at(stop(inside), stop(inside), blob_span)[ob.PD0_PARKED]
+    for one_shore in ((stop(inside), stop(outside)), (stop(outside), stop(inside))):
+        assert (slot, slot + aes.LONG_BYTES) not in ob.classes_at(*one_shore, blob_span).get(ob.PD0_PARKED, ())

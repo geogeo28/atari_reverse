@@ -27,10 +27,10 @@ A HOST ARGUMENT (`declare_alcyon`'s `host_arguments`: the return site a GEMDOS g
 no frame carries. The thunk hands THE REAL ONE: its own return address — the word after the caller's Line-F call word,
 which is what the ROM's glue pops there.
 
-NOTHING IS BOUND BY THIS FILE (band 6 wave 0, slice T): the table and its thunks are LINKED into both blobs, and no
-word of a blob names them. The operand that would — gemstart.S's EIGHTH relocation — is DECLARED PENDING below
-(`PENDING_BINDING`) and made by slice B; until then a machine reaches the table through a LABELLED STAGING alone
-(`test/test_aes_lineftable.py` lays the operand in its own machines).
+BOUND SINCE BAND 6's SLICE B0 (ruling W6-R1): the one word of a blob that names the table is gemstart.S's EIGHTH
+relocation — the operand of the Line-F handler gem_entry copies — so every machine of ours dispatches the ROM's desk's
+Line-F calls through this table (the registry's table kind, `aes_event.LINEF_TABLE_SLOT`, maps `$cc24` at a run's
+entry and in a takeover's door). An entry's verdict still moves only at a flip.
 
 WHY THE `.S` IS CHECKED IN AND NOT MADE BY THE BUILD: kit.mk sweeps `src/*/*.S` when make READS the makefile, and the
 census, the build contract's lists and the kept derivations' tree key read the sources at import — a file a rule made
@@ -72,16 +72,8 @@ Entry.__doc__ = """One entry of the table: its `index` (its call word is `call_w
 ROM's table names there (`target`), the `verdict`, the blob `symbol` our longword is (None: the ROM's own address)
 and the `addrs.h` name of the `routine` a thunk's core is declared under (None for every other verdict)."""
 
-# gemstart.S's EIGHTH RELOCATION, DECLARED AND NOT MADE (the wave-2/3 groundwork pattern, by name): the operand of the
-# handler gem_entry copies. It STAYS THE ROM'S in every shipped byte until slice B binds it — that is ruling W6-R1,
-# the user's — and with it go the registry's table kind (`$cc24`, the blob's 658 slots) and every row that changes
-# shore. Declared HERE and not in `aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3`: five tests and STATUS.md pin that
-# registry's pending list EMPTY, and a line of slice T's must change no existing test.
-Pending = namedtuple("Pending", "what symbol offset holds will_hold waits_for")
-PENDING_BINDING = Pending(
-    "the call table's address in the Line-F handler gem_entry copies (`movea.l #$fee900,a0`, `$fee8d6`)",
-    "aes_rom_linef_handler", aes.LINEF_TABLE_OPERAND, aes.AES_LINEF_TABLE, TABLE_SYMBOL,
-    "band 6 wave 0, slice B (THE BINDING: ruling W6-R1 is the user's)")
+# (gemstart.S's EIGHTH RELOCATION, declared pending here by slice T as `PENDING_BINDING`, is MADE since slice B0: the
+# handler's operand names `aes_linef_table` in both blobs, and the registry maps `$cc24` — no declaration is pending.)
 
 
 def call_word(index):
@@ -354,9 +346,9 @@ HEADER = """/* lineftable.S — THE LINE-F CALL TABLE OF OURS and the thunks beh
  * slots a C core reads ({thunked}, {thunks} thunks) — and the ROM's own address in the rest ({rom}: band 6's routines, the
  * ROM's until each is ported).
  *
- * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. LINKED AND NOT
- * BOUND: no word of a build names `aes_linef_table` — the handler gem_entry copies still loads the ROM's table
- * (`gemstart.S`; the operand is declared pending in the generator) — so nothing here runs but in a labelled staging.
+ * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. BOUND (band 6
+ * slice B0): the one word of a build that names `aes_linef_table` is the operand of the handler gem_entry copies
+ * (`gemstart.S`), so every machine of ours dispatches the ROM's desk's Line-F calls through this table.
  *
  * THE FILE ASKS FOR NO ALIGNMENT OF ITS OWN: the assembler rounds its text to a longword, as every source's, so what
  * links after it moves by its length and keeps its own place modulo four.

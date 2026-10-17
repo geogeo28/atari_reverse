@@ -169,15 +169,18 @@ def process_entries(elf):
             for _at, text in body} - {None}
 
 
+# WHAT THE LINE-F TABLE'S OWN THUNK (`linef_to_<callee>`) HANDS ITS CORE: what ITS caller pushed — a ROM caller's
+# routine, which no instruction of the blob names. Since band 6's binding a thunk IS a caller (the ROM's desk's Line-F
+# words reach it through our table), named so: the routine it hands is read where the ROM's caller names it.
+FROM_A_ROM_CALLER = "a ROM caller's routine, pushed on its own frame (the Line-F table's thunk hands it on)"
+
+
 def routines_handed_to(elf, callee):
-    """Every routine a call of `callee` hands it, over the whole blob: `{(caller, the routine)}`."""
+    """Every routine a call of `callee` hands it, over the whole blob: `{(caller, the routine)}` — FROM_A_ROM_CALLER for
+    the Line-F table's thunk of it."""
     read = reading(elf)
-    # ---- band 6 wave 0, slice T ---- BUT THE LINE-F TABLE'S OWN THUNK (`linef_to_<callee>`): it hands on what ITS
-    # caller pushed — a ROM caller's routine, which no instruction of the blob names. LINKED AND NOT BOUND: no run
-    # reaches a thunk until slice B binds the table, and the reading of a walk entered from the ROM is that slice's.
-    return {(caller, read.handed_at(caller, at)) for caller, body in read.functions().items()
-            if not caller.startswith(transcription.LINEF_THUNK_PREFIX)
-            for at, text in body if _calls(text, callee)}
+    return {(caller, FROM_A_ROM_CALLER if caller.startswith(transcription.LINEF_THUNK_PREFIX) else read.handed_at(caller, at))
+            for caller, body in read.functions().items() for at, text in body if _calls(text, callee)}
 
 
 def untouched_at_most(blob):

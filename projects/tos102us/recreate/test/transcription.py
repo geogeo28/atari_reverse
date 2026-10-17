@@ -216,8 +216,10 @@ def transcription_routine(symbol):
 # Two further shapes: a JUMP TABLE's word is a displacement from the TABLE (`base`, the ROM address its
 # `(pc,dn.w)` indexes from), not from the word itself; and a reference into code that ships as C rather than
 # as a transcription names a THUNK (`thunk`, the blob symbol of the glue the `.S` carries to reach that C),
-# whose place in the blob is then the exact value, with `target_anchor` None.
-Relocated = namedtuple("Relocated", "width target_anchor why base thunk", defaults=(None, None))
+# whose place in the blob is then the exact value, with `target_anchor` None. And ONE reference is REBOUND (`rebound`,
+# band 6's binding): the Line-F handler's table operand names OUR call table where the ROM's names its own — whose
+# first bytes lie in a pinned region (what gem_entry copies) — by design another object than the transcription.
+Relocated = namedtuple("Relocated", "width target_anchor why base thunk rebound", defaults=(None, None, False))
 PC_RELATIVE = WORD_BYTES
 ABSOLUTE = LONG_BYTES
 
@@ -317,7 +319,7 @@ def assert_transcribed(region, *, relocated=None):
         target = _relocation_target(at, relocation)
         assert relocation.base is None or region.lo <= relocation.base < region.hi, f"${at:x}'s table is outside the region"
         if relocation.thunk:
-            assert not _one_pinned_region_holds(target), (
+            assert relocation.rebound or not _one_pinned_region_holds(target), (
                 f"${at:x} ({relocation.why}) names the thunk {relocation.thunk}, but ${target:x} is byte-pinned — "
                 f"a reference into a transcription must reach the transcription")
             continue
@@ -651,8 +653,9 @@ assert set(GEMSTART_ENTRIES) == GEMSTART_GLOBLS, (
 
 # ---- band 6 wave 0, slice T: THE LINE-F TABLE's source ------------------------------------------------------------------
 # `atari/target.mk`: LINEFTABLE_SOURCES — the table of ours for the ROM's Line-F call table and the thunks behind it,
-# GENERATED (`bench/linef_table.py`): no ROM instruction, no C twin, no table row, and A KIND APART WHILE IT IS LINKED
-# AND NOT BOUND. Its one `.globl` is the table; its thunks are the file's own (local, sized).
+# GENERATED (`bench/linef_table.py`): no ROM instruction, no C twin, no table row — A KIND APART, linked and, since
+# band 6's slice B0, BOUND (the handler's operand names it). Its one `.globl` is the table; its thunks are the file's
+# own (local, sized).
 # `test_aes_lineftable.py` holds the source to its generator and the kind to make's own expansion.
 LINEF_TABLE_SYMBOL = "aes_linef_table"
 LINEF_THUNK_PREFIX = "linef_to_"        # a thunk is `linef_to_<core>`: the one name by which a whole-blob scan knows one

@@ -784,6 +784,13 @@ def devices_answered(floppy, hardware_reads, printed):
     return tuple(sorted(floppy.labelled | ({THE_PRINTER} if printed else set())))
 
 
+def surfaced(floppy, hardware_reads, printed):
+    """WHAT A RUN'S DEVICES LEFT, as a `Boot` carries it — `{"drive_b", "devices", "printed"}`, `devices_answered`'s
+    refusal with it: EVERY run of this module's surfaces it, a continuation's, a served run's AND A BOOT'S (band 6
+    slice H, owed since wave 4's: a boot's `Boot` took the defaults, and a GPIP read no device serves went unvetted)."""
+    return {"drive_b": floppy.held_in_b(), "devices": devices_answered(floppy, hardware_reads, printed), "printed": bytes(printed)}
+
+
 def blob_of(boot):
     """THE BLOB `boot`'s MACHINE HOLDS (an `Ours`): a takeover's, an our-boot's — None for a machine the ROM booted."""
     if boot.takeover is not None:
@@ -1752,7 +1759,7 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     rom_bench.vet_the_run_just_made("the ROM's boot from the pre-init machine")
     return Boot(bytes(memory[:RAM_BYTES]), registers, bytes(floppy.disk), result["ninsns"], result["cycles"], run.polls,
                 run.blanks, tuple(floppy.calls), *streams, run.stored(writes), run.frame, truncated, machine.io, run.idle,
-                takeover, our_boot=our_boot)
+                takeover, our_boot=our_boot, **surfaced(floppy, streams[1], run.printed))
 
 
 # ---- THE TEST ACCESSORY (`tools/accessory_disk.py` builds it and its disk) ---------------------------------------------------
@@ -2326,8 +2333,7 @@ def _continue(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watch
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
                          hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
                          writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
-                         drive_b=floppy.held_in_b(),
-                         devices=devices_answered(floppy, streams[1], run.printed), printed=bytes(run.printed))
+                         **surfaced(floppy, streams[1], run.printed))
 
 
 continued.derive = _continue            # the run made here and now, never kept (`kept`'s own attribute, as it was)
@@ -2695,8 +2701,7 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
                          hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
                          writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
-                         served=(*boot.served, label), drive_b=floppy.held_in_b(),
-                         devices=devices_answered(floppy, streams[1], run.printed), printed=bytes(run.printed))
+                         served=(*boot.served, label), **surfaced(floppy, streams[1], run.printed))
 
 
 # ---- THE SCAN: NO LONGWORD HOLDS, BY VALUE, THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES (band 5 wave 4; the design's §3.4) ----

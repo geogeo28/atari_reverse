@@ -400,6 +400,9 @@ PD0_CONTEXT = "PD0's saved context in its UDA, stale while it runs: the register
 PD0_DEAD = "PD0's stack below the lower of the two stack pointers: dead frames of each build's own start-up"
 PD0_FRAMES = ("PD0's LIVE FRAMES, from the lower of the two stack pointers to the stack's top: each build's own — gem_entry's "
               "return, gem_main's and the shell's (VETTED BY WHAT THE CALLER DOES WITH AN ANSWER: the served passes)")
+# ...and, since band 6's binding (the ROM's desk over our AES, parked through our dispatcher), A WAIT OF THE DESK'S WHOSE
+# PARAMETER NAMES A PLACE IN PD0's STACK on both shores: its message wait's QPB, a local of each build's AES frame.
+PD0_PARKED = "a wait's parameter in an EVB naming a place in PD0's stack: the desk's QPB, a local of each build's AES frame"
 MANAGER_CONTEXT, MANAGER_STACK = aes_boot.SAVED_CONTEXT, aes_boot.MANAGER_STACK
 LINE_F_MASK = aes_boot.LINE_F_MASK
 XBIOS_RETURN_SITE = ("the XBIOS door's parked return site: the address trp14 was last reached with, laid at every call before it "
@@ -407,7 +410,7 @@ XBIOS_RETURN_SITE = ("the XBIOS door's parked return site: the address trp14 was
                      "where a build's C reaches the `.S` through glue")
 DEAD_CLASSES = (FIRST_STACK_RESIDUE, GEMDOS_S_STACK, THE_BIOS_S_STACK, TRAP_SAVE, BASEPAGE_SAVE, CONDITION_CODES, DISPATCHER_STACK,
                 PD0_CONTEXT, PD0_DEAD, LINE_F_MASK, XBIOS_RETURN_SITE)
-LIVE_CLASSES = (PD0_FRAMES, MANAGER_CONTEXT, MANAGER_STACK)
+LIVE_CLASSES = (PD0_FRAMES, MANAGER_CONTEXT, MANAGER_STACK, PD0_PARKED)
 CCR_BYTE = 1                            # of a status word: its low byte, the condition codes
 UDA0, UDA1 = aes.AES_THEGLO, aes.AES_UDA1
 
@@ -452,6 +455,10 @@ def classes_at(the_rom_s, ours, blob_span):
             raise Refused(f"at {ours.what} the two shores stand at SP {the_rom_s.sp:#x} and {ours.sp:#x}: not both on PD0's stack")
         classes.update({FIRST_STACK_RESIDUE: ((first_lo, first_top - LONG_BYTES),), PD0_DEAD: ((pd0_lo, lower),),
                         PD0_FRAMES: ((lower, pd0_top),)})
+    parked = tuple((slot, slot + LONG_BYTES) for slot in (evb + aes.EVB_PARM for evb in aes_event.EVBS)
+                   if all(pd0_lo <= case.long_in(stop.ram, slot) & BUS < pd0_top for stop in (the_rom_s, ours)))
+    if parked:
+        classes[PD0_PARKED] = parked
     return classes
 
 

@@ -23,7 +23,7 @@ import re
 
 import pytest
 
-from harness import addrs, make_image
+from harness import addrs, bench_tier3, make_image
 from recreate_kit import rom_bench
 
 import aes
@@ -513,7 +513,7 @@ def test_ap_tplay_exchanges_the_cursor_routine_before_the_motion_routine(blob):
 
 
 # ---- WHAT NO BLOB RUNS, AND WHAT NO HOST FORK RUNS — each refused by name -----------------------------------------------------------
-def test_a_recording_across_a_turn_of_the_rom_s_process_is_refused_on_a_blob(blob):
+def test_a_recording_across_a_turn_of_the_rom_s_process_is_refused_on_a_blob(blob, monkeypatch):
     """THE MIXTURE'S OWN LIMIT, held so that it is not met by surprise: a recording with A TURN OF THE ROM'S PROCESS
     INSIDE it is the ROM's on the host (Tier 1 above) and RED on a blob in exactly the records made inside the
     foreign window — the ROM's forker ran those events and its recorder copied the ROM's fork-function addresses,
@@ -528,6 +528,8 @@ def test_a_recording_across_a_turn_of_the_rom_s_process_is_refused_on_a_blob(blo
     row = ROWS[ACROSS_A_WINDOW]
     assert SCREEN_MANAGER in PREMISES[ACROSS_A_WINDOW].entered and ACROSS_A_WINDOW in tape.PRICED
     row = row._replace(the_rom_s_screen_manager="the mixture's own limit: the recording's row as it stood before FLIP 4")
+    # (...and over the ROM's Line-F table, as before band 6's binding: `tier3.relocations_before_the_binding`)
+    monkeypatch.setattr(bench_tier3(), "code_relocations", bench_tier3().relocations_before_the_binding)
     with pytest.raises(AssertionError, match="left different memory than the original") as refused:
         switching.measured_on(blob, row)
     low_bytes = [tape.RECORD_AT + nth * tape.RECORD.size + aes.LONG_BYTES - 1 for nth in (1, 2)]

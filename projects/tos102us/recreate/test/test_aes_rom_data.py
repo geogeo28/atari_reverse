@@ -148,12 +148,12 @@ ROM_ADDRESSES_AS_DATA = {
     "trapdoor.S": {"AES_ROM_DESK_USERDEF": CODE},
     # ---- end of slice T's block --------------------------------------------------------------------------------------
     # ---- band 5 wave 4, slice I: gemstart and geminit ----------------------------------------------------------------
-    # WHAT gem_entry COPIES, carried as the ROM's own data (ruling W4-R3: the Line-F call table stays the ROM's): the
-    # handler's `movea.l #$fee900` — the table's address, inside the region the `.S` pins — and the table's first nine
-    # entries with the high word of its tenth, ROM routines' addresses nothing of a build executes or reads
-    # (`test_aes_gemstart.py` pins the hundred bytes with NO relocation). gem_entry's own four by-value operands (rows
-    # $fd9f4a, $fd9f86, $fd9f92, $fd9f9e of (b)) are NOT here: each is the build's symbol, a `Relocated` of its pin.
-    "gemstart.S": {"AES_LINEF_TABLE": REGION_TABLE, "AES_ROM_GSX_1CODE": CODE, "AES_ROM_BB_FILL": CODE,
+    # WHAT gem_entry COPIES, carried as the ROM's own data: the table's first nine entries with the high word of its
+    # tenth, ROM routines' addresses nothing of a build executes or reads (`test_aes_gemstart.py` pins the hundred
+    # bytes but ONE relocation). The handler's `movea.l` names OUR table since band 6's binding (slice B0): no ROM
+    # address. gem_entry's own four by-value operands (rows $fd9f4a, $fd9f86, $fd9f92, $fd9f9e of (b)) are NOT here:
+    # each is the build's symbol, a `Relocated` of its pin.
+    "gemstart.S": {"AES_ROM_GSX_1CODE": CODE, "AES_ROM_BB_FILL": CODE,
                    "AES_ROM_GSX_TCALC": CODE, "AES_ROM_GR_JUST": CODE, "AES_ROM_GSX_TBLT": CODE, "AES_ROM_GSX_ATTR": CODE,
                    "AES_ROM_GSX_BLT": CODE, "AES_ROM_GSX_MOFF": CODE, "AES_ROM_GR_INSIDE": CODE, "AES_ROM_GSX_BOX": CODE},
     # The INF reader's seven return sites (its Line-F calls of the glue park them: host arguments, as the loader's) and

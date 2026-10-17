@@ -464,6 +464,35 @@ campaign the band's rows will be arrivals of.
   (`aes_objects.Unrooted`, raised where the climb reaches NIL: the DISKCOPY dialog is the utility tree's objects
   11..16, rooted at 11 — `dialog_button` finds its COPY as that root's 5).
 
+### THE HANDS ON OUR SHORE — the same chains over the bound table (`test/aes_desk.py`'s last block, `test_aes_desk_ours.py`, band 6 slice H)
+
+Since the binding (slice B0) the ROM's desk runs over OUR AES on every machine of ours, so every chain of the hands
+is walked again on OUR machine beside the ROM's — the campaign that holds each flip of band 6.
+
+- **A STEP OF OURS** (`aes_desk.stepped_ours`): `stepped`'s twin for a machine that holds a blob — the same
+  continuation, made and never served, the same profile, plus the blob's own cycles; each refuses the other's
+  machine by name. A KEPT DERIVATION THAT RUNS THE BLOB — the third such, by the same named exception as
+  `aes_boot.booted(..., ours=)` and `continued` (`test/derived.py`'s note): its key is the `Boot`'s `OurBoot`, the
+  blob's bytes. `OUR_MACHINES` holds one per `MACHINES` key (the captures booted by OUR gem_entry, `$cc24` naming our
+  table); `walked_ours(name)` walks a chain from its predecessor's machine of ours. Named stops per shore
+  (`our_stop`): the rubber box's poll is our C gr_stilldn's entry; the viewer's two waits stay the ROM's until unit M
+  flips (F4 adds their C-side stops).
+- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 113 of 115 chains): the screen and the desk's block
+  (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
+  and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
+  EVERY inventory start, `aes_desk.charged`) but THE ONE CLASS `RUN_UNDER_BANDS_0_TO_5`: three spans a band-5 routine
+  runs on the ROM's shore and ours runs as ours, short by EXACTLY one pass for each time that caller ran, counted off
+  the ROM's own step profile at its call site.
+- **WHO RAN** (W6-R5): every cycle of the ROM's GEM text on our shore lies in a DECLARED, SHRINKING span — band 6's
+  routines still the ROM's (`still_the_rom_s`: read off the blob's own bound table) and six spans of bands 0–5 they
+  reach by `bsr` / `jsr` / `jmp` / branch (`ROM_TEXT_UNDER_ROM_CALLERS`, each pinned to a chain it runs in; a span
+  entered past its start — dos_free's body — declared so, `ENTERED_PAST_ITS_START`).
+- **THE FOUR STACKS' DEPTHS** per chain (`DEPTHS`, the lowest STORE of the write ledgers), PD0 under W6-R4's hard
+  gate: `aes_desk.PD0_BYTES` (its one home) less the nest `aes_stack` measures on our shore — 1,548.
+- **W6-R8's TWO CHAINS** (a launch, the disk copy) are refused on our shore as NAMED CLASSES: the ROM's own walk of
+  each stores over the span our blob lies in (the launch all of it), and no walked chain's ROM walk stores a byte
+  there.
+
 ### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a), the four groups of wave 1b and of wave 2, wave 4's two (`test/aes_desk*.py`)
 
 Band 6's first two units — the desk's eighteen leaves filed in AES modules (`src/desk/deskleaf.c`, unit O) and its
@@ -3273,7 +3302,7 @@ boots as from an unusable disk. gem_gemdos_call has (T) cases of its own (linked
 below) and by the stack battery's measured start-up (`aes_stack.our_start_up_run`: its own lay of the same blob);
 it has NO ROW of its own (NEVER RETURNS) — gem_main's, the reader's and the shell's stretches begin inside its run.
 
-**THE LINE-F CALL TABLE OF OURS is a sixth kind: GENERATED, linked and NOT BOUND** (`atari/target.mk`:
+**THE LINE-F CALL TABLE OF OURS is a sixth kind: GENERATED, linked and — since band 6's slice B0 — BOUND** (`atari/target.mk`:
 `LINEFTABLE_SOURCES`; `src/aes/lineftable.S`, band 6 wave 0). No ROM instruction and no row: 658 longwords for the
 ROM's table `$fee900..$fef347` and one thunk a C core. Each entry has one of three verdicts, derived from the ROM's
 own table bytes and the build's symbols: OURS NATIVELY (82: the entry of a byte-pinned `.S` routine or an Alcyon
@@ -3285,10 +3314,19 @@ takes one, the caller's return site (re-read from where the thunk's own return a
 base `pea (0).w`; `jsr` the core; drop what it pushed; D0 as the core left it. THE FILE IS CHECKED IN AND HELD EQUAL
 to the generator's text by `test_aes_lineftable.py` — regenerate it with `python bench/linef_table.py`, NEVER edit
 it — because kit.mk sweeps `src/*/*.S` when make reads the makefile and the census and the build contract read the
-sources at import. NOT BOUND: the operand of the blob's own Line-F handler copy (`aes_rom_linef_handler + $16`)
-stays `$fee900`; gemstart's eighth relocation is declared pending in the generator (`PENDING_BINDING`: slice B's).
-The tests reach the table through A LABELLED STAGING — one longword laid in OUR run's copy of the machine, the
-handler copy's operand `$cc24`, put back before the compare — and say so in their names: every thunk read off the
+sources at import. BOUND SINCE BAND 6's SLICE B0 (ruling W6-R1; `linef_table.PENDING_BINDING` retired): the
+operand of the blob's own Line-F handler copy (`aes_rom_linef_handler + $16`) is gemstart.S's EIGHTH RELOCATION,
+`aes_linef_table`, and gem_entry's copy carries it to `$cc24` on every machine of ours; the relocation registry has
+the table's kind (`aes_event.LINEF_TABLE_SLOT`: `{$fee900: aes_linef_table}`, mapped AT A RUN'S ENTRY, proved by
+gem_main's stretches), THE DOOR its eighth part (nine longwords), and `tier3.code_relocations` maps it. So the ROM's
+desk — each routine of it until that routine flips — calls OUR AES through the table and parks through our
+dispatcher: its turn is a turn of ours priced as an accessory's (W6-R7, `aes_desk_turns_pinned.py`), the door
+takeover differs from the ROM-booted machine in five by-nature classes (`aes_ctlmgr.the_bound_desk_s_classes`), and
+a row's two runs are entered with THE DESK'S LIVE FRAMES laid as the ROM's (`aes_ctlmgr.lay_the_desk_s_live_frames`,
+a labelled staging: the dead locals the takeover leaves) and compared byte for byte where they end
+(`tier3.vet_the_desk_s_live_frames`). THE FIRST DISPATCH of a row from an idle — the ROM's dispatcher's loop, its
+Line-F callees ours — is a line of its own, held to the bar. The tests that once reached the table through a staged
+`$cc24` (`test_aes_lineftable.py`) now enter it through the registry's own lay: every thunk read off the
 blob's bytes against its signature; 292 thunks and 51 native routines ENTERED by their routine's own registered
 case (the ROM's call word → the ROM's handler → our table → our entry) against the ROM's own run, who-ran read over
 the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the reason. A ROUTINE WRITTEN, LINKED AND NOT

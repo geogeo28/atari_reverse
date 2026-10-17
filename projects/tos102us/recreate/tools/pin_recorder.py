@@ -20,6 +20,7 @@ OUT = os.environ.get("PINREC_OUT")
 WHOLE, PRICED, REFUSED = "whole", "priced", "refused"
 TURN = "turn"                           # the screen manager's turns inside a row's run on a blob (`aes_turns_pinned`)
 ACCESSORY_TURN = "accessory turn"       # ...and the accessories', behind our door (`aes_accessory_turns_pinned`)
+DESK_TURN = "desk turn"                 # ...and the desk's, the ROM's text over our AES (`aes_desk_turns_pinned`)
 A_REFUSAL_S_WORDS = 200
 
 
@@ -38,9 +39,10 @@ def _record(kind, who, held, measured):
 
 
 def _record_its_turns(switching, who, directory, measured):
-    """The turns of ours inside a run on a blob, of both kinds, each against its own data file's line."""
+    """The turns of ours inside a run on a blob, of the three kinds, each against its own data file's line."""
     for kind, pinned, measures in ((TURN, switching.turns_pinned, switching.turns_measured),
-                                   (ACCESSORY_TURN, switching.accessory_turns_pinned, switching.accessory_turns_measured)):
+                                   (ACCESSORY_TURN, switching.accessory_turns_pinned, switching.accessory_turns_measured),
+                                   (DESK_TURN, switching.desk_turns_pinned, switching.desk_turns_measured)):
         _record(kind, [who, directory], [list(turn) for turn in pinned(who, directory)], [list(turn) for turn in measures(measured)])
 
 

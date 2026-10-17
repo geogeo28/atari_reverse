@@ -420,6 +420,11 @@
  * sh_cmd's, they never nest); G1's 24 B of the 56 B run (the engine hands no frame address), `$7f9b2..$7f9d2` (32 B)
  * KEPT BACK. A group's slots lie inside its own window only; out of room: STOP and report. Each id in
  * `enum host_slot` below, in its group's region. */
+/* BAND 6 SLICE B0, THE BINDING (N1): rom_ram's local the desk's tree 0 is answered into — its desk arm calls ini_tree
+ * (`$fe0b6e`) as the ROM's does, through unit D's rsrc_gaddr binding, and hands it `-10(a6)`. Taken from the head of
+ * the run wave 4 kept back ($7f9b2..$7f9d2), outside every window. */
+#define HOST_SLOT_AES_ROM_RAM_DESKTOP   0x7f9b2  /* $fee5c8's -10(a6): the desktop tree's address           */
+#define HOST_SLOT_AES_ROM_RAM_DESKTOP_BYTES 4    /* a longword                                                */
 /* ---- band 6 wave 4, group G1 (unit M) ---- window $7f99a..$7f9b2 (24 B) */
 /* ---- end of group G1's wave-4 ---- */
 /* ---- band 6 wave 4, group G2 (unit N) ---- window $7f910..$7f962 (82 B) */
@@ -628,6 +633,7 @@ enum host_slot {
     HOST_SLOT_ID_AES_ACT_BDOWN_FRAME,        /* band 6 wave 2, group G4 */
     HOST_SLOT_ID_AES_APP_START_ENVIRONMENT,  /* band 6 wave 2, group G4 */
     /* ---- end of group G4's wave-2 ---- */
+    HOST_SLOT_ID_AES_ROM_RAM_DESKTOP, /* band 6 slice B0 (N1) */
     /* ---- band 6 wave 4, group G1 (unit M) ---- */
     /* ---- end of group G1's wave-4 ---- */
     /* ---- band 6 wave 4, group G2 (unit N) ---- */

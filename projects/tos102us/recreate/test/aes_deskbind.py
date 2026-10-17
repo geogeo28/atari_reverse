@@ -441,16 +441,24 @@ def unbound_closure(graph):
     return frozenset(unbound)
 
 
+# THE ONE CALL OF A HELD CORE FROM OUTSIDE THE UNBOUND DESK, DECLARED (band 6 slice B0, N1; the orchestrator's ruling
+# R4): rom_ram's desk arm calls ini_tree as the ROM's does — the ROM's desk reaches it on a bound machine, and a halt
+# there was a band-5 stand-in. GCC inlines the arm into `resource_part`: `{the referring function: the held cores}`.
+REFERRED_BY_BAND_5 = {"resource_part": ("aes_ini_tree",)}
+
+
 def bound_referrers(blob, names):
     """THE UNBOUND PIN, off `blob`'s own call graph (a call, a branch, an address taken): every core of `names` LINKED
     (refused by name where one is not) — and `{function: the held cores it refers to}` for every function OUTSIDE THE
-    UNBOUND DESK (`unbound_closure`) that refers to ANY held core: none, while nothing is bound."""
+    UNBOUND DESK (`unbound_closure`) that refers to ANY held core but as `REFERRED_BY_BAND_5` declares: none, while
+    nothing is bound."""
     graph = transcription.call_graph(blob.elf)
     cores = {routines.core_symbol(name) for name in names}
     assert cores <= set(graph), f"not linked: {sorted(cores - set(graph))}"
     held, unbound = held_cores(), unbound_closure(graph)
-    return {function: sorted(targets & held) for function, targets in graph.items()
-            if function not in unbound and targets & held}
+    referred = {function: sorted(targets & held - set(REFERRED_BY_BAND_5.get(function, ())))
+                for function, targets in graph.items() if function not in unbound}
+    return {function: targets for function, targets in referred.items() if targets}
 
 
 def _unbound_extents(blob):
@@ -473,10 +481,15 @@ def bound_longwords(blob, also=()):
     starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.name in named}
     assert set(starts.values()) == named, f"not linked: {sorted(named - set(starts.values()))}"
     extents, image = _unbound_extents(blob), blob.blob
+    # (...and the band-5 functions REFERRED_BY_BAND_5 declares, each over the held cores it calls)
+    sized = {symbol.name: symbol for symbol in transcription.symbol_table(blob.elf) if symbol.size}
+    declared = [(sized[function].start, sized[function].start + sized[function].size, set(cores))
+                for function, cores in REFERRED_BY_BAND_5.items() if function in sized]
     found = set()
     for offset in range(0, len(image) - LONG_BYTES + 1, aes.WORD_BYTES):
         (value,) = struct.unpack_from(">I", image, offset)
         at = blob.base + offset
-        if value in starts and not any(lo <= at and at + LONG_BYTES <= hi for lo, hi in extents):
+        if value in starts and not any(lo <= at and at + LONG_BYTES <= hi for lo, hi in extents) and not any(
+                lo <= at and at + LONG_BYTES <= hi and starts[value] in cores for lo, hi, cores in declared):
             found.add(starts[value])
     return sorted(found)

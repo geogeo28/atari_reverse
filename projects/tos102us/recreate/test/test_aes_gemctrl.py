@@ -464,15 +464,10 @@ EVERY_HANDLER_S = (cm.THE_DISPATCHER_S_STACK, cm.ITS_SAVED_CONTEXT, cm.ITS_STACK
 # three on the machine whose accessory hides the bar — that accessory's turn comes before their arrival and it
 # parks through OUR dispatcher behind our door, so the frame AT THE ARRIVAL is our idle's poll's — and the arrow
 # held, whose last trap is now each build's own dispatcher's, handing the machine back from the accessory that read
-# its message (it was the ROM's on both shores while the accessory was the ROM's).
-THE_SAVE_FRAME_EQUAL = frozenset({
-    (HCTL_BUTTON, "a click on the bar past the titles: the desktop's place, nothing"),
-    (HCTL_WINDOW, "the information line clicked: no gadget's, nothing sent"),
-    (HCTL_WINDOW, "a window that is not the top one: WM_TOPPED"),
-    (HCTL_WINDOW, "the title of a window with a SIZER and no MOVER clicked: nothing sent"),
-    (HCTL_WINDOW, "the corner of a window with a MOVER and no SIZER clicked: nothing sent"),
-    (HCTL_RECT, "the mouse off the titles again, along the bar, before the manager ran: nothing"),
-})
+# its message (it was the ROM's on both shores while the accessory was the ROM's). SINCE BAND 6's BINDING (slice B0)
+# THE SIX NAME IT TOO, AND NONE IS LEFT: the desk calls our AES through our Line-F table and parks through OUR
+# dispatcher, so every machine idles in ours and the frame AT EVERY ARRIVAL is our idle's poll's (measured, both blobs).
+THE_SAVE_FRAME_EQUAL = frozenset()
 # ...and WM_TOPPED'S FOUR STALE WORDS on the two cases that send it (ruling W2-R2: the ROM's are its stack's residue
 # on the real stack, ours four zeroes) — where the handler returns in the manager's buffer and the owner's pipe.
 SENDS_WM_TOPPED = frozenset({
@@ -603,7 +598,7 @@ WHOLE_RUN = {
     'no message, the button down: two yields until it rises':
         {BENCH: (34674, 31568), SHIPPED: (34674, 31930)},
     "AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise":
-        {BENCH: (63868, 55468), SHIPPED: (63868, 54502)},
+        {BENCH: (63868, 54230), SHIPPED: (63868, 53384)},
     'on View; an item reached, then clicked: MN_SELECTED to process 0':
         {BENCH: (1132286, 1056912), SHIPPED: (1132286, 1044590)},
     "on Desk; the accessory's entry reached, then clicked: AC_OPEN to the accessory":

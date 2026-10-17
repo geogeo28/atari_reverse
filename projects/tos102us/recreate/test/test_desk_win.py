@@ -67,8 +67,8 @@ CASES = (
     Case("AES_ROM_PRO_EXEC", SHOWN), Case("AES_ROM_PRO_EXEC", "files: the program double-clicked — launched"),
     # (desk_rsrc_load's C cannot run at its arrivals: below, AT ITS ARRIVAL ONLY THE ROM'S RUN)
     Case("AES_ROM_DESK_RSRC_LOAD", w.LEAF_MACHINE, arguments=(),
-         why="arrivals exist, the desk restarted after a file is shown; there rom_ram's C halts by name at band 5's "
-             "dispatch_point, outside the dispatcher — a harness limit, not a machine no run makes"),
+         why="arrivals exist, the desk restarted after a file is shown; there rom_ram's C yields through the desk's "
+             "rsrc_gaddr binding (band 6 slice B0), outside the dispatcher — a harness limit, not a machine no run makes"),
     Case("AES_ROM_INI_TREE", SHOWN), Case("AES_ROM_INI_TREE", SHOWN, 2), Case("AES_ROM_INI_TREE", SHOWN, 3),
     Case("AES_ROM_INI_STR", SHOWN), Case("AES_ROM_INI_STR", SHOWN_LONG),
     Case("AES_ROM_DO_WREDRAW", SELECTED, arm=lambda a: a[0] == 0), Case("AES_ROM_DO_WREDRAW", OPEN, 2, arm=lambda a: a[0] == 1),
@@ -90,8 +90,9 @@ CASES = (
 # THE ARMS NO RUN REACHES AND NO ARGUMENT CLASS CAN MAKE (each depends on the MACHINE, which a class may not poke).
 UNPINNED = {
     "AES_ROM_DESK_RSRC_LOAD": "AT ITS ARRIVALS (the desk restarted after a file is shown): rom_ram's C sizes the desktop through "
-                              "a dispatch point that halts by name outside the dispatcher (band 5's `src/aes/resource.c`) — held "
-                              "over the leaf machine, its arrivals' D0 by the ROM's run in place",
+                              "ini_tree and the desk's rsrc_gaddr binding, whose yield outside the dispatcher no plain case "
+                              "follows (band 5's `src/aes/resource.c`, band 6 slice B0) — held over the leaf machine, its "
+                              "arrivals' D0 by the ROM's run in place",
     "AES_ROM_OBJ_WALLOC": "every window root sized (none free): win_alloc refuses a fifth window before it asks; and a root of "
                           "a width and no height, which no desk call makes (obj_wfree frees at 0, 0, 0, 0)",
     "AES_ROM_OBJ_IALLOC": "every icon object 6..132 on a list: 127 icons at once",

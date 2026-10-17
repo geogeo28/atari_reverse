@@ -73,7 +73,8 @@ ROLES_BEFORE_BAND_6_WAVE_1B = {"SEARCH_PATTERN", "WALK_NAME", "WALK_CURSOR", "DE
                                "AES_SNDCLI_BASEPAGE",                  # band 5 wave 3, slice L
                                "AES_READ_INF_PAIR", "AES_GEM_MAIN_ICON",   # band 5 wave 4, slice I
                                "AES_DESK_BIND_FRAME",                      # band 6 wave 1a, unit D
-                               "AES_DOS_LABEL_FRAME", "AES_DOS_SPACE_DFREE", "AES_DOS_SETDT_STAMP"}   # band 6 wave 1a, unit O
+                               "AES_DOS_LABEL_FRAME", "AES_DOS_SPACE_DFREE", "AES_DOS_SETDT_STAMP",   # band 6 wave 1a, unit O
+                               "AES_ROM_RAM_DESKTOP"}                      # band 6 slice B0 (N1): rom_ram's desk arm
 # ---- band 6 wave 1b, group G1 (units I, L) ----
 ROLES_G1 = {"AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME"}
 # ---- end of group G1's ----

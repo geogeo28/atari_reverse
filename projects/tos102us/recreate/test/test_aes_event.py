@@ -4673,6 +4673,11 @@ THE_BRACKET_S_SAVE_WORD = "spl7_save's SR save word"
 # stack, each build's own (the ROM's ctlmgr's frames on its shore, our ctlmgr's on ours), dropped where the ROM's run
 # changes them.
 THE_SCREEN_MANAGER_S_CONTEXT, THE_SCREEN_MANAGER_S_STACK = "the screen manager's saved context (ours)", "the screen manager's stack (ours)"
+# ...and, since band 6's binding (ruling W6-R7), THE TWO SPANS OF A PROCESS WHOSE ROM TEXT RUNS OVER OUR AES — the desk's,
+# another's — and the desk's wait's parameter that names its own stack (`aes_switching.desk_drops`, `foreign_windows_of`).
+THE_DESK_S_CONTEXT, THE_DESK_S_STACK, THE_DESK_S_PARKED = ("the desk's saved context (its turn ours)", "the desk's stack (its turn ours)",
+                                                           "the desk's wait's parameter (its turn ours)")
+ANOTHER_S_CONTEXT, ANOTHER_S_STACK = "another process's saved context (its turn over our AES)", "another process's stack (its turn over our AES)"
 # ...and THE X FLAG of the dispatcher's own save word, on the rows that DECLARE it (`aes_switching.THE_X_FLAG_ALONE`:
 # the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
 # follows GCC's `seq` / `neg`, and no other.
@@ -4746,7 +4751,15 @@ BY_NATURE_CENSUS = {
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
-                           THE_SCREEN_MANAGER_S_STACK: WITH_THE_SCREEN_MANAGER_OURS},
+                           THE_SCREEN_MANAGER_S_STACK: WITH_THE_SCREEN_MANAGER_OURS,
+                           # BAND 6's BINDING (ruling W6-R7): the desk's two spans on every row whose run enters it — its
+                           # turn ours, the ROM's desk over our AES — its wait's parameter where it waits on a message
+                           # in its own stack, and the spare PD's two on ct_msgup's AC_OPEN (an accessory resumed in
+                           # the ROM's AES text, its turn over our AES)
+                           THE_DESK_S_CONTEXT: {"aes_ap_rdwr": 1, "aes_ap_sendmsg": 1, "aes_ev_block": 1, "aes_mn_do": 2},
+                           THE_DESK_S_STACK: {"aes_ap_rdwr": 1, "aes_ap_sendmsg": 1, "aes_ev_block": 1, "aes_mn_do": 2},
+                           THE_DESK_S_PARKED: {"aes_mn_do": 2},
+                           ANOTHER_S_CONTEXT: {"aes_ct_msgup": 1}, ANOTHER_S_STACK: {"aes_ct_msgup": 1}},
 }
 
 
@@ -4852,6 +4865,15 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
         if enters_it:
             context, stack = aes_takeover.windows_of(the_rom_s.memory)
             kinds.update({THE_SCREEN_MANAGER_S_CONTEXT: (context,), THE_SCREEN_MANAGER_S_STACK: (stack,)})
+        # ...AND THE DESK'S, and the spare PD's, by the rows whose ROM run enters them as another process (band 6's binding)
+        others = {pd for pd in the_rom_s.entered if pd in aes_switching.STACK_TOPS} - {held.switches.process}
+        for pd in others:
+            context, stack = aes_switching.foreign_windows_of(pd, the_rom_s.memory)
+            names = (THE_DESK_S_CONTEXT, THE_DESK_S_STACK) if pd == aes.SHELL_PD else (ANOTHER_S_CONTEXT, ANOTHER_S_STACK)
+            kinds.update({names[0]: (context,), names[1]: (stack,)})
+        parked = [(lo, hi) for lo, hi, why in registered[name] if why == aes_switching.DESK_PARKED_WHY]
+        if parked:
+            census.setdefault(THE_DESK_S_PARKED, collections.Counter())[routines.core_symbol(row.name)] += 1
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
         # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
         # kind, dropped only where the ROM's run changes it.
@@ -4862,7 +4884,7 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             census.setdefault(A_ROW_S_OWN + why.split(":")[0], collections.Counter())[routines.core_symbol(row.name)] += 1
         drops = [(lo, hi) for lo, hi, why in registered[name]
                  if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses
-                 and (lo, hi, why) not in row.also_dropped]
+                 and (lo, hi, why) not in row.also_dropped and why != aes_switching.DESK_PARKED_WHY]
         if qpb_addresses:
             census.setdefault(A_QPB_S_ADDRESS, collections.Counter())[routines.core_symbol(row.name)] += 1
         of_a_kind = []

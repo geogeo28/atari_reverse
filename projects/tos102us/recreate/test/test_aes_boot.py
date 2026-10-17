@@ -42,6 +42,7 @@ import st_build
 import accessory_disk
 import aes
 import aes_boot
+import aes_ctlmgr
 import aes_event
 import aes_gemctrl
 import aes_pdpipe as pp
@@ -1944,12 +1945,13 @@ def test_a_door_s_entries_are_found_by_symbol_or_the_blob_is_refused_by_name(blo
     """`ours_of(blob, door=)`: each declaration answered by the blob's OWN symbols — or the blob refused, naming the
     entry it does not link and the declaration that then cannot be mapped. (Both blobs link every part's since wave
     4's slice I: each part is found, and THE REFUSAL IS MADE with a declaration naming an entry no blob has.) THE
-    DOOR IS SEVEN PARTS (the full flip): the trap door's three, gem_entry's three by-value stores, the two glues."""
+    DOOR IS EIGHT PARTS: the trap door's three, gem_entry's three by-value stores, the two glues (the full flip) and,
+    since band 6's binding, the Line-F call table the handler's copy indexes."""
     built = isr.blob_named(blob)
     placed = {symbol.name: symbol.start for symbol in transcription.symbol_table(built.elf) if symbol.kind in "Tt"}
     assert aes_event.THE_TRAP_DOOR == (aes_event.GEM_TRAP_VECTOR, aes_event.PROGRAM_ENTRY, aes_event.CRITICAL_ERROR_VECTOR)
     assert aes_event.THE_DOOR == (*aes_event.THE_TRAP_DOOR, aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE,
-                                  aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.GLUE_CODES)
+                                  aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.GLUE_CODES, aes_event.LINEF_TABLE_SLOT)
     for part in aes_event.THE_DOOR:
         missing = [symbol for symbol in part.symbols.values() if symbol not in placed]
         if missing:
@@ -2014,12 +2016,16 @@ THE_DOOR_S_LONGWORDS = {
     aes_event.JUSTRETF_KEPT_AT: (addrs.AES_ROM_JUSTRETF, "aes_rom_justretf"),
     aes_event.TICK_GLUE_KEPT_AT: (addrs.AES_ROM_TICK_GLUE, "aes_rom_tick_glue"), TICK_VECTOR: (addrs.AES_ROM_TICK_GLUE, "aes_rom_tick_glue"),
     aes.AES_USERDEF_TRAMPOLINE: (addrs.AES_ROM_UB_TRAMPOLINE, "aes_rom_ub_trampoline"),
-    BUTTON_VECTOR: (addrs.AES_ROM_BUTTON_GLUE, "aes_rom_button_glue"), MOTION_VECTOR: (addrs.AES_ROM_MOTION_GLUE, "aes_rom_motion_glue")}
+    BUTTON_VECTOR: (addrs.AES_ROM_BUTTON_GLUE, "aes_rom_button_glue"), MOTION_VECTOR: (addrs.AES_ROM_MOTION_GLUE, "aes_rom_motion_glue"),
+    # (band 6's binding: the handler copy's table, `$cc24`)
+    aes_event.LINEF_TABLE_SLOT.slots[0]: (aes.AES_LINEF_TABLE, "aes_linef_table")}
 # ...and the parts NOTHING ENTERS IN A BOOT (no critical error, no tick, no mouse packet, no cursor routine called, no
 # window item drawn before the first idle): neither shore's routine runs one cycle there. Each is ENTERED by a
 # continuation (`test_behind_the_door_...`, below, and `test_aes_boot_w4.py`).
+# (The Line-F TABLE is no routine: nothing is entered at it — what runs through it is each entry's — so its part's
+# counts are none on either shore, the boot's calls through it every one.)
 NOT_ENTERED_IN_A_BOOT = {CRITICAL_ERRORS, aes_event.JUSTRETF_SLOT.what, aes_event.TICK_GLUE.what, aes_event.USERBLK_TRAMPOLINE_SLOT.what,
-                         aes_event.GLUE_CODES.what}
+                         aes_event.GLUE_CODES.what, aes_event.LINEF_TABLE_SLOT.what}
 
 
 def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s_door_runs_no_cycle():
@@ -2029,7 +2035,7 @@ def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s
     symbol — takes the quiet pair's boot to its idle. Every vet of the takeover passes; EIGHT LONGWORDS hold the
     blob's entries where the ROM's gem_entry and gem_main had stored the ROM's (`$88`, `$404`, justretf's slot, the
     tick glue's kept longword and the VDI's tick vector, the desk's trampoline slot, the VDI's button and motion
-    vectors); both accessories were entered through the blob's gotopgm and trapped into the blob's handler; THE ROM'S
+    vectors) — NINE since band 6's binding, the handler copy's table `$cc24` OURS; both accessories were entered through the blob's gotopgm and trapped into the blob's handler; THE ROM'S
     TEXT OF EVERY PART RAN ZERO CYCLES from the lay on (and the parts nothing enters in a boot ran none of ours
     either); the megabyte is the ROM-booted machine's outside the classes of each process. THIS IS THE MACHINE EVERY
     TIER 3 ROW FROM AN IDLE RUNS OVER on our shore (`aes_ctlmgr.our_machine`: the accessory machines' since the narrow
@@ -2037,7 +2043,7 @@ def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s
     built = isr.blob_named(THE_SHIPPED_BLOB)
     ours = aes_boot.ours_of(built, door=aes_event.THE_DOOR)
     assert ours.image == aes_boot.ours_of(built).image and [part.what for part in ours.door] == [part.what for part in aes_event.THE_DOOR]
-    assert [part.what for part in ours.door][:3] == [THE_VECTOR, A_PROGRAM, CRITICAL_ERRORS] and len(ours.door) == 7
+    assert [part.what for part in ours.door][:3] == [THE_VECTOR, A_PROGRAM, CRITICAL_ERRORS] and len(ours.door) == 8
     rom, booted = booted_as(QUIET_PAIR), aes_boot.Machine(aes_boot.booted(*capture_and_disk(QUIET_PAIR), ours=ours))
     door = booted.door
     assert door.vectors == {slot: (routine, built.entry(symbol)) for slot, (routine, symbol) in THE_DOOR_S_LONGWORDS.items()}
@@ -2047,14 +2053,19 @@ def test_the_shipped_door_itself_boots_a_machine_every_vet_passing_and_the_rom_s
     assert door.ran[THE_VECTOR][0] > 0 and door.ran[A_PROGRAM][0] > 0
     assert {what: door.ran[what] for what in NOT_ENTERED_IN_A_BOOT} == dict.fromkeys(NOT_ENTERED_IN_A_BOOT, (0, 0))
     assert set(door.ran) == {THE_VECTOR, A_PROGRAM} | NOT_ENTERED_IN_A_BOOT
+    # (EVERY process is resumed in our text since band 6's binding: the desk calls our AES through our table and parks
+    # through our dispatcher, a process of ours as an accessory is — `aes_ctlmgr.the_bound_desk_s_classes`.)
     assert {process.name: booted.resumed_in(process) for process in booted.waiting()} == {
-        process.name: aes_boot.THE_ROM_S if process.pid == DESK_PID else aes_boot.OURS for process in booted.waiting()}
+        process.name: aes_boot.OURS for process in booted.waiting()}
     assert booted.takeover.stored_after == ()
     two_dispatchers = rom.idle != booted.idle
     result = aes_boot.compared(rom, booted, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ())
-    assert result.differing == [], f"behind the SHIPPED door the machine differs outside the classes at {result.differing[:4]}"
-    # ...and the two-part door's machine (the vector and the programs: every proof above) is this one but for `$404`
-    assert booted.idle == behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).idle
+    left, _within = aes_ctlmgr.outside_the_bound_desk_s_classes(rom, booted, result.differing)
+    assert left == [], f"behind the SHIPPED door the machine differs outside the classes at {left[:4]}"
+    # ...and the two-part door's machine (the vector and the programs: every proof above) is this one but for `$404` —
+    # AND THE DESK, since band 6's binding: behind the whole door it parks through OUR dispatcher, behind the two parts
+    # (no table of ours under it) through the ROM's
+    assert (booted.idle, behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).idle) == (aes_boot.OURS, aes_boot.THE_ROM_S)
     assert [(each.name, each.stack) for each in door.programs] == [
         (each.name, each.stack) for each in behind_a_door(QUIET_PAIR, THE_SHIPPED_BLOB).door.programs]
 
@@ -2084,7 +2095,8 @@ def test_an_accessory_above_64_kb_finds_and_writes_an_allocated_accessory_throug
     assert rom.results(second)["res_wakes"] == len(BOTH_FIND_AND_WRITE), "the allocated accessory read both messages"
     assert all(the_rom_s == 0 for _ours, the_rom_s in ours.door.ran.values()) and ours.door.ran[THE_VECTOR][0] > 0
     two_dispatchers = rom.idle != ours.idle
-    assert aes_boot.compared(rom, ours, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ()).differing == []
+    differing = aes_boot.compared(rom, ours, (aes_boot.LINE_F_MASK, aes_boot.TRAP_SAVE_FRAME) if two_dispatchers else ()).differing
+    assert aes_ctlmgr.outside_the_bound_desk_s_classes(rom, ours, differing)[0] == []      # (band 6's binding: the desk's classes)
 
 
 def test_a_door_boot_begun_inside_another_profiled_run_is_refused_by_name():
@@ -2997,7 +3009,7 @@ def test_each_part_of_the_door_is_proved_a_mapping_by_registered_rows_whose_own_
     `test_aes_ourboot.py`.)"""
     rows = harness.bench_tier3().ROWS
     door = {part.what for part in aes_event.THE_DOOR}
-    assert set(aes_event.MAPPING_PROVED_BY) == door and len(door) == 7
+    assert set(aes_event.MAPPING_PROVED_BY) == door and len(door) == 8
     for what, symbols in aes_event.MAPPING_PROVED_BY.items():
         for symbol in symbols:
             assert [row for row in rows if row.symbol == symbol], f"{what}: `{symbol}` has no row whose run stores it"

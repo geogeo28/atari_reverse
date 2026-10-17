@@ -634,6 +634,32 @@ def _refused_at_the_dispatcher(buf):
 DISPATCH_REFUSER = DISPATCH_PROTOTYPE(_refused_at_the_dispatcher)
 bind_pointer(DISPATCH_SYMBOL, DISPATCH_REFUSER)
 
+# ...AND THE ROM'S OWN GUARD, for the cases that stand inside the dispatcher (band 6 slice B0, N1): over THE LEAF
+# MACHINE (`aes.leaf_machine`: AES_INDISP laid 1, a lever) the ROM's dsptch is `tst.b indisp / bne rts` — a bare
+# return — and a C core whose callee yields must come straight back as the ROM's does, or the case is no differential
+# of that arm. Bound by such a case FOR ITS OWN RUNS ALONE (`dsptch_s_guard`), and refusing as the refuser does where
+# the byte is clear. Its one user: rom_ram's desk arm, whose callee is the desk's rsrc_gaddr binding.
+RETURNED_TO_ITS_CALLER = 1
+
+
+def _the_rom_s_guard(buf):
+    if buf[aes.AES_INDISP]:
+        return RETURNED_TO_ITS_CALLER
+    return _refused_at_the_dispatcher(buf)
+
+
+DSPTCH_S_GUARD = DISPATCH_PROTOTYPE(_the_rom_s_guard)
+
+
+@contextlib.contextmanager
+def dsptch_s_guard():
+    """The dispatcher's hook bound to THE ROM'S GUARD (above) for the runs inside the block; the refuser again after."""
+    bind_pointer(DISPATCH_SYMBOL, DSPTCH_S_GUARD)
+    try:
+        yield
+    finally:
+        bind_pointer(DISPATCH_SYMBOL, DISPATCH_REFUSER)
+
 
 # ---- an arrival, and its twin's return ---------------------------------------------------------------------------------
 # The door calls the candidate made in the run in flight, in order: what each arrival was handed — in the hook's
@@ -3145,7 +3171,8 @@ del _activated                          # (no second name for a declaration: the
 # gem_entry, gsx_tick and gsx_init stored them — never a poke; each un-mapped from the door reddens the scan and the
 # who-ran of the door machine's runs for ITS longword. THE REGISTRY'S OWN FLAGS DO NOT MOVE BY IT: the four stay
 # exit-only on a snapshot row (a machine the ROM made holds the ROM's until a run of ours stores).
-# ACCESSORY MACHINES STAY DOOR TAKEOVERS (ruling W4-R2); the Line-F table behind `$2c` is the ROM's (W4-R3, band 6).
+# ACCESSORY MACHINES STAY DOOR TAKEOVERS (ruling W4-R2); the Line-F table behind `$2c` is OURS since band 6's slice B0
+# (the door's ninth part, `LINEF_TABLE_SLOT`, below).
 BUTTON_GLUE_END, MOTION_GLUE_END = addrs.AES_ROM_MOTION_GLUE, addrs.AES_ROM_DRAWRAT     # (each end the next routine's entry)
 ROM_TEXT_OF[GLUE_CODES.what] = ((addrs.AES_ROM_BUTTON_GLUE, BUTTON_GLUE_END), (addrs.AES_ROM_MOTION_GLUE, MOTION_GLUE_END),
                                 *ROM_TEXT_OF[JUSTRETF_SLOT.what])      # (...and the routine a playback hands in their place)
@@ -3156,6 +3183,26 @@ THE_MACHINE_S_VECTORS.update({
 THE_DOOR = (*THE_TRAP_DOOR, *STORED_BY_GEM_ENTRY, GLUE_CODES)
 # ...and the rows whose own run stores the two glues: gem_main's stretches (its gsx_init's gsx_setmb), as the three.
 MAPPING_PROVED_BY[GLUE_CODES.what] = STORED_BY_GEM_ENTRY_PROVED_BY
+
+# ---- BAND 6 SLICE B0, THE BINDING: THE LINE-F CALL TABLE, `$cc24` ---------------------------------------------------------------
+# gem_entry copies the Line-F handler to a Malloc of 100 bytes (`$cc0c` on every machine here) and `$2c` points at the
+# copy; the copy's `movea.l #<table>,a0` holds THE TABLE every Line-F call is dispatched through — `$fee900` in the
+# ROM's, OUR `aes_linef_table` in a build's (`gemstart.S`: the eighth relocation, ruling W6-R1). The longword that
+# operand lies in, `$cc24`, IS THE TABLE KIND'S ONE SLOT. A build's gem_entry stores ours there (its copy carries it),
+# so a machine of ours holds ours and a ROM-made one the ROM's: MAPPED AT A RUN'S ENTRY, as `$88` is (the full flip's
+# rule) — every Tier 3 run of ours over a ROM-made machine is entered with OUR table behind the ROM's desk's Line-F
+# words, and given the ROM's name back where it ends. A PART OF THE DOOR: a takeover lays it before the desk's first
+# Line-F call, so the ROM's desk on a door machine runs over our AES too. Proved a mapping, not a poke, by gem_main's
+# stretches (our gem_entry's copy stores it in the run they are cut from). NOT RELOCATED: the copy's nine and a half
+# tail longwords (the ROM's table's head, dead data byte-equal to the ROM's machine: `gemstart.S`) and the 658 slots of
+# the blob's table itself (the blob's own bytes). Its ROM text is none: the ROM's table is data, no routine.
+LINEF_TABLE_SLOT = RelocatedCode("the Line-F call table the handler's copy indexes ($cc24)",
+                                 (aes.AES_LINEF_COPY + aes.LINEF_TABLE_OPERAND,), {aes.AES_LINEF_TABLE: "aes_linef_table"}, True)
+CODE_RELOCATIONS = (*CODE_RELOCATIONS, LINEF_TABLE_SLOT)
+THE_DOOR = (*THE_DOOR, LINEF_TABLE_SLOT)
+THE_MACHINE_S_VECTORS[LINEF_TABLE_SLOT.what] = LINEF_TABLE_SLOT.slots
+MAPPING_PROVED_BY[LINEF_TABLE_SLOT.what] = STORED_BY_GEM_ENTRY_PROVED_BY
+ROM_TEXT_OF[LINEF_TABLE_SLOT.what] = ()
 
 
 # ---- THE CYCLE PROFILE IS ONE SWITCH OF THE ORACLE'S: who has it on ------------------------------------------------------

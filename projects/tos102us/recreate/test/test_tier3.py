@@ -1677,18 +1677,18 @@ def test_the_one_drop_our_run_need_not_have_stored_is_the_line_f_mask_word():
     screen manager is ours, where two builds' frames are not laid over the same bytes and what is held is that OUR
     screen manager ran on that stack at all (`vet_our_frames_were_laid`: refused where our run stored nothing there)."""
     assert tier3.ONE_SIDED_BY_NATURE == {(lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW}
-    assert tier3.EACH_BUILD_S_OWN_FRAMES == {aes_takeover.STACK_WHY}
+    assert tier3.EACH_BUILD_S_OWN_FRAMES == {aes_takeover.STACK_WHY, *tier3.aes_switching.FOREIGN_STACK_WHYS}   # (band 6's binding)
     exempt = {(lo, hi) for row in tier3.ROWS for lo, hi, why in row.dropped
               if (lo, hi, why) not in tier3.drops_held_to_our_run(row) and why not in tier3.EACH_BUILD_S_OWN_FRAMES}
     assert exempt == tier3.ONE_SIDED_BY_NATURE
-    own_frames = [row for row in tier3.ROWS if any(why in tier3.EACH_BUILD_S_OWN_FRAMES for _lo, _hi, why in row.dropped)]
+    own_frames = [row for row in tier3.ROWS if any(why == aes_takeover.STACK_WHY for _lo, _hi, why in row.dropped)]
     assert own_frames and all(aes_takeover.named_in(row.dropped) for row in own_frames)
     row = own_frames[0]
     lo, hi = aes_takeover.spans_of(make_image(row.pokes)).stack
     tier3.vet_our_frames_were_laid(row, {lo})
     tier3.vet_our_frames_were_laid(row, {hi - 1})
     for stored in (set(), {lo - 1}, {hi}):
-        with pytest.raises(AssertionError, match="OUR run stored NOTHING there: no screen manager of ours ran on that stack"):
+        with pytest.raises(AssertionError, match="OUR run stored NOTHING there: no process of ours ran on that stack"):
             tier3.vet_our_frames_were_laid(row, stored)
     assert len(DROPS_BY_KIND) >= KINDS_OF_DROP_THE_TABLE_NAMES, sorted(DROPS_BY_KIND)
 
@@ -1962,18 +1962,21 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False, True, True, False, False, False, False, False], (
+    assert [each.at_entry for each in read] == [True, False, False, True, True, False, False, False, False, False, True], (
         "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
         "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr); OF "
         "THE TRAP DOOR'S THREE, THE GEM TRAP'S VECTOR AT ENTRY AND EXIT (THE FULL FLIP, band 5 wave 4, slice F: every "
         "run of ours is entered behind the build's own `trap #2` handler) and a program's first-entry frame and the "
         "critical-error vector at exit alone (a row's machine holds what it came with); AND gem_entry's THREE BY-VALUE "
         "STORES — justretf's slot, the tick glue's, the desk's trampoline — at exit alone too (band 5 wave 4, slice B: "
-        "stored by the build's own gem_entry on the our-boot machine)")
+        "stored by the build's own gem_entry on the our-boot machine); AND THE LINE-F CALL TABLE the handler's copy "
+        "indexes at entry and exit (band 6's binding: every run of ours is entered with our table behind the ROM's "
+        "desk's Line-F words)")
     assert [each.what for each in read if each.at_entry] == [
-        aes_event.FORK_CODES.what, aes_event.SCREEN_MANAGER_ENTRY.what, aes_event.GEM_TRAP_VECTOR.what]
-    assert [each.what for each in read][-6:-3] == [part.what for part in aes_event.THE_TRAP_DOOR]
-    assert [each.what for each in read][-3:] == [declared.what for declared in aes_event.STORED_BY_GEM_ENTRY]
+        aes_event.FORK_CODES.what, aes_event.SCREEN_MANAGER_ENTRY.what, aes_event.GEM_TRAP_VECTOR.what, aes_event.LINEF_TABLE_SLOT.what]
+    assert [each.what for each in read][-7:-4] == [part.what for part in aes_event.THE_TRAP_DOOR]
+    assert [each.what for each in read][-4:-1] == [declared.what for declared in aes_event.STORED_BY_GEM_ENTRY]
+    assert read[-1].what == aes_event.LINEF_TABLE_SLOT.what
     # ...each mapped whole for this run — but the GEMDOS glue's text sites, mapped only for a run that reaches the
     # `.S` that parks them (`tier3.text_site_relocation`: forker's, on the bench's blob, reaches the C twin).
     assert [set(each.mapping) for each in read] == [
@@ -3458,13 +3461,13 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (257418, 220594), SHIPPED_BLOB: (257418, 217614)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
         BENCH_BLOB: (144852, 124532), SHIPPED_BLOB: (144852, 123758)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 635074), SHIPPED_BLOB: (639424, 634638)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 566498), SHIPPED_BLOB: (639424, 565930)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
         BENCH_BLOB: (1102608, 1030164), SHIPPED_BLOB: (1102608, 1019284)},
-    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1161850), SHIPPED_BLOB: (1237428, 1148944)},
-    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1255966), SHIPPED_BLOB: (1331494, 1242974)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1148108), SHIPPED_BLOB: (1237428, 1134346)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1228836), SHIPPED_BLOB: (1331494, 1214128)},
     "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203296), SHIPPED_BLOB: (212120, 201634)},
     "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 277612), SHIPPED_BLOB: (297138, 275082)},
     "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256388), SHIPPED_BLOB: (275878, 253996)},
@@ -3590,13 +3593,17 @@ def _both_door_watches_of(name, bench, monkeypatch):
 
 def test_a_door_call_open_across_a_foreign_window_is_net_of_it_on_every_count(bench, monkeypatch):
     """THE PRICED RULE, read off the two watches of one measurement: the window came off ONE call on each shore — the
-    first, mn_do's wait on the bar — whole in the ROM's shore's own count and in its AES-ROM cycles, and on OUR shore
-    out of the AES-ROM cycles alone (no cycle of our build ran in it: 0 off our own count and off our thunks)."""
+    first, mn_do's wait on the bar — whole in the ROM's shore's own count and in its AES-ROM cycles, and on OUR shore,
+    SINCE BAND 6's BINDING A TURN OF OURS (the desk's: the ROM's desk text over our AES, ruling W6-R7), out of all
+    three counts at once: our build's own cycles in it and our thunks' (the turn's), and the AES-ROM cycles our shore
+    spent there (the desk's own text: the ROM's AES-span cycles less what the turn is priced against)."""
     measured, the_rom_s, ours = _both_door_watches_of(MN_DO_ACROSS_THE_DESK_S_TURN, bench, monkeypatch)
     _windows, _whole, in_the_aes = THE_DESK_TAKES_A_KEY
     nothing = tier3.NOTHING_FOREIGN_INSIDE
+    turn, = tier3.turns_of(measured)
+    assert turn.whose == tier3.aes_switching.THE_DESK_S and turn.ours and turn.glue
     assert the_rom_s.foreign_inside == [tier3.ForeignInside(in_the_aes, in_the_aes, 0), nothing, nothing]
-    assert ours.foreign_inside == [tier3.ForeignInside(in_the_aes, 0, 0), nothing, nothing]
+    assert ours.foreign_inside == [tier3.ForeignInside(in_the_aes - turn.the_rom_s, turn.ours, turn.glue), nothing, nothing]
     assert the_rom_s.foreign_between == ours.foreign_between == nothing
     assert tier3.foreign_of(measured).in_the_aes == in_the_aes
 
@@ -3612,14 +3619,19 @@ def test_two_foreign_windows_in_one_run_come_off_the_two_calls_they_lay_inside(b
     assert THE_DESK_TAKES_TWO_KEYS == (2, tier3.foreign_of(measured).whole, THE_FIRST_KEY_S_TURN + THE_SECOND_KEY_S_TURN)
     inside = [tier3.ForeignInside(turn, turn, 0) for turn in (THE_FIRST_KEY_S_TURN, THE_SECOND_KEY_S_TURN)]
     assert the_rom_s.foreign_inside == inside + [tier3.NOTHING_FOREIGN_INSIDE]
-    assert ours.foreign_inside == [window._replace(own=0) for window in inside] + [tier3.NOTHING_FOREIGN_INSIDE]
+    # (on ours, since band 6's binding, each window is A TURN OF OURS, the desk's — off all three counts: `Turn`)
+    turns = tier3.turns_of(measured)
+    assert ours.foreign_inside == [tier3.ForeignInside(window.in_the_rom - turn.the_rom_s, turn.ours, turn.glue)
+                                   for window, turn in zip(inside, turns)] + [tier3.NOTHING_FOREIGN_INSIDE]
     assert the_rom_s.foreign_between == ours.foreign_between == tier3.NOTHING_FOREIGN_INSIDE
 
 
 @pytest.mark.parametrize("left_in, refused", (
     ("own", r"account for 58896 cycles of foreign windows in the AES's ROM and 0 in this shore's own count, where the "
             r"run's 1 window\(s\) hold 58896 and 58896 — a window was left INSIDE a door call's cost"),
-    ("in_the_rom", r"our twin of 0xfe6998 ran 58896 cycles of the AES's own ROM"),
+    # (since band 6's binding the window is the desk's turn, ours: what our shore spent in the AES's spans there is the
+    # desk's own text, a few thousand cycles — the number the twin is then refused for)
+    ("in_the_rom", r"our twin of 0xfe6998 ran [1-9][0-9]* cycles of the AES's own ROM"),
 ), ids=("left in the call's own cost", "left in the twin's AES-ROM cycles"))
 def test_a_window_left_inside_a_door_call_on_one_count_is_refused_by_name(bench, monkeypatch, left_in, refused):
     """THE RED OF EACH HALF. The window NOT taken off the calls' own cost: the ROM's shore's call holds 58,896 cycles
@@ -3645,9 +3657,17 @@ def test_a_named_blob_s_switching_run_accounts_for_every_window_as_the_table_s_d
 
 
 def test_a_cycle_of_our_build_inside_a_window_a_call_is_open_across_is_refused_at_that_call(bench, monkeypatch):
-    """...AND OUR SHORE'S HALF: the window comes off our own count as 0 because NO cycle of our build runs in another
-    process's turn — held where the window closes, for the call it lay inside (the foreign-window rule holds the
-    run's total; this names the call). A build's own count that moved inside the window is refused by name."""
+    """...AND OUR SHORE'S HALF: the window of A PROCESS OF THE ROM'S comes off our own count as 0 because NO cycle of
+    our build runs in it — held where the window closes, for the call it lay inside (the foreign-window rule holds the
+    run's total; this names the call). SINCE BAND 6's BINDING no registered row has such a window (the desk's turn is
+    ours: ruling W6-R7), so A LABELLED STAND-IN: the desk's turn read as the ROM's process's window (`_class_of` as it
+    was before the binding) — our build's cycles inside it are refused at that call by name; and a build's own count
+    that moves inside a turn of ours is refused by the run's accounting."""
+    monkeypatch.setattr(tier3.aes_switching.Switching, "_class_of", lambda self, whose, its: whose)
+    with pytest.raises(AssertionError, match=r"door call 0: [1-9][0-9]* own cycle\(s\) of OUR build and [0-9]+ of its thunks ran "
+                                             r"inside a foreign window the call was open across"):
+        _the_call_across_the_desk_s_turn(bench)
+    monkeypatch.undo()
     counted = tier3.DoorWindows._counts_so_far
     inside_a_window = []
 
@@ -3658,8 +3678,7 @@ def test_a_cycle_of_our_build_inside_a_window_a_call_is_open_across_is_refused_a
             return counts._replace(own=counts.own + 1)
         return counts
     monkeypatch.setattr(tier3.DoorWindows, "_counts_so_far", one_own_cycle_more_in_each_window)
-    with pytest.raises(AssertionError, match=r"door call 0: 1 own cycle\(s\) of OUR build and 0 of its thunks ran inside a "
-                                             r"foreign window the call was open across"):
+    with pytest.raises(AssertionError, match=r"a window was left INSIDE a door call's cost on one count"):
         _the_call_across_the_desk_s_turn(bench)
     assert inside_a_window, "the premise: our shore's door watch was told of the window"
 

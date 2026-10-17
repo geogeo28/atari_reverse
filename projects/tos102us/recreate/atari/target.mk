@@ -110,9 +110,10 @@ TRANSCRIBED_SOURCES := $(filter-out $(GEMSTART_SOURCES), $(TRANSCRIBED_SOURCES))
 # THE LINE-F TABLE is a sixth kind, and the first that holds NO ROM INSTRUCTION: GENERATED (`bench/linef_table.py`; the
 # file is checked in and `test/test_aes_lineftable.py` holds it equal to the generator's text) — a table of ours for
 # the ROM's Line-F call table, entry for entry, and the thunks that take a ROM caller's Alcyon frame into each C core
-# an entry names. Target-only glue, no table row, no C twin. Listed APART because it is LINKED AND NOT BOUND: every
-# build links it, and no word of a build names it until the handler's operand is relocated (gemstart.S's eighth, slice
-# B's — ruling W6-R1). Taken out of the transcriptions' wildcard here, in its own line.
+# an entry names. Target-only glue, no table row, no C twin. Listed APART as a kind of its own: every build links it,
+# and since band 6's slice B0 (THE BINDING, ruling W6-R1) every build BINDS it — the Line-F handler's operand is
+# relocated to it (gemstart.S's eighth relocation), so the ROM's desk calls through it on every machine of ours.
+# Taken out of the transcriptions' wildcard here, in its own line.
 LINEFTABLE_SOURCES := $(RECREATE)/src/aes/lineftable.S
 TRANSCRIBED_SOURCES := $(filter-out $(LINEFTABLE_SOURCES), $(TRANSCRIBED_SOURCES))
 # ---- end of slice T's ----

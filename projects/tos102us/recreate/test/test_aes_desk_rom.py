@@ -563,7 +563,7 @@ def test_a_routine_is_reached_by_its_first_instruction_not_by_any_of_its_pcs():
     assert any(lo < pc < hi for pc in ran)
 
 
-PD0_BYTES, PD1_BYTES = 1792, 1196
+PD0_BYTES, PD1_BYTES = desk.PD0_BYTES, desk.PD1_BYTES     # (their one home: `aes_desk`)
 DEEPEST = {desk.PD0_STACK: ("A: File > Open", 1460), desk.PD1_STACK: ("window: View > Show as Text", 722),
            desk.DISPATCHER_STACK: ("window: A: opened again (two windows)", 190), desk.USERDEF_STACK: ("window: View > Show as Text", 438)}
 DISPATCHER_ELSEWHERE = 188

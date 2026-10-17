@@ -1137,6 +1137,9 @@ def reach(names=None):
 PD0_STACK, PD1_STACK = "PD0's stack (the desk's: UDA0)", "PD1's stack (the screen manager's: UDA1)"
 DISPATCHER_STACK, USERDEF_STACK = "the dispatcher's stack", "the desk's G_USERDEF stack"
 USERDEF_STACK_BYTES = aes.header_constants("deskmem.h")["USERDEF_STACK_BYTES"]
+# THE SPANS OF PD0's AND PD1's STACKS (`stacks`), in bytes — ONE HOME, read by both shores' batteries
+# (`test_aes_desk_rom.py`, `test_aes_desk_ours.py`: each asserts its machines' spans are these).
+PD0_BYTES, PD1_BYTES = 1792, 1196
 
 
 def stacks(machine):
@@ -1173,3 +1176,171 @@ def deepest(which, names=None):
     the userdef stack's over the chains in which it IS a stack (`THE_DESK_S_BLOCKS_ARE_CLEARED_IN`)."""
     asked = [name for name in names or CHAINS if which != USERDEF_STACK or name not in THE_DESK_S_BLOCKS_ARE_CLEARED_IN]
     return max(((name, depths(name)[which]) for name in asked), key=lambda found: found[1])
+
+
+# ---- band 6 slice H (slice B's): THE OUR SHORE — the same chains, walked on machines OUR gem_entry booted -------------------------
+# The binding (slice B0) lays OUR Line-F call table at `$cc24` on every machine of ours: the ROM's desk — every routine
+# of it not yet flipped — runs over OUR AES. So each chain of `CHAINS` is walked a second time, on THE OUR-BOOT MACHINE
+# of its capture (`aes_boot.booted(..., laid=AT_GEM_ENTRY)`, ruling W4-R1's labelled staging), by the same hands — every
+# point read off THAT machine's own trees — and `test_aes_desk_ours.py` holds the two walks to one another. This block
+# makes the walk and reads it; it compares nothing.
+#   * A STEP OF OURS (`stepped_ours`) is `stepped`'s twin for a machine that HOLDS A BLOB (the ROM's step refuses one):
+#     the same continuation, made and not served, the same profile — and the blob's own cycles beside it. Kept: like
+#     `aes_boot.continued` of a machine of ours, it runs THE BLOB, never the host library, and its key holds the blob's
+#     bytes (the `Boot`'s `OurBoot`): a rebuilt blob is another question.
+#   * A NAMED STOP HAS AN ADDRESS ON EACH SHORE (`our_stop`): the entry of OUR routine where one is declared
+#     (`OUR_STOPS`: the rubber box's poll is gr_stilldn's entry, and gr_stilldn is band 3's C), else the ROM's own —
+#     the viewer's two key waits lie inside the show engine's body, the ROM's on our machine until unit M flips (its
+#     slice declares their C-side stops).
+#   * WHO RAN (ruling W6-R5): every PC of the ROM's GEM text a step ran is CHARGED TO ITS ROUTINE — the last start of
+#     the AES map's inventory at or below it, so every routine bounds its neighbour (`charged`) — and the ROM's text
+#     that may run on our machine is DECLARED and shrinks with each flip: band 6's routines whose entry of the bound
+#     table is still the ROM's longword, or that no entry names (`still_the_rom_s`), and the ROM's text of bands 0-5
+#     those reach by a `bsr`, a `jsr`, a `jmp` or a branch (`ROM_TEXT_UNDER_ROM_CALLERS`).
+import bisect                           # (here, inside the slice's block: the module's head is no slice's)
+from collections import Counter
+
+from harness import BASE_IMAGE
+
+import isr
+import transcription
+import vdi
+
+OUR_BLOB = "the shipped blob"           # what ships, and what W6-R4's gate is measured on (the cut's numbers are its)
+
+
+@functools.cache
+def our_blob():
+    return isr.blob_named(OUR_BLOB)
+
+
+def _our_boot(capture, disk):
+    return aes_boot.Machine(aes_boot.booted(capture, disk, ours=aes_boot.ours_of(our_blob()), laid=aes_boot.AT_GEM_ENTRY))
+
+
+# The machines of `MACHINES`, booted by OUR gem_entry over the same captures and disks (the devices' made as theirs are).
+OUR_MACHINES = {
+    INF_ICONS: lambda: _our_boot(aes_boot.inf_preinit(), aes_boot.inf_disk_of()),
+    INF_TEXT: lambda: _our_boot(aes_boot.inf_preinit(), aes_boot.inf_disk_of(aes_boot.VIEW_AS_TEXT)),
+    FILES: lambda: _our_boot(aes_boot.files_preinit(), aes_boot.files_disk_of()),
+    DISK_IN_B: lambda: aes_boot.with_a_disk_in_drive_b(OUR_MACHINES[INF_ICONS](), aes_boot.blank_disk()),
+    SINGLE_SIDED_IN_B: lambda: aes_boot.with_a_disk_in_drive_b(OUR_MACHINES[INF_ICONS](), single_sided_disk()),
+    PRINTER_ON_LINE: lambda: aes_boot.with_a_printer_on_line(walked_ours(SHOW_PRINT_ALERT).machine)}
+
+# ---- who ran: each PC charged to its routine; the ROM's text declared still to run ----
+# THE ROM'S TEXT OF BANDS 0-5 THAT A ROUTINE STILL THE ROM'S REACHES OTHERWISE THAN THROUGH THE TABLE — so the ROM's,
+# on our machine too, under that caller (measured over the campaign: each ran on our shore; each goes when its last
+# such caller flips). `{its start: who reaches it, and how}`.
+GEMGRAF_HELPER, DOS_CALL, DOS_CALL_BODY = 0xfdae38, 0xfe39b6, 0xfe3c3e
+DOS_FREE, DOS_SFIRST_S_ONE, LMUL = 0xfe3c26, 0xfe3a08, 0xfe3db4
+ROM_TEXT_UNDER_ROM_CALLERS = {
+    GEMGRAF_HELPER: "gemgraf's helper: `bsr` from unit O's leaf $fda8a8",
+    DOS_CALL: "__DOS: `bsr` from unit O's DOS-glue leaves",
+    DOS_CALL_BODY: "__DOS's body: `jmp` from __DOS",
+    DOS_FREE: "dos_free's body, ours through the table: unit O's stubs $fe3c16..$fe3c22 (`moveq #n,d1; bra`) branch into it",
+    DOS_SFIRST_S_ONE: "dos_sfirst's `moveq #1 / rts`: unit O's leaf $fe3b02 branches into it",
+    LMUL: "Alcyon's lmul: `jsr` from deskapp's $fdb220"}
+# ...a span ENTERED PAST ITS START by the callers that reach it (reviewer B's F5): the routine's own entry is ours
+# through the table, so not a cycle of the ROM's text before `past` may run on our shore. `{its start: past}`.
+DOS_FREE_BODY = 0xfe3c28                # where unit O's stubs `bra` to: dos_free's own entry, `$fe3c26`, is our table's
+ENTERED_PAST_ITS_START = {DOS_FREE: DOS_FREE_BODY}
+
+
+def charged(text):
+    """`{routine: cycles}` of a profile's GEM text (`Profile.text`): each PC charged to the routine whose start — of
+    EVERY start the AES map's inventory lists — is the last at or below it (a span bounded by band 6's starts alone
+    would charge trp14's cycles to trp13, its neighbour in the ROM)."""
+    starts, per = inventoried(), Counter()
+    for pc, cycles in text:
+        at = bisect.bisect_right(starts, pc) - 1
+        assert at >= 0, f"{pc:#x} lies below the inventory's first routine"
+        per[starts[at]] += cycles
+    return dict(per)
+
+
+def _table_of(memory, at):
+    return tuple(case.long_in(memory, at + index * LONG_BYTES) for index in range(aes.AES_LINEF_TABLE_ENTRIES))
+
+
+@functools.cache
+def flipped(blob=None):
+    """BAND 6'S ROUTINES WHOSE ENTRY OF THE TABLE `blob` (ours by default) BINDS IS OURS — a longword other than the
+    ROM's own: on a machine of ours a ROM caller's Line-F call of one runs our code. A frozenset of their starts."""
+    blob = blob or our_blob()
+    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
+    return frozenset(rom for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), bound) if ours != rom) & frozenset(routines())
+
+
+def still_the_rom_s(blob=None):
+    """BAND 6'S ROUTINES STILL THE ROM'S on a machine of `blob` (W6-R5's declared spans, by their starts): not
+    `flipped` — their entry the ROM's, or no entry at all (reached by `bsr` or by value: the ROM's here until the slice
+    that flips one says so in this function)."""
+    return frozenset(routines()) - flipped(blob)
+
+
+# ---- a step of ours, its named stops ----
+OUR_STOPS = {RUBBER_BOX_POLL: "aes_gr_stilldn"}     # N4: band 3's C gr_stilldn — its entry is the poll's
+PROFILE_HELD_BY_OUR_STEP = "a profiled step of the hands' campaign on our shore (`aes_desk.stepped_ours`)"
+OurStepped = namedtuple("OurStepped", "boot profile blob")
+OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s) and `blob`, the cycles the
+blob's own span ran."""
+
+
+def our_stop(name, blob=None):
+    """THE NAMED STOP `name` ON OUR SHORE (the block's comment): our routine's entry, or the ROM's own address."""
+    return (blob or our_blob()).entry(OUR_STOPS[name]) if name in OUR_STOPS else STOPS[name]
+
+
+@derived.kept
+def stepped_ours(boot, received, until=None, at=None, budget=STEP_INSNS):
+    """ONE STEP OF OURS: `stepped`, of a machine that HOLDS A BLOB (`boot`: an our-boot's, at OUR idle or stopped at a
+    stop of ours) — an `OurStepped`. REFUSED BY NAME on the ROM's machine (`stepped` is its step)."""
+    ours = aes_boot.blob_of(boot)
+    if ours is None:
+        raise Refused("a step of ours is of a machine that holds a blob: this is the ROM's machine (`stepped`)")
+    aes_event.vet_the_profile_is_free("a step of the hands' campaign on our shore")
+    emu.prof_reset()
+    emu.prof_enable(True)
+    try:
+        with aes_event.profile_held(PROFILE_HELD_BY_OUR_STEP):
+            after = aes_boot.continued.derive(boot, tuple(received), budget, until, at)
+        profile, blob = _profile_read(), emu.prof_cycles(ours.base, ours.end)
+    finally:
+        emu.prof_enable(False)
+    return OurStepped(after, profile, blob)
+
+
+@functools.cache
+def walked_ours(name):
+    """THE CHAIN `name` WALKED ON OUR SHORE (`walked`'s twin, from its predecessor's machine of ours or `OUR_MACHINES`'):
+    a `Walked` of `OurStepped`s — REFUSED BY NAME, its step said, where a step's run is refused."""
+    chain = CHAINS[name]
+    machine = OUR_MACHINES[chain.after]() if chain.after in OUR_MACHINES else walked_ours(chain.after).machine
+    steps, stands_at = [], None
+    for nth, step in enumerate(chain.steps):
+        until = our_stop(step.until) if step.until else None
+        try:
+            steps.append(stepped_ours(machine.boot, tuple(step.hand(machine)), until, stands_at, step.budget))
+        except Refused as refused:
+            raise Refused(f"step {nth} of {name!r} on our shore ({step.what}): {refused}") from refused
+        machine, stands_at = aes_boot.Machine(steps[-1].boot), until
+    return Walked(machine, tuple(steps))
+
+
+def screen_of(machine):
+    """The screen's bytes as `machine` holds them."""
+    return bytes(machine.ram[vdi.SCREEN.base:vdi.SCREEN.base + vdi.SCREEN.bytes])
+
+
+def desk_block(ram):
+    """`(its address, its bytes)`: the desk's globals block a megabyte holds (`aes.AES_DESK_GLOBALS`)."""
+    block = case.long_in(ram, aes.AES_DESK_GLOBALS) & BUS
+    return block, bytes(ram[block:block + aes_event.DESK_GLOBALS_BYTES])
+
+
+def our_desk_block(machine):
+    """...of a machine of ours, EVERY CODE ADDRESS GIVEN THE ROM'S NAME (`aes_ourboot.mapped_back`: the registry's
+    slots, the trampoline's in the desk's USERBLKs among them)."""
+    import aes_ourboot                  # (here: the comparison alone needs its registry, a heavy import)
+    return desk_block(aes_ourboot.mapped_back(machine.ram, our_blob()))
+# ---- end of band 6 slice H's ----

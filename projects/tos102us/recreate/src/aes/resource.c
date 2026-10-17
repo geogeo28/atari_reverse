@@ -10,6 +10,7 @@
  */
 #include <stdint.h>
 
+#include "host_slot.h"
 #include "machine.h"
 #include "recreate.h"
 #include "m68k_idioms.h"
@@ -19,6 +20,7 @@
 #include "aes/resource.h"
 #include "aes/shell.h"
 #include "aes/strings.h"
+#include "desk/deskwin.h"
 
 /* get_sub's SECTION is the index of the header word holding its offset — the byte offset halved. */
 #define SECTION(field)        ((field) / M68K_WORD_BYTES)
@@ -336,26 +338,24 @@ uint32_t aes_rs_str(uint8_t *image, int16_t string)
 #define DESKTOP_BAR_EXTRA     2
 #define DESKTOP_FULL_WIDTH_OBJECTS 2     /* the root and the bar ($fee77e cmpi.w #2)                          */
 
-/* The desk's rsrc_gaddr BINDING ($fde354, through $fe0b6e) ends in `dsptch`, which is a bare `rts` inside the
- * dispatcher — the only machine a case stages (`aes.leaf_machine`). Outside it, dsptch enters disp, which is not
- * reconstructed: both builds halt there rather than one of them switching process. */
-static void dispatch_point(const uint8_t *image)
-{
-    if (!image[AES_INDISP])
-        recreate_not_reconstructed("AES dsptch with AES_INDISP clear: disp and the process switch are not reconstructed");
-}
-
-/* The desktop sized to the screen: the desk's tree 0 through its binding (rs_sglobal of the desk's global[] and
- * get_addr — `pointer` is not the binding's argument, its own global[] is), then the five words. D0 is the last word
- * stored. */
+/* The desktop sized to the screen: the desk's tree 0 asked of ini_tree ($fe0b6e: the ROM's own Line-F call, `$f6a8`),
+ * the DESK'S routine, whose rsrc_gaddr binding ($fde354, unit D: rs_sglobal of the desk's global[], get_addr) answers
+ * it into the frame local handed and YIELDS — `pointer` is not the binding's argument, its own global[] is; then the
+ * five words. D0 is the last word stored.
+ * A BAND-5 C CALLING THE DESK'S C (band 6 slice B0, ruling R4): with the Line-F table bound, the ROM's desk reaches
+ * this arm on a machine of ours (its second pass, after a built-in or a Cancel), so the yield must be the binding's
+ * own — through OUR dispatcher on target. Off target the yield is the case's dispatcher hook: a case over the leaf
+ * machine, where the ROM's dsptch is a bare `rts`, binds the ROM's own guard (`aes_event.dsptch_s_guard`). */
 static int16_t size_the_desktop(uint8_t *image)
 {
+    uint32_t desktop_local;
+    uint32_t answer = host_slot_claim(AES_ROM_RAM_DESKTOP, &desktop_local);
     uint32_t desktop;
     int16_t width, work_height, object;
 
-    aes_rs_sglobal(image, AES_DESK_APP_GLOBAL);
-    desktop = aes_get_addr(image, R_TREE, DESKTOP_TREE);
-    dispatch_point(image);
+    (void)aes_ini_tree(image, answer, DESKTOP_TREE);
+    desktop = bus_long(image, answer);
+    host_slot_release(AES_ROM_RAM_DESKTOP);
     width = (int16_t)m68k_muls_w(be16(image + AES_GL_NCOLS), be16(image + AES_GL_WCHAR));
     for (object = 0; object < DESKTOP_FULL_WIDTH_OBJECTS; object++)
         set_object_word(image, desktop, object, OB_WIDTH, width);

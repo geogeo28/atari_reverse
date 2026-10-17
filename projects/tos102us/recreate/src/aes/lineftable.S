@@ -6,9 +6,9 @@
  * slots a C core reads (337, 299 thunks) — and the ROM's own address in the rest (239: band 6's routines, the
  * ROM's until each is ported).
  *
- * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. LINKED AND NOT
- * BOUND: no word of a build names `aes_linef_table` — the handler gem_entry copies still loads the ROM's table
- * (`gemstart.S`; the operand is declared pending in the generator) — so nothing here runs but in a labelled staging.
+ * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. BOUND (band 6
+ * slice B0): the one word of a build that names `aes_linef_table` is the operand of the handler gem_entry copies
+ * (`gemstart.S`), so every machine of ours dispatches the ROM's desk's Line-F calls through this table.
  *
  * THE FILE ASKS FOR NO ALIGNMENT OF ITS OWN: the assembler rounds its text to a longword, as every source's, so what
  * links after it moves by its length and keeps its own place modulo four.

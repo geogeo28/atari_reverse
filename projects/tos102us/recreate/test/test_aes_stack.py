@@ -306,12 +306,15 @@ def test_the_compiler_s_long_arithmetic_is_read_as_the_routines_it_is(blob):
 
 
 # ---- THE DECLARATIONS, HELD TO THE BUILD -----------------------------------------------------------------------------------
-THE_WALKS = {("aes_draw_change", "aes_newrect_alcyon"), ("aes_newrect", "aes_mkrect_alcyon")}
+THE_WALKS = {("aes_draw_change", "aes_newrect_alcyon"), ("aes_newrect", "aes_mkrect_alcyon"),
+             # (band 6's binding: the table's thunk is a caller — the ROM's desk walks a tree through it)
+             ("linef_to_aes_everyobj", stack.FROM_A_ROM_CALLER)}
 
 
 def test_every_walk_is_handed_one_routine_by_value(blob):
     """everyobj's callers, over the whole blob: draw_change hands newrect, newrect mkrect — each named at the call, so
-    every walk the build makes is read for the routine it is really handed. ob_draw IS NONE OF THEM since the door
+    every walk the build makes is read for the routine it is really handed — and, since band 6's binding, the Line-F
+    table's thunk of it, whose routine is a ROM caller's (the ROM's desk's walks: read where that caller names it). ob_draw IS NONE OF THEM since the door
     diet (band 5 wave 3): it holds the walk as its own body and calls just_draw as C calls (`src/aes/obdraw.c`) —
     read as any routine is, with no Alcyon entry under it and no symbol of one in the blob."""
     assert stack.routines_handed_to(blob.elf, "aes_everyobj") == THE_WALKS
@@ -1682,10 +1685,11 @@ def test_finding_the_measured_runs_behind_the_door(modes, shore):
     assert (run.door_ran is not None) == (shore != THE_ROM_S and run.idle is not None)
     if run.door_ran is not None:
         door_ran, critical_errors = dict(run.door_ran), stack.aes_event.CRITICAL_ERROR_VECTOR.what
-        assert set(door_ran) == {part.what for part in stack.aes_event.THE_DOOR}, "the shipped door, every part (seven since the full flip)"
+        assert set(door_ran) == {part.what for part in stack.aes_event.THE_DOOR}, "the shipped door, every part (eight since band 6's binding)"
         assert door_ran.pop(critical_errors) == (0, 0), "no critical error in a boot: neither crit_err runs"
         # ...NOR the four parts the full flip added — no tick, no mouse packet, no cursor routine, no window item in a boot
-        for part in (*stack.aes_event.STORED_BY_GEM_ENTRY, stack.aes_event.GLUE_CODES):
+        # (...and the binding's table: no routine — nothing is entered at it on either shore)
+        for part in (*stack.aes_event.STORED_BY_GEM_ENTRY, stack.aes_event.GLUE_CODES, stack.aes_event.LINEF_TABLE_SLOT):
             assert door_ran.pop(part.what) == (0, 0), part.what
         assert len(door_ran) == 2 and all(ours > 0 and the_rom_s == 0 for ours, the_rom_s in door_ran.values())
     for which, used in run.deepest.items():
@@ -2166,7 +2170,9 @@ THE_FIRST_STACK_BOUND, THE_FIRST_STACK_GATE_S_MARGIN = 88, 46
 # is held (the trap path's own deepest chain from fm_do down) under gem_main 12 > sh_main 24 > the_command_is_found 20.
 PD0_FROM_GEM_ENTRY = (("aes_rom_gem_main", 12), ("aes_sh_main", 24), ("the_command_is_found", 20), ("aes_fm_error", 24), ("aes_fm_alert", 88))
 PD0_OWN_FRAMES = {BENCH: 808, SHIPPED: 812}             # + the nest's 252: 732 / 728 spare of 1,792
-PD0_BEFORE_THE_SHELL = {BENCH: (300, "bring_gem_up"), SHIPPED: (304, "bring_gem_up")}
+# (RE-PINNED BY BAND 6's BINDING, +4 each: rom_ram's desk arm keeps the desktop tree's address in a local of its own —
+# the ROM's `-10(a6)` ini_tree answers into — in the frame its resource part's reading stands on.)
+PD0_BEFORE_THE_SHELL = {BENCH: (304, "bring_gem_up"), SHIPPED: (308, "bring_gem_up")}
 # MEASURED, the blob's own gem_entry run from the pre-init stop over the blank disk to deskmain's entry (the machine's
 # VDI under its traps is THE ROM'S: the blob's own is linked under no vector there): PD0's lowest store during init.
 OUR_INIT_MEASURED = {BENCH: 376, SHIPPED: 386}          # the ROM's own: 282
@@ -2314,7 +2320,7 @@ def test_the_word_the_reader_tests_inside_the_first_stack_is_not_zero_on_a_blob(
 def test_finding_pd0_s_own_frames_from_gem_main_down(blob):
     """PD0's STACK, THE BUILD'S OWN FRAMES from gem_entry's `jsr gem_main` down — init, the shell's loop, what stands
     above the desk door — pinned by chain: the deepest is the shell's error alert after a failed launch, 808 / 812;
-    with the nest's 252, 732 / 728 SPARE of 1,792. Before the shell is entered: 300 / 304 (the ROM's own init is
+    with the nest's 252, 732 / 728 SPARE of 1,792. Before the shell is entered: 304 / 308 (the ROM's own init is
     measured at 282, its VDI's need under its traps among them). The desk's own frames are the ROM's: not counted."""
     shore, read = stack.shore_of(blob), stack.pd0_bound(blob)
     assert tuple(read.chain)[1:1 + len(PD0_FROM_GEM_ENTRY)] == PD0_FROM_GEM_ENTRY, f"{shore}: {_moved(tuple(read.chain)[1:6], PD0_FROM_GEM_ENTRY)}"

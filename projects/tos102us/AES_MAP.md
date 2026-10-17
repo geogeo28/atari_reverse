@@ -408,6 +408,16 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   `$C946` the tree, `$96FE` its TEDINFOs, `$C90E` / `$C910` the bar frame's place, `$C6E6` the command line. The hands'
   campaign is 115 chains / 374 steps, reach 236 of the 244. LEFT IN THE DESK'S RANGE: the 17-routine cycle, `FE2172`
   and deskmain (wave 3, the flip); the cartridge pair `FED554` / `FED5C2` (W6-R8's cartridge window).
+  SLICES B0 + H (2026-10-16; STATUS.md, "BAND 6 SLICE B0 + H"): THE BINDING — the Line-F handler's operand `FEE8D8`
+  (its RAM copy `$CC24`) names OUR table on every machine of ours (gemstart.S's eighth relocation), so the ROM's desk calls
+  OUR AES through it; NOTHING FLIPS (the 215 stay held, every band-6 entry the ROM's longword). rom_ram's desk arm
+  (`FEE726..`: wcopy `$f170`, then ini_tree `$f6a8` over `fp-10` at `FEE748`) calls the C ini_tree, which calls unit D's
+  C rsrc_gaddr binding — the ROM's own shape — where band 5's C had halted by name. THE OUR-SHORE CAMPAIGN walks 113 of
+  the 115 chains on our machine: three band-6 spans run one pass more on the ROM's shore under band-5 callers — ini_tree
+  `FE0B6E` and the rsrc_gaddr binding `FDE354` under rom_ram's arm (counted at `FEE74A`), dos_write's body `FE3A7E..` under
+  dos_read `FE3A78` (`moveq #$3f,d1; bra` into it) —, and six spans of bands 0–5 run under ROM callers (`FDAE38`, `FE39B6`,
+  `FE3C3E`, dos_free's body `FE3C28..`, `FE3A08`, lmul `FE3DB4`). desk_evnt_multi `FDDED8` copies ALL SIX answer words out
+  after the yield, the unwritten ones too: dead bytes travel from its frame into deskmain's (`link a6,#-72`).
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

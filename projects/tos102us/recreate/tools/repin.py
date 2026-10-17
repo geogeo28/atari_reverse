@@ -21,7 +21,8 @@ pairs in a test's file but lines of ONE DATA FILE, `test/aes_turns_pinned.py`, k
 row's line for the blob is written (or added, for a row the file did not hold) from the record — REFUSED where the
 ROM's own member of a turn moved, or where the run makes another number of turns than the line holds (a window
 appeared or went: the row's machine changed). THE ACCESSORIES' TURNS (kind "accessory turn") are the same, in
-`test/aes_accessory_turns_pinned.py`. A RECORD OF EITHER KIND WHOSE DATA FILE IS MISSING is refused by the row's name
+`test/aes_accessory_turns_pinned.py`, AND THE DESK'S (kind "desk turn"; band 6's binding) in `test/aes_desk_turns_pinned.py`.
+A RECORD OF ANY OF THEM WHOSE DATA FILE IS MISSING is refused by the row's name
 and the run ends non-zero: nothing is dropped in silence.
 A price whose CALLS or WINDOWS moved is not a pair move and is printed for a hand. Prints what it did; writes
 nothing without --apply. Run the suite again afterwards: what it could not reach is what is still red.
@@ -38,7 +39,9 @@ TURN = "turn"                           # ...and a third: the screen manager's t
 TURNS_FILE = "aes_turns_pinned.py"
 ACCESSORY_TURN = "accessory turn"       # ...and a fourth: the accessories' turns, behind our door (a data file of the same shape)
 ACCESSORY_TURNS_FILE = "aes_accessory_turns_pinned.py"
-TURNS_FILES = {TURN: TURNS_FILE, ACCESSORY_TURN: ACCESSORY_TURNS_FILE}
+DESK_TURN = "desk turn"                 # ...and a fifth: the desk's, the ROM's text over our AES (band 6's binding; the same shape)
+DESK_TURNS_FILE = "aes_desk_turns_pinned.py"
+TURNS_FILES = {TURN: TURNS_FILE, ACCESSORY_TURN: ACCESSORY_TURNS_FILE, DESK_TURN: DESK_TURNS_FILE}
 A_TURNS_ROW = re.compile(r'^    (?P<row>".*"): \{$')       # the data file's lines: a row opens its blobs' ...
 A_TURNS_BLOB = re.compile(r'^        "(?P<blob>\w+)": (?P<turns>\(.*\)),$')         # ...one line a blob...
 A_TURNS_ROW_ENDS = "    },"             # ...and closes
@@ -237,7 +240,7 @@ def main(arguments):
         outcome.texts[turns_path], written, refused = turns_repinned(records, outcome.texts[turns_path], kind)
         turns_written, turns_refused = turns_written + written, turns_refused + refused
     print(f"{len(records)} records: {sum(outcome.rewritten.values())} pair(s) re-pinned in {len(outcome.rewritten)} file(s), "
-          f"{turns_written} line(s) of turns written (the screen manager's, the accessories'), "
+          f"{turns_written} line(s) of turns written (the screen manager's, the accessories', the desk's), "
           f"{len(outcome.refused) + len(turns_refused)} refused, {len(outcome.by_hand)} for a hand")
     for name, count in sorted(outcome.rewritten.items()):
         print(f"  {name}: {count} pair(s)")

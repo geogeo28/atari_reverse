@@ -205,6 +205,7 @@ def test_marks_never_told_of_a_foreign_window_price_the_slice_on_another_process
     run no longer costs the two shores the same. (The slice LEFT ON THE ROM'S SCREEN MANAGER, as it stood before
     FLIP 4: with the screen manager ours the window is its turn, priced by itself.)"""
     row = tier3.left_on_the_rom_s_screen_manager(_the_lock_s_slice(tier3))
+    monkeypatch.setattr(tier3, "code_relocations", tier3.relocations_before_the_binding)    # (band 6's binding: the ROM's table)
     monkeypatch.setattr(aes_event.Marks, "foreign_window_opened", lambda self: None)
     monkeypatch.setattr(aes_event.Marks, "foreign_window_closed", lambda self: None)
     with pytest.raises(AssertionError, match="inside its slice the OS both sides run cost ours"):

@@ -19,10 +19,13 @@
  *     rom_rsc_init through the thunk at the end of this file; the C size_theglo and gem_main, entered as they are),
  *     and the three routines it stores BY VALUE — `aes_rom_justretf` and `aes_rom_tick_glue` (`irq.S`) and
  *     `aes_rom_ub_trampoline` (`trapdoor.S`).
- *   - `$fee8c2..$fee925` is BYTE-EXACT WITH NO RELOCATION: the handler's `movea.l #$fee900,a0` and the nine and a
- *     half longwords behind it are THE ROM'S ADDRESSES, kept as the data they are (ruling W4-R3: the Line-F call
- *     table stays the ROM's). NOTHING OF THIS BUILD EVER EXECUTES THEM: our code makes no Line-F call. What runs the
- *     copy is the desk — the ROM's — whose every AES call then goes through the ROM's table into the ROM's AES.
+ *   - `$fee8c2..$fee925` is BYTE-EXACT BUT FOR ONE LONGWORD, THE EIGHTH RELOCATION (band 6 slice B, THE BINDING; ruling
+ *     W6-R1): the handler's `movea.l #<table>,a0` loads OUR call table (`aes_linef_table`, `lineftable.S`) where the
+ *     ROM's loads `$fee900`; gem_entry's copy carries it to the RAM copy's operand (`$cc24`). The nine and a half
+ *     longwords behind the handler stay THE ROM'S ADDRESSES, the dead data they are (the handler indexes the table
+ *     where it is linked; no byte of the table is copied). NOTHING OF THIS BUILD MAKES A LINE-F CALL: what runs the
+ *     copy is the desk — the ROM's text until each routine flips — whose every call then goes through OUR table: into
+ *     our AES, and into the ROM's own desk where the table still names it.
  *
  * WHAT A `jsr` INTO C CHANGES, AND WHY IT IS RIGHT. The ROM's three callees are Alcyon's (D3-D7/A3-A6 kept); GCC's
  * keep D2-D7/A2-A6 — more, never less — and gem_entry reads nothing but D0 after size_theglo (the count: its low
@@ -156,7 +159,7 @@ IMAGE_ONLY_THUNK(gemstart_to_aes_rom_rsc_init, aes_rom_rsc_init)
 
 /* ==== $fee8c2..$fee925: WHAT gem_entry COPIES — the Line-F handler and the call table's first 38 bytes, AS DATA ====== */
 /* The handler is written as the instructions it is so that the pin's every word reads as what the ROM's is; no
- * instruction of a build jumps here, and the copy is run by the ROM's own Line-F words alone (this file's head). */
+ * instruction of a build jumps here, and the copy is run by the ROM's desk's own Line-F words alone (this file's head). */
     .balign 2
     .globl  aes_rom_linef_handler
     .type   aes_rom_linef_handler,@object
@@ -169,10 +172,10 @@ aes_rom_linef_handler:
     move.w  %d2,%sr                                 /* A CALL: back to the caller's state, */
     move.l  %a0,-(%sp)                              /* the word after the call its return address, */
     andi.w  #LINEF_OFFSET_MASK,%d1
-    .word   M68K_MOVEA_L_IMMEDIATE(M68K_A0)         /* movea.l #$fee900,a0: THE ROM'S call table, */
-    .long   AES_LINEF_TABLE
+    .word   M68K_MOVEA_L_IMMEDIATE(M68K_A0)         /* movea.l #<our table>,a0: THE BINDING (the ROM's: $fee900), */
+    .long   aes_linef_table
     movea.l 0(%a0,%d1.w),%a0
-    jmp     (%a0)                                   /* and into the ROM's routine */
+    jmp     (%a0)                                   /* and into the routine the entry names */
 1:  andi.w  #LINEF_REGISTER_BITS,%d1                /* A RETURN: its register bits */
     beq.s   2f
     lsl.w   #LINEF_MASK_SHIFT,%d1
@@ -187,7 +190,7 @@ aes_rom_linef_handler:
     unlk    %a6
     rts
 /* ...and the first nine and a half longwords of the ROM's call table, which the 100-byte copy takes with it and
- * nothing reads (the handler indexes the table in the ROM): ROM routines' addresses, as the data they are. */
+ * nothing reads (the handler indexes OUR table, where the blob links it): ROM routines' addresses, as the data they are. */
     .long   AES_ROM_GSX_1CODE, AES_ROM_BB_FILL, AES_ROM_GSX_TCALC, AES_ROM_GR_JUST, AES_ROM_GSX_TBLT
     .long   AES_ROM_GSX_ATTR, AES_ROM_GSX_BLT, AES_ROM_GSX_MOFF, AES_ROM_GR_INSIDE
     .word   HIGH_WORD_OF(AES_ROM_GSX_BOX)

@@ -2797,3 +2797,6 @@ var 0xc910 util_bar_y
 cmt 0xc910 ...its y
 var 0xc6e6 util_command
 cmt 0xc6e6 the command line Format and the copy show, sh_draw'n by $fee450
+# ---- band 6 slice B0 (the binding) ----
+var 0xcc24 linef_copy_table_operand
+cmt 0xcc24 the RAM copy of the Line-F handler's `movea.l #<table>,a0` operand (gem_entry copies $fee8c2.. to $cc00): the ROM's holds $fee900; every build of ours holds aes_linef_table there since band 6's slice B0 (gemstart.S's eighth relocation; aes_event.LINEF_TABLE_SLOT, mapped at a run's entry)

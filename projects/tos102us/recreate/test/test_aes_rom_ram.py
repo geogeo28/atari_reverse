@@ -7,7 +7,8 @@
         first request (its flag 1, then 0): rs_global = p, rs_hdr = address; do_rsfix(address, length);
             the global[] p kept; the desk's and the format dialogs' rs_fixit(p)
         after: the kept global[] into p; the desk's desktop (tree 0) sized to the screen, through the desk's own
-            rsrc_gaddr binding — rs_sglobal of its global[], get_addr, dsptch
+            ini_tree and its rsrc_gaddr binding — rs_sglobal of its global[], get_addr, dsptch (band 6 slice B0: the
+            C calls the desk's C, and its yield is the dispatcher's — over the leaf machine, the ROM's own guard)
     part 6 on: nothing — D0 still the entry's address
 
 THE CAPTURED MACHINE is the check again. Every part's entry is the snapshot's own table; the AES's and the desk's
@@ -15,11 +16,14 @@ resources are relocated in the snapshot (their flags clear, 2 and 0) while the f
 its first request is the snapshot's own next move, and a staged flag of 1 over a FRESH copy of the desk's or the AES's
 replays the start-up's, whose result the snapshot holds.
 """
+import ctypes
+
 import pytest
 
 from harness import BASE_IMAGE
 
 import aes
+import aes_event
 import aes_resource as rs
 import case
 import test_aes_resource_fix as fix
@@ -48,8 +52,10 @@ def part(index, image=BASE_IMAGE):
     return case.long_in(image, entry + rs.ROM_RSC_ADDRESS), case.word_in(image, entry + rs.ROM_RSC_BYTES)
 
 
+# THE DESK'S ARM YIELDS (its rsrc_gaddr binding's dsptch): every run here stands over the leaf machine, where the
+# ROM's dsptch is a bare `rts`, so the C's yield is answered by THE ROM'S OWN GUARD (`aes_event.dsptch_s_guard`).
 def rom_ram(index, pointer, size=0, pokes=None, **kwargs):
-    return rs.run(ROM_RAM, (index, pointer, size), pokes, **kwargs)
+    return rs.run(ROM_RAM, (index, pointer, size), pokes, hook=aes_event.dsptch_s_guard, **kwargs)
 
 
 STALE_PART = {rs.PART_AT: bytes([vdi.FILL]) * rs.PART_BYTES}
@@ -168,13 +174,16 @@ def test_the_desktop_is_sized_through_the_desk_s_own_global_not_the_caller_s():
     assert desktop_words(result.final) == desktop_words(BASE_IMAGE)
 
 
-def test_outside_the_dispatcher_the_desk_s_binding_is_not_reconstructed():
-    """The binding's dsptch enters disp when AES_INDISP is clear, which the port refuses by name — the host halts
-    rather than one build switching process. The ROM's side of it is disp's (not a leaf's), so no oracle runs here:
-    the core is called in a child over a CLEAR image, whose AES_INDISP is 0 and whose part 1 is a re-request."""
+def test_outside_the_dispatcher_the_desk_s_binding_yields_to_the_dispatcher_s_hook():
+    """The binding's dsptch enters disp when AES_INDISP is clear: the C's yield is the dispatcher's hook's, which a
+    case with no scheduler binds to the refuser — the host halts by its name rather than one build switching process.
+    The ROM's side of it is disp's (not a leaf's), so no oracle runs here: the core is called in a child over a CLEAR
+    image, whose AES_INDISP is 0 and whose part 1 is a re-request, the refuser bound as every door user's child binds it."""
+    prelude = f"{vdi_helpers.FRESH_IMAGE}; {aes_event.CHILD_BINDING}"
     code, stderr = vdi_helpers.refusal("aes_rom_ram", ["ctypes.c_void_p", "ctypes.c_int16", "ctypes.c_uint32",
-                                                       "ctypes.c_int16"], f"buf, {rs.ROM_RSC_DESK}, {rs.DESK_GLOBAL}, 0")
-    assert code != 0 and "disp and the process switch are not reconstructed" in stderr
+                                                       "ctypes.c_int16"], f"buf, {rs.ROM_RSC_DESK}, {rs.DESK_GLOBAL}, 0",
+                                       prelude=prelude)
+    assert code != 0 and "the dispatcher's hook: the C reached the dispatcher" in stderr, stderr[-600:]
 
 
 # ---- the resources' FIRST requests: the format dialogs' is the snapshot's next; the others replayed ------------------
@@ -264,9 +273,59 @@ aes.register("the rest of the desk's icons", ROM_RAM, (rs.ROM_RSC_DESK_ICONS_TAI
 aes.register("past the last part", ROM_RAM, (6, rs.PART_AT, 0), aes.leaf_machine())
 aes.register("the AES's again", ROM_RAM, (rs.ROM_RSC_AES, rs.APP_GLOBAL, 0), aes.leaf_machine())
 aes.register("the desk's again, the desktop sized", ROM_RAM, (rs.ROM_RSC_DESK, rs.DESK_GLOBAL, 0),
-             aes.leaf_machine(onto=stale_desktop()))
+             aes.leaf_machine(onto=stale_desktop()), hook=aes_event.dsptch_s_guard)
 aes.register("the format dialogs' first", ROM_RAM, (rs.ROM_RSC_FORMAT, rs.DESK_GLOBAL, 0), aes.leaf_machine())
 aes.register("the desk's first, replayed", ROM_RAM, (rs.ROM_RSC_DESK, rs.DESK_GLOBAL, 0),
              aes.leaf_machine(onto=fresh_first_request(rs.DESK_GLOBAL, "RSC_DESK_FRESH")))
 aes.register("the AES's first, replayed", ROM_RAM, (rs.ROM_RSC_AES, rs.GEM_GLOBAL, 0),
              aes.leaf_machine(onto=fresh_first_request(rs.GEM_GLOBAL, "RSC_AES_FRESH")))
+
+
+# ---- band 6 slice B0 (N1): the desk's arm calls the desk's C ----------------------------------------------------------
+# (The desk's batteries are imported INSIDE the test: imported at this module's head they would register their rows
+# before this module's own, and move the Tier 3 table's order.)
+BLOB_NAMES = ("the shipped blob", "the bench blob")
+
+
+@pytest.mark.parametrize("blob_name", BLOB_NAMES)
+def test_the_desk_s_arm_is_the_one_call_of_a_held_core_from_outside_the_unbound_desk(blob_name):
+    """rom_ram's desk arm calls ini_tree (the ROM's own callee, through which the desk's rsrc_gaddr binding yields):
+    on both blobs the function GCC folds the arm into refers to that held core and to no other — exactly what
+    `aes_deskbind.REFERRED_BY_BAND_5` exempts from the unbound pin, so the exemption names a call that is there."""
+    from recreate_kit import rom_bench
+    import aes_deskbind
+    import aes_switch
+    import transcription
+    assert set(aes_switch.BLOBS) == set(BLOB_NAMES)
+    blob = rom_bench.RomBench(*([aes_switch.BLOBS[blob_name]] if aes_switch.BLOBS[blob_name] else []))
+    graph = transcription.call_graph(blob.elf)
+    held = aes_deskbind.held_cores()
+    assert {function: tuple(sorted(graph[function] & held)) for function in aes_deskbind.REFERRED_BY_BAND_5} \
+        == aes_deskbind.REFERRED_BY_BAND_5
+
+
+def test_the_exemption_covers_the_cores_it_names_and_no_other(monkeypatch):
+    """THE EXEMPTION IS PER CORE (the fix pass, reviewer A's mutant R8): `REFERRED_BY_BAND_5`'s function declared over
+    NO core, the unbound pin names ini_tree again — by the call graph (`bound_referrers`) and by the longword of the
+    arm's `jsr` (`bound_longwords`) — so neither exempts a held core the declaration does not name."""
+    from recreate_kit import rom_bench
+    import aes_deskbind
+    import aes_switch
+    blob = rom_bench.RomBench(*([aes_switch.BLOBS["the shipped blob"]] if aes_switch.BLOBS["the shipped blob"] else []))
+    (function, cores), = aes_deskbind.REFERRED_BY_BAND_5.items()
+    assert not aes_deskbind.bound_longwords(blob)
+    monkeypatch.setitem(aes_deskbind.REFERRED_BY_BAND_5, function, ())
+    assert aes_deskbind.bound_referrers(blob, ()) == {function: list(cores)}
+    assert aes_deskbind.bound_longwords(blob) == list(cores)
+
+
+def test_the_rom_s_guard_answers_a_return_inside_the_dispatcher_alone(capfd):
+    """THE HOOK THE DESK'S ARM YIELDS INTO OVER THE LEAF MACHINE (`aes_event.dsptch_s_guard`): the ROM's own `tst.b
+    indisp / bne rts` — the call RETURNED where AES_INDISP is set, and REFUSED, by the refuser's own words, where it is
+    clear (the machine would switch away)."""
+    image = (ctypes.c_uint8 * aes_event.IMAGE_BYTES)(*aes_event.BASE_IMAGE)
+    image[aes.AES_INDISP] = aes.AES_INDISP_SET
+    assert aes_event.DSPTCH_S_GUARD(image) == aes_event.RETURNED_TO_ITS_CALLER
+    image[aes.AES_INDISP] = 0
+    assert aes_event.DSPTCH_S_GUARD(image) == aes_event.REFUSED_ANSWER
+    assert "the dispatcher's hook: the C reached the dispatcher" in capfd.readouterr().err

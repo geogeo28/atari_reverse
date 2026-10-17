@@ -357,7 +357,7 @@ MEASURED = {
     f"aes_ev_block, {waits.THE_READ_WOKEN}":
         ({BENCH: (1175732, 1089382), SHIPPED: (1175732, 1077240)}, Priced((13354, 20428), *ONE_COUNT, THE_MENU_S_WINDOW)),
     f"aes_ev_block, {waits.THE_WRITE_FREED}":
-        ({BENCH: (637572, 633722), SHIPPED: (637572, 633284)}, Priced((7354, 12018), *ONE_COUNT, THE_DESK_S_WINDOW)),
+        ({BENCH: (637572, 565260), SHIPPED: (637572, 564690)}, Priced((7354, 12018), *ONE_COUNT, THE_DESK_S_WINDOW)),
     f"aes_ev_block, {waits.THE_LOCK_WAITED_FOR}":
         ({BENCH: (377140, 330790), SHIPPED: (377140, 324282)}, Priced((14664, 21500), (14444, 21128), 1, (1, 338080, 124096))),
     f"aes_ev_block, {waits.THE_MANAGER_QUEUES_ITSELF}":
@@ -385,7 +385,7 @@ MEASURED = {
     f"aes_ap_rdwr, {waits.THE_READ_WOKEN}":
         ({BENCH: (1176102, 1089570), SHIPPED: (1176102, 1077430)}, Priced((13544, 20798), (190, 370), 1, THE_MENU_S_WINDOW)),
     f"aes_ap_rdwr, {waits.THE_WRITE_FREED}":
-        ({BENCH: (637942, 633910), SHIPPED: (637942, 633474)}, Priced((7544, 12388), (190, 370), 1, THE_DESK_S_WINDOW)),
+        ({BENCH: (637942, 565448), SHIPPED: (637942, 564880)}, Priced((7544, 12388), (190, 370), 1, THE_DESK_S_WINDOW)),
     "aes_ev_mwait, two rectangles' waits, blocked; both come in one move":
         ({BENCH: (37150, 31518), SHIPPED: (37150, 31854)}, Priced((13558, 19590), *ONE_COUNT, NO_WINDOW)),
     "aes_ev_mwait, six waits, blocked; the key's alone comes":
@@ -507,7 +507,10 @@ def test_the_writer_s_row_is_the_screen_manager_s_and_its_foreign_window_the_des
     assert any(lo <= low and high <= hi for low, high, _reason in made.drops), "the dropped context is the screen manager's"
     desk_s = aes_switch.uda_context_drop(aes_event.uda_of(SHELL, make_image(made.pokes)))
     (lo, hi, _why), = desk_s
-    assert not any(lo <= low < hi for low, _high, _reason in made.drops), "...and nothing of the desk's: its turn is compared"
+    # (SINCE BAND 6's BINDING the desk's turn is ours — the ROM's desk text over our AES, ruling W6-R7 — so its saved
+    # context is dropped too, by nature: `aes_switching.desk_drops`)
+    assert any(lo <= low < hi and why == switching.DESK_CONTEXT_WHY for low, _high, why in made.drops), (
+        "...and the desk's, its turn ours since the binding")
     _measured, watch, foreign = switching.measured_on(blob, row)
     assert watch.entered[-1] == SCREEN_MANAGER and set(watch.entered[:-1]) == {SHELL} and foreign.windows == 1
     image = make_image(made.pokes)

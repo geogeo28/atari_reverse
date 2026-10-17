@@ -41,6 +41,7 @@ import st_build
 import accessory_disk
 import aes
 import aes_boot
+import aes_ctlmgr
 import aes_event
 import aes_objdraw as od
 import aes_objects
@@ -959,19 +960,23 @@ ON_THE_ROM_S_MACHINE = {
     addrs.VECTOR_TRAP_GEM: "aes_rom_trap2", aes_event.ETV_CRITIC: "aes_rom_crit_err",
     BUTTON_VECTOR: "aes_rom_button_glue", MOTION_VECTOR: "aes_rom_motion_glue", TICK_VECTOR: "aes_rom_tick_glue",
     aes.AES_USERDEF_TRAMPOLINE: "aes_rom_ub_trampoline", aes_event.JUSTRETF_KEPT_AT: "aes_rom_justretf",
-    aes_event.TICK_GLUE_KEPT_AT: "aes_rom_tick_glue", aes_event.SCREEN_MANAGER_ENTRY_SLOTS[0]: "aes_rom_ctlmgr"}
+    aes_event.TICK_GLUE_KEPT_AT: "aes_rom_tick_glue", aes_event.SCREEN_MANAGER_ENTRY_SLOTS[0]: "aes_rom_ctlmgr",
+    # (band 6's binding: the handler copy's table operand, `$cc24` — the ROM's call table, the registry's since slice B0)
+    aes_event.LINEF_TABLE_SLOT.slots[0]: "aes_linef_table"}
 # ...AND WHAT A DOOR OF THE TRAP DOOR'S THREE ALONE — WAVE 3's NARROW DOOR — LEAVES THE ROM'S (it maps `$88`, `$404`,
 # the programs' frames, and the takeover the screen manager's entry): SIX LONGWORDS — gem_entry's three by-value
 # stores and THE TWO GLUES gsx_init handed the VDI before the takeover's stop. Slice M's FINDING (behind a door called
 # ours the ROM's button and motion glue, and through them its fork functions, and its tick glue still ran) — PAID BY
 # THE FULL FLIP: THE DOOR maps all six, and behind it NOTHING IS LEFT (`LEFT_THE_ROM_S_BEHIND_THE_DOOR`, empty). The
-# six stay named, by the part that maps each: what the scan refuses for when that part is taken out of the door.
+# six stay named, by the part that maps each: what the scan refuses for when that part is taken out of the door. AND
+# A SEVENTH SINCE BAND 6's BINDING: the handler copy's table operand (`$cc24`), which the narrow door leaves the ROM's.
 LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE = {slot: symbol for slot, symbol in ON_THE_ROM_S_MACHINE.items() if slot not in (
     addrs.VECTOR_TRAP_GEM, aes_event.ETV_CRITIC, aes_event.SCREEN_MANAGER_ENTRY_SLOTS[0])}
 LEFT_THE_ROM_S_BEHIND_THE_DOOR = {}
 MAPPED_BY_THE_FULL_FLIP_S_PARTS = {
     aes_event.JUSTRETF_SLOT.what: (aes_event.JUSTRETF_KEPT_AT,), aes_event.TICK_GLUE.what: (aes_event.TICK_GLUE_KEPT_AT, TICK_VECTOR),
-    aes_event.USERBLK_TRAMPOLINE_SLOT.what: (aes.AES_USERDEF_TRAMPOLINE,), aes_event.GLUE_CODES.what: (BUTTON_VECTOR, MOTION_VECTOR)}
+    aes_event.USERBLK_TRAMPOLINE_SLOT.what: (aes.AES_USERDEF_TRAMPOLINE,), aes_event.GLUE_CODES.what: (BUTTON_VECTOR, MOTION_VECTOR),
+    aes_event.LINEF_TABLE_SLOT.what: aes_event.LINEF_TABLE_SLOT.slots}     # (band 6's binding, the door's ninth longword)
 assert sorted(slot for slots in MAPPED_BY_THE_FULL_FLIP_S_PARTS.values() for slot in slots) == sorted(LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE)
 SCANNED = {"the desk alone": aes_boot.desk_machine, "two quiet accessories": aes_boot.accessory_machine, "the DESKTOP.INF machine": inf}
 CAPTURE_OF = {"the desk alone": aes_boot.preinit, "two quiet accessories": aes_boot.accessory_preinit, "the DESKTOP.INF machine": aes_boot.inf_preinit}
@@ -1055,18 +1060,19 @@ def test_behind_the_door_at_its_idle_no_live_longword_holds_the_rom_s_copy_of_a_
 
 
 FULL_FLIP_S_PARTS = (aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE, aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.GLUE_CODES)
+# ...and the part THE BINDING added (band 6 slice B0): the Line-F call table the handler's copy indexes.
+PAST_THE_TRAP_DOOR = (*FULL_FLIP_S_PARTS, aes_event.LINEF_TABLE_SLOT)
 
 
 @every_blob
-@pytest.mark.parametrize("left_out", FULL_FLIP_S_PARTS, ids=lambda part: part.what)
+@pytest.mark.parametrize("left_out", PAST_THE_TRAP_DOOR, ids=lambda part: part.what)
 def test_each_part_the_full_flip_added_taken_out_of_the_door_is_refused_by_the_scan_for_its_own_longwords(left_out, blob):
     """A MAPPING NOBODY WOULD MISS IS NOT A MAPPING — THE DOOR'S OWN TEETH, part by part, by a real boot: the quiet
     pair's machine behind THE DOOR LESS ONE of the four parts the full flip added (justretf's slot; the tick glue;
-    the desk's trampoline; the two glues) is REFUSED BY THE SCAN, naming exactly that part's longwords — each a slot
-    of the registry, still the ROM's routine — and no other; and with the four all out (the trap door's three alone:
-    wave 3's narrow door) it names the six."""
-    assert tuple(part for part in aes_event.THE_DOOR if part not in aes_event.THE_TRAP_DOOR) == (
-        aes_event.JUSTRETF_SLOT, aes_event.TICK_GLUE, aes_event.USERBLK_TRAMPOLINE_SLOT, aes_event.GLUE_CODES)
+    the desk's trampoline; the two glues) — or of the one the binding added (the handler copy's table) — is REFUSED
+    BY THE SCAN, naming exactly that part's longwords — each a slot of the registry, still the ROM's — and no other;
+    and with the five all out (the trap door's three alone: wave 3's narrow door) it names the seven."""
+    assert tuple(part for part in aes_event.THE_DOOR if part not in aes_event.THE_TRAP_DOOR) == PAST_THE_TRAP_DOOR
     booted = behind_the_door("two quiet accessories", blob, without=(left_out.what,))
     slots = MAPPED_BY_THE_FULL_FLIP_S_PARTS[left_out.what]
     with pytest.raises(Refused) as refused:
@@ -1076,9 +1082,9 @@ def test_each_part_the_full_flip_added_taken_out_of_the_door_is_refused_by_the_s
     for slot in slots:
         assert f"${slot:x} holds" in said and f"`{ON_THE_ROM_S_MACHINE[slot]}`" in said and aes_boot.IN_A_SLOT.format(left_out.what) in said
     assert left_the_rom_s(booted) == {slot: ON_THE_ROM_S_MACHINE[slot] for slot in slots}
-    narrow = behind_the_door("two quiet accessories", blob, without=tuple(part.what for part in FULL_FLIP_S_PARTS))
+    narrow = behind_the_door("two quiet accessories", blob, without=tuple(part.what for part in PAST_THE_TRAP_DOOR))
     assert [part.what for part in narrow.ours.door] == [part.what for part in aes_event.THE_TRAP_DOOR]
-    assert left_the_rom_s(narrow) == LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE and len(LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE) == 6
+    assert left_the_rom_s(narrow) == LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE and len(LEFT_THE_ROM_S_BEHIND_THE_TRAP_DOOR_ALONE) == 7
 
 
 def with_longs(booted, pokes):
@@ -1149,16 +1155,17 @@ HELD_AT_DESKMAIN_S_ENTRY = {aes.AES_GSX_CONTRL_PTR: "aes_rom_tick_glue"}      # 
 @every_blob
 def test_what_the_scan_cannot_see_in_a_longword_of_the_door_is_refused_by_the_door_s_own_vet(blob):
     """THE SCAN'S LIMIT, AND WHAT COVERS IT IN THE DOOR'S OWN LONGWORDS — labelled crafted megabytes of the quiet pair's
-    door machine. In each of the eight longwords the door maps: A ROM ROUTINE THE REGISTRY DOES NOT DECLARE (forkq),
-    and THE ROM'S `trap #2` HANDLER UNDER A NON-ZERO TOP BYTE, each PASS THE SCAN — it matches seventeen whole values
+    door machine. In each of the nine longwords the door maps (the binding's table among them): A ROM ROUTINE THE
+    REGISTRY DOES NOT DECLARE (forkq), and THE ROM'S `trap #2` HANDLER UNDER A NON-ZERO TOP BYTE, each PASS THE SCAN —
+    it matches eighteen whole values
     — and each is REFUSED BY `vet_the_door_stands`, that longword's part named. And in a live longword that is no
     part of the door (gl_newdesk) the undeclared routine passes the scan and NOTHING REFUSES IT: said, not hidden."""
     booted = behind_the_door("two quiet accessories", blob)
-    assert AN_UNDECLARED_ROM_ROUTINE not in aes_boot.routines_by_value() and len(aes_boot.routines_by_value()) == 17
+    assert AN_UNDECLARED_ROM_ROUTINE not in aes_boot.routines_by_value() and len(aes_boot.routines_by_value()) == 18
     assert isr.blob_named(blob).entry(ITS_ENTRY_IN_A_BUILD), "a ROM routine a build has an entry for"
     longwords = [(part, slot) for part in booted.ours.door for pd, slot in aes_boot.door_slots(booted.ram, part) if pd is None]
     assert sorted(slot for _part, slot in longwords) == sorted(
-        slot for part in aes_event.THE_DOOR for slot in aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())) and len(longwords) == 8
+        slot for part in aes_event.THE_DOOR for slot in aes_event.THE_MACHINE_S_VECTORS.get(part.what, ())) and len(longwords) == 9
     for part, slot in longwords:
         for wrong in (AN_UNDECLARED_ROM_ROUTINE, A_NON_ZERO_TOP_BYTE | addrs.GEM_TRAP2):
             crafted = with_longs(booted, {slot: wrong})
@@ -1299,7 +1306,8 @@ def our_text_of(blob, part):
     one ships as the ROM's instructions, byte-pinned)."""
     built = isr.blob_named(blob)
     lengths = {lo: hi - lo for lo, hi in aes_event.ROM_TEXT_OF[part.what]}
-    return tuple((built.entry(symbol), built.entry(symbol) + lengths[rom]) for rom, symbol in part.symbols.items())
+    # (the binding's table is no routine: no text of the ROM's stands for it — none of ours either)
+    return tuple((built.entry(symbol), built.entry(symbol) + lengths[rom]) for rom, symbol in part.symbols.items() if rom in lengths)
 
 
 USERDEF_STACK = "the desk's G_USERDEF stack: dead once the trampoline has returned (it loads its stack pointer from the top)"
@@ -1313,6 +1321,13 @@ def dead_spans_a_code_address_is_left_in(machine):
     and the trampoline's `jsr` its own return site."""
     top = machine.long(aes.AES_USERDEF_STACK) & BUS
     return {**aes_boot.dead_by_nature(machine), USERDEF_STACK: (top - USERDEF_STACK_BYTES, top)}
+
+
+def the_bound_desk_s_draw(machine):
+    """THE DESK'S G_USERDEF DRAW OVER OUR AES (band 6's binding): the trampoline's saved caller's stack pointer (a place
+    in each build's AES frames, `$8c36`) and the G_USERDEF stack (dead once the trampoline has returned: the desk's
+    draw code's frames over each build's AES), `((lo, hi), ...)` — by nature, a class each."""
+    return ((aes.AES_USERDEF_SP_SAVE, aes.AES_USERDEF_SP_SAVE + LONG_BYTES), dead_spans_a_code_address_is_left_in(machine)[USERDEF_STACK])
 
 
 def given_the_rom_s_names(machine, blob, in_the_dead_spans=True):
@@ -1350,7 +1365,7 @@ def test_behind_the_door_a_continuation_runs_our_glue_and_our_trampoline_and_lea
     machine, view, receives, entered = CONTINUED_BEHIND_THE_DOOR[label]
     rom = SCANNED[machine]() if view == ICONS else inf(view)
     behind, received = behind_the_door(machine, blob, view), receives(rom)
-    parts = [part for part in aes_event.THE_DOOR if part not in aes_event.THE_TRAP_DOOR]
+    parts = [part for part in aes_event.THE_DOOR if part not in aes_event.THE_TRAP_DOOR and aes_event.ROM_TEXT_OF[part.what]]
     spans = [aes_event.ROM_TEXT_OF[part.what] for part in parts] + [our_text_of(blob, part) for part in parts]
     (rom_after, rom_in), (ours_after, ours_in) = (continued_and_profiled(each, received, spans) for each in (rom, behind))
     in_the_rom_s_text = dict(zip((part.what for part in parts), zip(rom_in[:len(parts)], ours_in[:len(parts)])))
@@ -1361,17 +1376,20 @@ def test_behind_the_door_a_continuation_runs_our_glue_and_our_trampoline_and_lea
         (the_rom_s_run, our_run), (the_rom_s_run_in_ours, our_run_in_ours) = in_the_rom_s_text[what], in_our_entries[what]
         assert our_run == 0 == the_rom_s_run_in_ours, f"{what}: our run {our_run} cycles in the ROM's text, the ROM's {the_rom_s_run_in_ours} in the blob's"
         assert our_run_in_ours == the_rom_s_run, f"{what}: the ROM's routine ran {the_rom_s_run} cycles, our entry {our_run_in_ours}"
-    assert ours_after.observed == rom_after.observed and ours_after.idle == rom_after.idle == aes_boot.THE_ROM_S
+    # (our machine idles in OUR dispatcher since band 6's binding: the desk, over our AES, parks through ours)
+    assert ours_after.observed == rom_after.observed and (ours_after.idle, rom_after.idle) == (aes_boot.OURS, aes_boot.THE_ROM_S)
     # THE SCAN, where the continuation ends
     assert left_the_rom_s(ours_after) == {} and aes_boot.vet_no_entry_is_held_as_the_rom_s(ours_after)
     walked = aes_event.userblk_slots(ours_after.ram)
     assert len(walked) == (THE_TRAMPOLINE in entered) and all(
         ours_after.long(slot) == isr.blob_named(blob).entry("aes_rom_ub_trampoline") for _none, slot in walked)
     # THE MEGABYTE
-    classes, _nameable = aes_boot.by_nature(rom_after, ours_after)
+    classes, nameable = aes_boot.by_nature(rom_after, ours_after)
     for name, (lo, hi) in aes_boot.GLUE_STACKS.items():
         assert rom_after.ram[lo:hi] != ours_after.ram[lo:hi], f"{name}: named, and the two machines hold the same bytes there"
-    left_out = sorted((*classes.values(), *aes_boot.GLUE_STACKS.values()))
+    # ...the two idles' (two dispatchers since the binding) and THE BOUND DESK'S (`aes_ctlmgr.the_bound_desk_s_classes`)
+    left_out = sorted((*classes.values(), *aes_boot.GLUE_STACKS.values(), *nameable.values(),
+                       *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after)))
     assert all(hi <= lo_after for (_lo, hi), (lo_after, _hi) in zip(left_out, left_out[1:])), "the classes do not overlap"
     mine = given_the_rom_s_names(ours_after, blob)
     differing = [(at, length) for at, length in aes_boot.differing_runs(rom_after.ram, bytes(mine))
@@ -1386,13 +1404,18 @@ def test_a_continued_door_machine_compared_with_no_code_address_mapped_differs_w
     longwords, the walked USERBLK and the fork queue's codes; and mapped through the registry but NOT in the dead
     spans it differs in exactly TWO longwords — one on the desk's own stack under its parked stack pointer, the
     trampoline's address the desk's draw left in its frame; one on the desk's G_USERDEF stack, the return site of the
-    trampoline's own `jsr` into the desk's draw code, the same offset inside the routine on both shores."""
+    trampoline's own `jsr` into the desk's draw code, the same offset inside the routine on both shores. SINCE BAND 6's
+    BINDING the desk's stack and its G_USERDEF stack hold our AES's frames under the desk's — classes by nature, and
+    the two longwords found by what the ROM's machine holds there: the return site on the G_USERDEF stack is still
+    ours at the same offset; the trampoline's address in the desk's own dead frame is OVERWRITTEN on ours by our AES's
+    frames (the binding's by nature: the ROM's machine alone keeps it)."""
     machine, view, receives, _entered = CONTINUED_BEHIND_THE_DOOR["the DESKTOP.INF machine as text: drive A:'s window opened"]
     rom, behind = inf(view), behind_the_door(machine, blob, view)
     received = receives(rom)
     rom_after, ours_after = rom.continued(*received), behind.continued(*received)
-    classes, _nameable = aes_boot.by_nature(rom_after, ours_after)
-    left_out = (*classes.values(), *aes_boot.GLUE_STACKS.values())
+    classes, nameable = aes_boot.by_nature(rom_after, ours_after)
+    left_out = (*classes.values(), *aes_boot.GLUE_STACKS.values(), *nameable.values(),
+                *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after))
 
     def outside_the_classes(mine):
         """The longwords the two megabytes differ in outside the classes: each run of differing bytes ends where a
@@ -1406,11 +1429,15 @@ def test_a_continued_door_machine_compared_with_no_code_address_mapped_differs_w
     in_the_fork_queue = [at for at in unmapped if aes.AES_FORK_QUEUE <= at < aes.AES_FORK_QUEUE + aes.AES_FORK_ENTRIES * aes.FORK_ENTRY_BYTES]
     assert in_the_fork_queue, "our glue queued OUR fork functions"
     built = isr.blob_named(blob)
-    by_the_registry_alone = outside_the_classes(given_the_rom_s_names(ours_after, blob, in_the_dead_spans=False))
+    assert outside_the_classes(given_the_rom_s_names(ours_after, blob, in_the_dead_spans=False)) == []
     desk, our_trampoline = ours_after.static_processes()[0], built.entry("aes_rom_ub_trampoline")
-    in_its_frame, on_its_userdef_stack = by_the_registry_alone
+    trampoline_s_text = range(aes_event.USERBLK_TRAMPOLINE, aes_event.USERBLK_TRAMPOLINE_END)
+    in_the_two = (aes_ctlmgr.the_desk_s_stack(ours_after), dead_spans_a_code_address_is_left_in(ours_after)[USERDEF_STACK])
+    holding = [at for span_lo, span_hi in in_the_two for at in range(span_lo + span_lo % WORD_BYTES, span_hi - LONG_BYTES + 1, WORD_BYTES)
+               if rom_after.long(at) in trampoline_s_text]
+    in_its_frame, on_its_userdef_stack = holding
     assert desk.uda + aes.UDA_STATE_BYTES <= in_its_frame < ours_after.long(desk.uda + aes.UDA_SUPER_SP) & BUS
-    assert (rom_after.long(in_its_frame), ours_after.long(in_its_frame)) == (aes_event.USERBLK_TRAMPOLINE, our_trampoline)
+    assert rom_after.long(in_its_frame) == aes_event.USERBLK_TRAMPOLINE != ours_after.long(in_its_frame)
     lo, hi = dead_spans_a_code_address_is_left_in(ours_after)[USERDEF_STACK]
     assert lo <= on_its_userdef_stack < hi and hi == ours_after.long(aes.AES_USERDEF_STACK) & BUS == rom_after.long(aes.AES_USERDEF_STACK) & BUS
     back_to = rom_after.long(on_its_userdef_stack) - aes_event.USERBLK_TRAMPOLINE

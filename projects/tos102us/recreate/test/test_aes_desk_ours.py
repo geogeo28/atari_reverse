@@ -1,0 +1,439 @@
+r"""THE HANDS' CAMPAIGN ON OUR SHORE (band 6 slice H, slice B's) — `test/aes_desk.py`'s our-shore block, held.
+
+THE BINDING (slice B0) lays OUR Line-F call table at `$cc24` on every machine of ours, so the ROM's desk — each of its
+routines until that routine flips — runs over OUR AES. Every chain of the hands' campaign (`aes_desk.CHAINS`, held on
+the ROM's machine by `test_aes_desk_rom.py`) is walked again ON THE OUR-BOOT MACHINE of its capture — the shipped blob
+laid at the pre-init stop and the run entered at its own gem_entry (ruling W4-R1's labelled staging) — by the same
+hands, every point read off THAT machine's trees. Per chain (a case a chain: the campaign shards over xdist's workers):
+
+  * EACH STEP ENDS AT OUR IDLE, or at the named stop's address ON OUR SHORE (`aes_desk.our_stop`: the rubber box's poll
+    is band 3's C gr_stilldn's entry);
+  * THE THREE INVARIANTS (the design's §4, ruling W6-R5): THE SCREEN byte-equal WHERE EVERY STEP ENDS (and the
+    desk's block, its code addresses given the ROM's names); THE OS's cycles (the BIOS, GEMDOS, the VDI) EQUAL ON EVERY STEP;
+    and, the converse, EVERY ROM DESK ROUTINE'S OWN CYCLES EQUAL ON EVERY STEP — each PC charged to its routine by
+    EVERY start of the AES map's inventory (`aes_desk.charged`) — but for the routines a routine of bands 0-5 runs on
+    the ROM's shore (`RUN_UNDER_BANDS_0_TO_5`: ours on ours), short by EXACTLY one pass for each time that routine
+    ran, counted off the ROM's own step profile at its call site;
+  * WHO RAN (W6-R5): every cycle of the ROM's GEM text on our shore lies in a DECLARED span — band 6's routines still
+    the ROM's (`aes_desk.still_the_rom_s`, shrinking with each flip) and the ROM's text of bands 0-5 they reach
+    otherwise than through the table (`aes_desk.ROM_TEXT_UNDER_ROM_CALLERS`, each with a chain it ran in);
+  * THE FOUR STACKS' DEPTHS (`DEPTHS`, off the write ledgers as `aes_desk.depths` reads them) — PD0's under W6-R4's
+    HARD GATE (`pd0_gate`, the user's ruling: it binds every flip that deepens a path).
+
+W6-R8's TWO CHAINS ARE REFUSED ON OUR SHORE, each a NAMED, LABELLED CLASS (the user's ruling: the launch and the disk
+copy stay the ROM's shore's): the ROM's own walk of each stores over the span our blob lies in.
+
+AND N6: every run of `aes_boot`'s — a boot's too — surfaces what its devices left (`aes_boot.surfaced`).
+
+THE NUMBERS ARE THE SHIPPED BLOB'S over these hands and these captures, measured with nothing of band 6 flipped: each
+flip slice moves its rows (its routines leave `still_the_rom_s`, its depths move) — and says so.
+"""
+import functools
+import inspect
+from collections import namedtuple
+
+import pytest
+
+from harness import addrs
+
+import aes
+import aes_boot
+import aes_desk as desk
+import aes_stack
+import transcription
+from aes_boot import OURS, Refused
+
+BUS = aes_boot.BUS
+BOUND_TABLE = transcription.LINEF_TABLE_SYMBOL
+STACKS = (desk.PD0_STACK, desk.PD1_STACK, desk.DISPATCHER_STACK, desk.USERDEF_STACK)
+
+# ---- W6-R8: THE TWO CHAINS REFUSED ON OUR SHORE, each a named class ---------------------------------------------------------------
+LAUNCHED = "files: the program double-clicked — launched"
+A_LAUNCH_OVER_THE_BLOB = "W6-R8: A LAUNCH — the shell's Pexec loads the program over free memory, where our blob lies"
+A_COPY_OVER_THE_BLOB = "W6-R8: THE DISK COPY — its buffer, all free memory but a kilobyte, read full of tracks where our blob lies"
+REFUSED_ON_OUR_SHORE = {   # `{chain: (its class, the step refused, what the refusal reads)}`
+    LAUNCHED: (A_LAUNCH_OVER_THE_BLOB, 0, "the run did not reach an idle within 6000000 instructions"),
+    desk.COPIED: (A_COPY_OVER_THE_BLOB, 4, "Rwabs of drive 254: the model holds drive A: alone")}
+
+
+def _goes_on_from_a_refused(name):
+    after = desk.CHAINS[name].after
+    return after in REFUSED_ON_OUR_SHORE or (after in desk.CHAINS and _goes_on_from_a_refused(after))
+
+
+WALKED_ON_OUR_SHORE = [name for name in desk.CHAINS if name not in REFUSED_ON_OUR_SHORE and not _goes_on_from_a_refused(name)]
+
+
+def _stored_over(name, span):
+    """How many bytes of `span` (`(lo, hi)`) THE ROM'S OWN WALK of the chain `name` stores into, all its steps told."""
+    lo, hi = span
+    runs = sorted((max(start, lo), min(start + length, hi)) for stepped in desk.walked(name).steps
+                  for start, length in stepped.boot.stored if start < hi and start + length > lo)
+    covered, reach = 0, lo
+    for start, end in runs:
+        covered += max(0, end - max(start, reach))
+        reach = max(reach, end)
+    return covered
+
+
+def _the_blob_s_span():
+    ours = aes_boot.ours_of(desk.our_blob())
+    return ours.base, ours.end
+
+
+# THE LAUNCH STORES OVER ALL OF IT (the program's memory cleared and loaded where the blob lies), the copy over most.
+STORES_OVER_ALL_THE_BLOB = {LAUNCHED: True, desk.COPIED: False}
+
+
+@pytest.mark.parametrize("name", REFUSED_ON_OUR_SHORE)
+def test_w6_r8_s_two_chains_are_refused_on_our_shore_by_name_and_the_rom_s_own_walk_stores_over_the_blob(name):
+    """THE LABELLED CLASS, AND WHY: the chain's step is refused on our machine as measured, every step before it
+    walked — and the ROM's own walk of the chain (its machine holds no blob) STORES INTO THE SPAN OUR BLOB LIES IN: the
+    program's memory cleared and loaded (the whole span: as large as the blob is today, read off it), the copy's buffer
+    read full. On our machine those stores land on our code."""
+    labelled, step, reads = REFUSED_ON_OUR_SHORE[name]
+    with pytest.raises(Refused, match=f"step {step} of .* on our shore .*{reads}"):
+        desk.walked_ours(name)
+    lo, hi = _the_blob_s_span()
+    over = _stored_over(name, (lo, hi))
+    assert over == hi - lo if STORES_OVER_ALL_THE_BLOB[name] else 0 < over < hi - lo, (
+        f"{labelled}: the ROM's walk of {name!r} stores {over} bytes over [{lo:#x}, {hi:#x})")
+
+
+def test_no_walked_chain_s_rom_walk_stores_over_the_blob():
+    """...AND THE REASON TELLS THE TWO APART (reviewer B's F4): no chain walked on our shore has a ROM walk that stores
+    a byte where our blob lies — the refusal covers W6-R8's two alone."""
+    span = _the_blob_s_span()
+    assert not [name for name in WALKED_ON_OUR_SHORE if _stored_over(name, span)]
+
+
+def test_no_chain_goes_on_from_a_refused_one_and_the_rest_are_walked():
+    assert not [name for name in desk.CHAINS if _goes_on_from_a_refused(name)]
+    assert len(WALKED_ON_OUR_SHORE) == len(desk.CHAINS) - len(REFUSED_ON_OUR_SHORE) == len(DEPTHS)
+    assert set(DEPTHS) == set(WALKED_ON_OUR_SHORE)
+
+
+# ---- THE MACHINES AND THE STOPS OF OUR SHORE --------------------------------------------------------------------------------------------
+LINE_F_TABLE_SLOT = aes.AES_LINEF_COPY + aes.LINEF_TABLE_OPERAND     # `$cc24`: the table the handler's copy indexes
+
+
+def test_our_machines_are_the_rom_s_captures_booted_by_our_gem_entry_at_our_idle_over_our_table():
+    """One machine of ours for each of `MACHINES`; the three captures' booted by OUR gem_entry (an our-boot of the
+    shipped blob), at OUR dispatcher's idle, over the disk the ROM's machine of that capture holds — and THE BOUND
+    TABLE: the Line-F handler's copy indexes OUR table (`$cc24`), where the ROM's machine's indexes the ROM's."""
+    assert set(desk.OUR_MACHINES) == set(desk.MACHINES)
+    for name in (desk.INF_ICONS, desk.INF_TEXT, desk.FILES):
+        ours, rom = desk.OUR_MACHINES[name](), desk.MACHINES[name]()
+        assert ours.our_boot is not None and ours.ours == aes_boot.ours_of(desk.our_blob()) and rom.ours is None
+        assert ours.idle == OURS and ours.boot.disk == rom.boot.disk
+        assert (ours.long(LINE_F_TABLE_SLOT), rom.long(LINE_F_TABLE_SLOT)) == (desk.our_blob().entry(BOUND_TABLE), aes.AES_LINEF_TABLE)
+
+
+def test_a_step_of_ours_refuses_the_rom_s_machine_and_the_rom_s_step_refuses_ours():
+    rom, ours = aes_boot.inf_machine().boot, desk.OUR_MACHINES[desk.INF_ICONS]().boot
+    with pytest.raises(Refused, match="this is the ROM's machine"):
+        desk.stepped_ours.derive(rom, ())
+    with pytest.raises(Refused, match="THE ROM'S MACHINE'S: this one holds a blob"):
+        desk.stepped.derive(ours, ())
+
+
+THE_BOXES = ("a rubber box on the desktop, round the trash", "a rubber box on the desktop, round drive B: and the trash")
+
+
+def test_each_named_stop_has_its_address_on_our_shore():
+    """N4: THE RUBBER BOX'S POLL IS OUR gr_stilldn's ENTRY (band 3's C), the viewer's two key waits the ROM's own
+    (the show engine is the ROM's on our machine until unit M flips) — and each rubber box chain stands there twice,
+    at no idle, before OUR idle."""
+    blob = desk.our_blob()
+    assert desk.our_stop(desk.RUBBER_BOX_POLL) == blob.entry("aes_gr_stilldn") != desk.STOPS[desk.RUBBER_BOX_POLL]
+    for stop in (desk.VIEWER_AT_A_PAGE_S_END, desk.VIEWER_AT_THE_FILE_S_END):
+        assert desk.our_stop(stop) == desk.STOPS[stop]
+    for name in THE_BOXES:
+        first, second, last = desk.walked_ours(name).steps
+        for stepped in (first, second):
+            assert stepped.boot.idle is None and stepped.boot.registers["pc"] & BUS == desk.our_stop(desk.RUBBER_BOX_POLL)
+        assert last.boot.idle == OURS
+
+
+# ---- WHO RAN: the declared spans -------------------------------------------------------------------------------------------------------
+# A chain each of `aes_desk.ROM_TEXT_UNDER_ROM_CALLERS` runs in on our shore: no span is declared that nothing runs.
+RAN_IN = {desk.GEMGRAF_HELPER: "drive A: dragged to the trash, Return", desk.DOS_CALL: "Options > Save Desktop, Return",
+          desk.DOS_CALL_BODY: "Options > Save Desktop, Return", desk.DOS_FREE: "Options > Save Desktop, Return",
+          desk.DOS_SFIRST_S_ONE: "A: File > Show Info, Return", desk.LMUL: "file: shown, a key at its end"}
+BAND_6_FLIPPED = 0                      # band 6's routines whose entry of the shipped blob's table is ours (slice B: none)
+
+
+def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text_they_reach_each_run():
+    """THE DECLARED SPANS (W6-R5): band 6's 244 less those flipped — none at the binding —, and the ROM's text of
+    bands 0-5 they reach by a `bsr`, `jsr`, `jmp` or branch: each a start the inventory lists, none of band
+    6's, each run on our shore in the chain named."""
+    assert len(desk.flipped()) == BAND_6_FLIPPED and desk.still_the_rom_s() == frozenset(desk.routines())
+    assert set(RAN_IN) == set(desk.ROM_TEXT_UNDER_ROM_CALLERS)
+    assert set(RAN_IN) <= set(desk.inventoried()) and not set(RAN_IN) & set(desk.routines())
+    for start, name in RAN_IN.items():
+        ran = set().union(*(desk.charged(stepped.profile.text) for stepped in desk.walked_ours(name).steps))
+        assert start in ran, f"{start:#x} ran in no step of {name!r} on our shore"
+
+
+# ---- THE CONVERSE INVARIANT'S ONE CLASS: band 6's text a routine of bands 0-5 runs on the ROM's shore ----------------------------------
+# On the ROM's machine the ROM's own routine of bands 0-5 runs THESE SPANS — it calls them, or branches into their
+# body; on ours that routine is OURS and calls OUR twin, or runs its own body: the ROM's shore runs each span ONE PASS
+# MORE THAN OURS FOR EVERY TIME THAT CALLER RAN — EXACTLY (the fix pass, reviewer B's F1: a deficit of any whole number
+# of passes hid a pass of the desk's own). How many times the caller ran in a step is read off THE ROM'S OWN STEP
+# PROFILE at an instruction of the caller's that runs once a pass (`site`, whose cycles are `site_cycles` a pass); our
+# shore runs that instruction never. `{the span's start: Under(who runs it, the cycles of one pass, site, site_cycles)}`.
+Under = namedtuple("Under", "who a_pass site site_cycles")
+INI_TREE, RSRC_GADDR_BINDING, DOS_WRITE = 0xfe0b6e, 0xfde354, 0xfe3a7c
+ROM_RAM_S_ARM_RETURN = 0xfee74a         # rom_ram's desk arm, past its Line-F call of ini_tree: `addq.l #4,sp` (8 cycles)
+DOS_READ = 0xfe3a78                     # dos_read's first instruction: `moveq #$3f,d1` (4 cycles), then `bra` into dos_write
+ADDQ_L_AN_CYCLES, MOVEQ_CYCLES = 8, 4
+RUN_UNDER_BANDS_0_TO_5 = {
+    INI_TREE: Under("rom_ram's desk arm (the desktop sized, deskmain's second pass): ini_tree, the desk's tree 0", 158,
+                    ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES),
+    RSRC_GADDR_BINDING: Under("...and under ini_tree, unit D's rsrc_gaddr binding (one call a pass of ini_tree)", 218,
+                              ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES),
+    # (dos_write's BODY: dos_read enters it past dos_write's own `moveq #$40,d1` — 124 a pass, not the 128 of a call)
+    DOS_WRITE: Under("dos_read ($fe3a78, band 5's): `moveq #$3f,d1; bra` into the body of dos_write, unit O's leaf", 124,
+                     DOS_READ, MOVEQ_CYCLES)}
+
+
+def test_the_class_s_spans_are_band_6_s_still_the_rom_s():
+    """Each span of the class is a band-6 routine STILL THE ROM'S (`still_the_rom_s`): a flip that takes one out
+    (units O and D, at F1) reds here, and the class's entry goes with it."""
+    assert set(RUN_UNDER_BANDS_0_TO_5) <= desk.still_the_rom_s()
+
+
+# ---- THE FOUR STACKS' DEPTHS ON OUR SHORE, per chain — and W6-R4's gate ---------------------------------------------------------------
+# W6-R4, THE USER'S: a hard gate, binding every flip that deepens a path — PD0's span (`aes_desk.PD0_BYTES`, its one
+# home; each machine of ours asserted to have it) less THE INTERRUPT NEST band 5 charges, MEASURED on our shore
+# (`aes_stack.nest_on_the_first_stack`: a vertical blank with the MFP inside it, the shipped blob's handlers — 244).
+# WHAT A DEPTH IS HERE (reviewer B's item 4): THE LOWEST STORE of a chain's write ledgers (`aes_desk.depth_stored`),
+# NOT the lowest SP — a local allocated and never written is not counted. The hard gate of the later slices (D, W3b)
+# reads the same measure, with `aes_stack`'s bound on how far SP can stand below a lowest store (`unstored_under`,
+# what band 5's verdict charges our own code beside it) said beside it — reported here as not charged.
+@functools.cache
+def pd0_gate():
+    return desk.PD0_BYTES - aes_stack.nest_on_the_first_stack(desk.OUR_BLOB)
+
+
+def test_the_gate_is_pd0_s_span_less_the_nest_measured_on_our_shore():
+    assert aes_stack.nest_on_the_first_stack(desk.OUR_BLOB) == aes_stack.nest_on_the_first_stack() and pd0_gate() == 1548
+# THE CUT'S §4 ROWS, the ROM's own PD0 beside ours (`DEPTHS`): what W6-R4 is read on.
+THE_ROM_S_PD0 = {"folder: File > Close": 1398, "folder: opened": 1410, "file: File > Open, Print clicked (the printer not ready)": 1438,
+                 "A: File > Open": 1460, "A: opened": 1446, "two windows: File > Close Window (one left on top)": 1364,
+                 desk.FORMAT_UP: 1218, desk.FORMATTED: 816, "A: File > Format, OK, EXIT clicked": 886, desk.COPY_UP: 1212,
+                 "file: shown, a key at its end": 1438}
+DEEPEST_PD0 = ("A: File > Open", 1504)
+
+
+def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_gate():
+    """MEASURED BY THE WRITE LEDGERS: the ROM's own desk on the ROM's AES beside the ROM's desk over OURS (`DEPTHS`) —
+    File > Open on drive A: the deepest of ours, 1,504 of W6-R4's 1,548."""
+    assert {name: desk.depths(name)[desk.PD0_STACK] for name in THE_ROM_S_PD0} == THE_ROM_S_PD0
+    assert max(((name, depths[0]) for name, depths in DEPTHS.items()), key=lambda found: found[1]) == DEEPEST_PD0
+    assert DEEPEST_PD0[1] <= pd0_gate()
+
+
+# ---- THE CAMPAIGN ON OUR SHORE: a case a chain -----------------------------------------------------------------------------------------
+def _short_by_its_caller_s_passes(routine, ours, rom, our_text, its_text):
+    """Is `ours` the ROM's `rom` cycles of `routine` less EXACTLY one pass for each time its caller of bands 0-5 ran
+    in the step (its class: the caller's `site` counted off the ROM's step profile `its_text`, never run on ours)?"""
+    under = RUN_UNDER_BANDS_0_TO_5[routine]
+    times, odd = divmod(dict(its_text).get(under.site, 0), under.site_cycles)
+    return not odd and not dict(our_text).get(under.site, 0) and rom - ours == times * under.a_pass
+
+
+def converse_broken(ours, rom):
+    """`[(routine, ours, the ROM's)]`: each band-6 routine still the ROM's whose own cycles in one step's profiles
+    (`ours`, `rom`) differ — but by its class, exactly, where it has one."""
+    mine, theirs, broken = desk.charged(ours.text), desk.charged(rom.text), []
+    for routine in sorted(desk.still_the_rom_s() & (set(mine) | set(theirs))):
+        here, there = mine.get(routine, 0), theirs.get(routine, 0)
+        if here != there and not (routine in RUN_UNDER_BANDS_0_TO_5
+                                  and _short_by_its_caller_s_passes(routine, here, there, ours.text, rom.text)):
+            broken.append((f"{routine:#x}", here, there))
+    return broken
+
+
+def test_the_converse_reader_holds_a_differing_routine_and_the_class_one_pass_a_caller_s_run_exactly():
+    one, two = desk.Profile(((0xfdb014, 10),), 0, 0), desk.Profile(((0xfdb014, 12),), 0, 0)
+    assert converse_broken(one, one) == [] and converse_broken(one, two) == [("0xfdb014", 10, 12)]
+    caller = (ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)
+    once = desk.Profile(((INI_TREE, 2 * 158), caller), 0, 0)
+    assert converse_broken(desk.Profile(((INI_TREE, 158),), 0, 0), once) == []
+    for short in (0, 1, 158 - 1):       # ...no pass, a stray cycle, ONE PASS TOO FEW (two short where the caller ran once)
+        assert converse_broken(desk.Profile(((INI_TREE, short),), 0, 0), once) == [(f"{INI_TREE:#x}", short, 2 * 158)]
+    assert converse_broken(desk.Profile(((INI_TREE, 158), caller), 0, 0), once) == [(f"{INI_TREE:#x}", 158, 2 * 158)]
+    no_caller = desk.Profile(((INI_TREE, 2 * 158),), 0, 0)
+    assert converse_broken(desk.Profile(((INI_TREE, 158),), 0, 0), no_caller) == [(f"{INI_TREE:#x}", 158, 2 * 158)]
+
+
+@pytest.mark.parametrize("name", WALKED_ON_OUR_SHORE)
+def test_the_chain_on_our_shore_is_the_rom_s_to_the_screen_the_os_and_each_rom_routine(name):
+    """EACH CHAIN ON OUR SHORE (the module's docstring): every step at OUR idle or its stop of ours, its ledger whole;
+    our blob ran; the screen and the desk's block the ROM's where every step ends; per step the OS's cycles and each ROM
+    desk routine's own the ROM's (the converse, `converse_broken`); no cycle of the ROM's GEM text outside the
+    declared spans; the four depths `DEPTHS`', PD0 under the gate."""
+    declared, rom, ours = desk.CHAINS[name], desk.walked(name), desk.walked_ours(name)
+    for step, stepped in zip(declared.steps, ours.steps, strict=True):
+        boot = stepped.boot
+        assert not boot.writes_truncated and aes_boot.blob_of(boot) is not None
+        if step.until is None:
+            assert boot.idle == OURS, step.what
+        else:
+            assert boot.idle is None and boot.registers["pc"] & BUS == desk.our_stop(step.until), step.what
+    assert sum(stepped.blob for stepped in ours.steps) > 0
+    for nth, (mine, theirs) in enumerate(zip(ours.steps, rom.steps)):      # ...AT EVERY STEP'S END (reviewer B's F2)
+        assert desk.screen_of(mine.boot) == desk.screen_of(theirs.boot), f"the screens differ where step {nth} ends"
+        assert desk.our_desk_block(mine.boot) == desk.desk_block(theirs.boot.ram), f"the desk's blocks differ where step {nth} ends"
+    assert (ours.machine.ram, rom.machine.ram) == (ours.steps[-1].boot.ram, rom.steps[-1].boot.ram)
+    assert [stepped.profile.os for stepped in ours.steps] == [stepped.profile.os for stepped in rom.steps]
+    broken = {nth: converse_broken(mine.profile, theirs.profile) for nth, (mine, theirs) in enumerate(zip(ours.steps, rom.steps))}
+    assert not any(broken.values()), f"ROM desk routines whose own cycles differ, by step: {broken}"
+    declared_spans = desk.still_the_rom_s() | set(desk.ROM_TEXT_UNDER_ROM_CALLERS)
+    outside = sorted({routine for stepped in ours.steps for routine in desk.charged(stepped.profile.text)} - declared_spans)
+    assert not outside, f"the ROM's GEM text ran on our shore outside the declared spans: {[f'{at:#x}' for at in outside]}"
+    short_of = [f"{pc:#x}" for stepped in ours.steps for pc, cycles in stepped.profile.text
+                if cycles and any(start <= pc < past for start, past in desk.ENTERED_PAST_ITS_START.items())]
+    assert not short_of, f"a declared span ran on our shore from before where its callers enter it: {short_of}"
+    spans = desk.stacks(ours.machine)
+    assert spans[desk.PD0_STACK][1] - spans[desk.PD0_STACK][0] == desk.PD0_BYTES, "our machine's PD0 is not UDA0's span"
+    depths = tuple(max(desk.depth_stored(stepped.boot.stored, *spans[which]) for stepped in ours.steps) for which in STACKS)
+    assert depths == DEPTHS[name], f"ours {depths}, the ROM's {tuple(desk.depths(name)[which] for which in STACKS)}"
+    assert depths[0] <= pd0_gate()
+
+
+# ---- N6: EVERY RUN OF `aes_boot`'s SURFACES ITS DEVICES ------------------------------------------------------------------------------
+@pytest.mark.parametrize("run", (aes_boot.booted, aes_boot.continued.derive, aes_boot.served))
+def test_every_run_of_aes_boot_returns_what_its_devices_left(run):
+    """The three runs of the module that make a `Boot` (`_Run`'s callers there): each returns `surfaced`'s fields."""
+    source = inspect.getsource(getattr(run, "__wrapped__", run))
+    assert "_Run(" in source and "**surfaced(floppy, streams[1], run.printed)" in source
+
+
+def test_a_boot_s_devices_are_vetted_as_a_continuation_s():
+    """A BOOT'S RUN IS HELD AS EVERY OTHER: our-boot's and the ROM's surface no device and print nothing — and a GPIP
+    read that is no printer's poll, in a boot's streams, is refused by name as a continuation's is."""
+    for machine in (aes_boot.inf_machine(), desk.OUR_MACHINES[desk.INF_ICONS]()):
+        assert (machine.boot.drive_b, machine.boot.devices, machine.boot.printed) == (None, (), b"")
+    floppy = aes_boot.Floppy(aes_boot.inf_machine().image(), aes_boot.inf_disk_of())
+    with pytest.raises(Refused, match="read the MFP's GPIP .* 1 time"):
+        aes_boot.surfaced(floppy, ((addrs.MFP_GPIP, 0),), b"")
+
+
+# ---- THE DEPTHS, PER CHAIN: `{chain: (PD0's, PD1's, the dispatcher's, the userdef stack's)}` in bytes, our shore ---------------------------
+DEPTHS = {
+    'Desk > Desktop Info, Return': (1056, 668, 254, 0),
+    'Options > Set Preferences, Return': (1122, 668, 254, 0),
+    'Options > Save Desktop, Return': (994, 668, 254, 0),
+    'Options > Print Screen (its alert raised, not answered)': (994, 668, 254, 0),
+    "a key typed at the desk's idle": (570, 0, 240, 0),
+    'drive A: selected': (1072, 0, 254, 0),
+    'A: File > Show Info, Return': (1224, 668, 254, 0),
+    'A: Options > Install Disk Drive, Return': (1158, 668, 254, 0),
+    'A: Options > Install Disk Drive, Remove pressed': (1158, 668, 254, 0),
+    "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1172, 668, 254, 0),
+    'A: File > Open': (1504, 668, 254, 0),
+    'A: File > Format, Return (the warning answered)': (1068, 668, 254, 0),
+    'drive A: dragged to the trash, Return': (1216, 0, 254, 0),
+    'a rubber box on the desktop, round the trash': (1110, 0, 254, 0),
+    'A: opened': (1490, 0, 254, 0),
+    'window: View > Show as Text': (1034, 750, 254, 458),
+    'window: View > Sort by Size': (1034, 750, 254, 0),
+    'window: File > Close Window': (1376, 668, 254, 0),
+    'window: its closer clicked': (1344, 520, 260, 0),
+    'window: its fuller clicked': (1122, 520, 260, 0),
+    'window: A: opened again (two windows)': (1490, 0, 260, 0),
+    'file: selected': (1072, 0, 254, 0),
+    'file: File > Show Info, Return': (1318, 668, 254, 0),
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": (1318, 668, 254, 0),
+    'file: File > Show Info, Read-Only pressed, Return': (1318, 668, 254, 0),
+    'file: read-only, dragged to the trash, OK — access denied, Return': (1216, 0, 254, 0),
+    'file: File > Open (the Show / Print / Cancel alert)': (1288, 668, 254, 0),
+    'file: shown, a key at its end': (1442, 308, 240, 0),
+    'file: double-clicked (the alert)': (1274, 0, 254, 0),
+    "file: dragged to the trash, Return (Cancel, the dialog's default)": (1216, 0, 254, 0),
+    'file: dragged to the trash, OK': (1216, 0, 254, 0),
+    "folder: File > New Folder, 'A', Return": (1198, 668, 254, 0),
+    'folder: the file dragged onto it, Return': (1232, 0, 254, 0),
+    'folder: opened': (1414, 0, 254, 0),
+    'folder: File > Close': (1428, 668, 254, 0),
+    'folder: selected, File > Show Info, Return': (1354, 668, 254, 0),
+    'folder: dragged to the trash, OK': (1216, 0, 254, 0),
+    'text view: A: opened': (1490, 0, 254, 458),
+    'text view: Options > Save Desktop, Return': (1180, 668, 254, 458),
+    'files: A: opened': (1490, 0, 254, 0),
+    "files: the window's down arrow clicked": (570, 706, 260, 0),
+    "files: the window's vertical bar clicked under its slider (a page)": (570, 706, 260, 0),
+    "files: the window's right arrow clicked": (1072, 404, 260, 0),
+    "files: the long file shown, a blank at each page's end and at its end": (1442, 668, 254, 0),
+    'files: the long file dragged onto the folder, Return': (1232, 0, 254, 0),
+    'files: the folder (not empty) dragged to the trash, OK': (1216, 0, 254, 0),
+    'files: the window made full': (1122, 520, 260, 0),
+    'files: the program selected, File > Show Info, Return': (1318, 668, 254, 0),
+    'files: the program selected, Options > Install Application, Return': (1294, 668, 254, 0),
+    'files: View > Show as Text': (1034, 750, 254, 458),
+    'window: its fuller clicked again (back to its size)': (1122, 520, 260, 0),
+    'files: the right arrow clicked, then the window made full': (1122, 520, 260, 0),
+    'files: the right arrow clicked, then View > Sort by Size': (1034, 750, 254, 0),
+    'window: View > Show as Icons (the view it has)': (1034, 750, 254, 0),
+    'window: Options > Save Desktop, Return': (1180, 668, 254, 0),
+    'files: the right arrow clicked, then Options > Save Desktop, Return': (1180, 668, 254, 0),
+    'a rubber box on the desktop, round drive B: and the trash': (1110, 0, 254, 0),
+    'drive A: dragged to a bare spot of the desktop': (1080, 0, 254, 0),
+    "drive A:'s object clicked at its corner, outside its image and its label": (570, 0, 254, 0),
+    'files: View > Sort by Size': (1034, 750, 254, 0),
+    'files: View > Sort by Date': (1034, 750, 254, 0),
+    'files: View > Sort by Type': (1034, 750, 254, 0),
+    'folder: the file dragged onto it again, Return — the name conflict, Return': (1232, 0, 254, 0),
+    "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1216, 0, 254, 0),
+    'folders: B dragged onto A, Return': (1232, 0, 254, 0),
+    'folders: A (holding B) dragged to the trash, OK': (1216, 0, 254, 0),
+    'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1132, 668, 254, 0),
+    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1232, 0, 254, 0),
+    "files: View > Show as Text, the long file's line clicked": (924, 0, 254, 458),
+    'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1132, 668, 254, 0),
+    'folder: deletes unconfirmed — the file dragged to the trash': (1216, 0, 254, 0),
+    'folder: deletes unconfirmed — the folder dragged to the trash': (1216, 0, 254, 0),
+    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1216, 0, 254, 0),
+    'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1342, 668, 260, 0),
+    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1232, 668, 254, 0),
+    'A: opened, drive A: dragged into its window, Return': (1168, 0, 260, 0),
+    'A: opened, the trash dragged into its window, Return': (1072, 0, 260, 0),
+    'drive A: dragged onto drive B:, Return': (1216, 0, 254, 0),
+    'the trash dragged onto drive A:, Return': (1216, 0, 254, 0),
+    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1216, 0, 254, 0),
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1146, 668, 254, 0),
+    'file: dragged to the trash, OK — then drive A: dragged into its window': (1184, 0, 260, 0),
+    'files: the right arrow clicked, then the left arrow clicked': (1072, 404, 260, 0),
+    "files: the window's sizer pulled up and left (smaller)": (1044, 650, 260, 0),
+    'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1072, 404, 260, 0),
+    "files: the window's right arrow gadget itself clicked (a column)": (1072, 404, 260, 0),
+    "files: the window's down arrow gadget itself clicked (a row)": (570, 404, 260, 0),
+    "files: the window's up arrow gadget clicked (a row)": (570, 404, 260, 0),
+    "files: the window's horizontal slider dragged right": (1080, 706, 260, 0),
+    'window: Esc typed (the top window read again)': (1018, 0, 240, 0),
+    'two windows: File > Close Window (one left on top)': (1380, 668, 254, 0),
+    'files: the window sized smaller, then its right arrow clicked': (1072, 404, 260, 0),
+    'files: the right arrow clicked, then the long file shown': (1442, 668, 254, 0),
+    'files: View > Sort by Size, then the long file shown': (1442, 668, 254, 0),
+    "files: View > Show as Text, then the long file's line shown": (1290, 668, 254, 458),
+    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1198, 668, 254, 0),
+    'two windows: View > Show as Text': (1034, 750, 254, 458),
+    'files: a fifth entry, then the down arrow gadget clicked (a row)': (570, 404, 260, 0),
+    "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1216, 0, 254, 458),
+    'text view: drive A: dragged to a bare spot of the desktop': (1080, 0, 254, 0),
+    "A: File > Format, the warning's OK (the FORMAT dialog)": (1222, 668, 254, 0),
+    'A: File > Format, OK, EXIT clicked': (890, 308, 254, 0),
+    'A: File > Format, OK, FORMAT clicked (formatted)': (880, 0, 254, 0),
+    "A: formatted, the alert's OK, EXIT clicked": (890, 308, 254, 0),
+    "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1216, 308, 254, 0),
+    'drive A: onto drive B:, OK, then Return (EXIT, the default)': (890, 308, 240, 0),
+    'file: File > Open, Print clicked (the printer not ready)': (1442, 308, 254, 0),
+    'file: the printer not ready, Cancel': (1206, 308, 254, 0),
+    'file: the printer not ready, Retry (not ready again)': (822, 0, 254, 0),
+    'file: the printer not ready, five seconds, Retry (printed)': (1206, 308, 254, 0),
+    'file: File > Open, five seconds, Print clicked (printed)': (1442, 308, 254, 0),
+    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1442, 668, 254, 0),
+    'a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)': (1216, 308, 254, 0),
+}

@@ -164,7 +164,7 @@ def _its_body_counted(blob, tally):
     return lambda: (*tally(), emu.prof_cycles(*THE_ROM_S_CTLMGR), emu.prof_cycles(*entry))
 
 
-IN_THE_ROM_S_CTLMGR, IN_OUR_ENTRY = 4, 5
+IN_THE_ROM_S_CTLMGR, IN_OUR_ENTRY = tier3().OUR_TALLY_LENGTH, tier3().OUR_TALLY_LENGTH + 1
 
 
 def _windows_with_the_bodies_counted(blob, row, monkeypatch):
@@ -188,6 +188,9 @@ def test_in_a_turn_of_ours_the_rom_s_ctlmgr_runs_no_instruction_and_our_entry_do
     assert watch.window_classes == [switching.OURS] and entered[SM] == switching.OURS
     assert window[IN_THE_ROM_S_CTLMGR] == 0 == window[tier3().TALLY_AES] and window[IN_OUR_ENTRY] > 0
     left = PILOT._replace(the_rom_s_screen_manager="WHO RAN's own control: the pilot as it stood before the flip")
+    # (...and over the ROM's Line-F table, as before band 6's binding: else the ROM's ctlmgr runs over our AES —
+    # `tier3.relocations_before_the_binding`, a labelled stand-in)
+    monkeypatch.setattr(tier3(), "code_relocations", tier3().relocations_before_the_binding)
     watch = _windows_with_the_bodies_counted(blob, left, monkeypatch)
     (window,) = watch.foreign
     assert watch.window_classes == [switching.THE_ROM_S] and window[IN_THE_ROM_S_CTLMGR] > 0 == window[IN_OUR_ENTRY]
@@ -216,17 +219,16 @@ def test_the_watch_refuses_a_process_resumed_in_code_its_machine_does_not_say_it
     first instruction and its last word, and neither the word under it nor the one at its end (the Line-F table)."""
     switches = switching.settled(PILOT).switches
     desk_s, in_the_blob = aes.AES_TEXT[0] + 0x100, blob.base + 0x100
-    # ...AND BEHIND OUR DOOR (the narrow door flip; STAND-INS, both — no machine `aes_boot` makes stands so: a partial
-    # door is refused where it is laid, and nothing of the desk traps into the AES): an accessory — any process that
-    # is neither the screen manager nor the desk, here the spare static PD — resumed in the ROM's text, and the DESK
-    # resumed in ours (its own flip is wave 4's).
+    # ...AND BEHIND OUR DOOR (the narrow door flip; a STAND-IN — no machine `aes_boot` makes stands so: a partial door
+    # is refused where it is laid): an accessory — any process that is neither the screen manager nor the desk, here
+    # the spare static PD — resumed in the ROM's text. AND ON A TAKEOVER WITH NO DOOR, such a process resumed in OURS.
+    # (THE DESK resumed in ours is no refusal since band 6's binding, on any machine: its turn is ours, W6-R7 — below.)
     for takes_over, door, entering, pc, refused in (
             (False, False, SM, in_the_blob, "ANOTHER PROCESS than the row's, is resumed IN OUR BUILD'S TEXT"),
             (False, False, SM, 0x400, "neither in the blob nor in the AES's ROM text"),
             (True, False, SM, desk_s, "WHOSE SCREEN MANAGER RESUMES IN THE ROM'S TEXT"),
-            (True, False, aes.SHELL_PD, in_the_blob, "A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT"),
-            (True, True, AN_ACCESSORY_S_PD, desk_s, "A ROW BEHIND OUR DOOR WHOSE ACCESSORY RESUMES IN THE ROM'S TEXT"),
-            (True, True, aes.SHELL_PD, in_the_blob, "behind our door the desk is still the ROM's")):
+            (True, False, AN_ACCESSORY_S_PD, in_the_blob, "A PROCESS THAT IS NOT THE SCREEN MANAGER, is resumed IN OUR BUILD'S TEXT"),
+            (True, True, AN_ACCESSORY_S_PD, desk_s, "A ROW BEHIND OUR DOOR WHOSE ACCESSORY RESUMES IN THE ROM'S TEXT")):
         watch = switching.ours(blob, switches, switches.at_idles, takeover=takes_over, door=door)
         watch._entering = entering
         with pytest.raises(switching.Refused, match=refused):
@@ -234,9 +236,11 @@ def test_the_watch_refuses_a_process_resumed_in_code_its_machine_does_not_say_it
     watch = switching.ours(blob, switches, switches.at_idles, takeover=True)
     watch._entering = aes.SHELL_PD
     watch._vet_whose(watch._whose(desk_s), desk_s)
-    # ...and what a door machine's rows do hold, passed: an accessory in our text, the desk in the ROM's.
+    # ...and what a door machine's rows do hold, passed: an accessory in our text, the desk in the ROM's or in ours
+    # (band 6's binding: it parks through our dispatcher once it has called our AES); and the desk in ours with no door.
+    watch._vet_whose(watch._whose(in_the_blob), in_the_blob)
     behind_the_door = switching.ours(blob, switches, switches.at_idles, takeover=True, door=True)
-    for entering, pc in ((AN_ACCESSORY_S_PD, in_the_blob), (aes.SHELL_PD, desk_s)):
+    for entering, pc in ((AN_ACCESSORY_S_PD, in_the_blob), (aes.SHELL_PD, desk_s), (aes.SHELL_PD, in_the_blob)):
         behind_the_door._entering = entering
         behind_the_door._vet_whose(behind_the_door._whose(pc), pc)
     assert (watch._whose(blob.base), watch._whose(blob.end), watch._whose(desk_s)) == (switching.OURS, None, switching.THE_ROM_S)

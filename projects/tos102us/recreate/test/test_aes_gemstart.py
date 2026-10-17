@@ -6,9 +6,10 @@ FIVE CLAIMS HOLD IT.
   * THE TEXT'S BYTES are the ROM's, every word but SEVEN longwords, on BOTH blobs: the handler gem_entry copies (this
     file's own data region), its three `jsr`s (rom_rsc_init through a thunk, size_theglo and gem_main as the C they
     are) and the three routines it stores BY VALUE (`irq.S`'s bare `rts` and tick glue, `trapdoor.S`'s ub_trampoline).
-  * THE COPIED HUNDRED BYTES are the ROM's with NO word relocated (ruling W4-R3: the Line-F call table stays the
-    ROM's) — its `movea.l #$fee900` and nine and a half ROM addresses, which nothing of a build executes: no word of
-    a blob outside the region names the handler but gem_entry's one operand.
+  * THE COPIED HUNDRED BYTES are the ROM's but ONE longword, THE BINDING (band 6 slice B0, ruling W6-R1): the
+    handler's `movea.l #<table>,a0` names OUR call table (`aes_linef_table`) where the ROM's names `$fee900`; the nine
+    and a half ROM addresses behind it stay the ROM's, dead data. No word of a blob outside the region names the
+    handler but gem_entry's one operand.
   * THE SEVEN ARE THE ROM'S OWN LIST: every operand of the region that names a routine or a table of GEM's text is
     one of them, read off the ROM's instructions — a `lea` left the ROM's would be an eighth, and reds.
   * WHAT THE PINS DO NOT REACH IS HELD BESIDE THEM: the source's symbols tile its text; the thunk is its shape into
@@ -67,7 +68,11 @@ def _operand(instruction):
     return instruction + WORD_BYTES
 
 
+# ...and THE ONE OPERAND OF THE COPIED DATA THAT NAMES OUR BUILD (band 6 slice B0, the binding): the handler's table.
+TABLE_OPERAND, TABLE = COPIED.lo + aes.LINEF_TABLE_OPERAND, "aes_linef_table"
 RELOCATED = {
+    TABLE_OPERAND: Relocated(ABSOLUTE, None, "THE BINDING: the handler's call table is ours (generated, no ROM bytes)",
+                             thunk=TABLE, rebound=True),
     _operand(COPIES_THE_HANDLER_AT): Relocated(ABSOLUTE, "AES_ROM_LINEF_HANDLER", "the handler gem_entry copies: this file's own data"),
     _operand(CALLS_RSC_INIT_AT): Relocated(ABSOLUTE, None, "rom_rsc_init ships as C", thunk=RSC_INIT_THUNK),
     _operand(CALLS_SIZE_THEGLO_AT): Relocated(ABSOLUTE, None, "size_theglo ships as C, and takes nothing", thunk="aes_size_theglo"),
@@ -100,11 +105,12 @@ def test_gemstart_s_text_is_the_rom_s_bytes_but_for_the_seven_operands_that_name
     transcription.assert_transcribed(REGION, relocated=RELOCATED)
 
 
-def test_what_gem_entry_copies_is_the_rom_s_hundred_bytes_with_no_word_relocated():
-    """THE SECOND PIN, and no excuse in it: the handler's `movea.l #$fee900,a0` and the call table's first nine and a
-    half longwords are the ROM's addresses (ruling W4-R3) — and the region is exactly what the copy takes."""
+def test_what_gem_entry_copies_is_the_rom_s_hundred_bytes_but_the_one_operand_that_binds_our_table():
+    """THE SECOND PIN, and ONE excuse in it, the binding's: the handler's `movea.l #<table>,a0` names our table; the
+    call table's first nine and a half longwords behind it are the ROM's addresses — and the region is exactly what
+    the copy takes."""
     transcription.assert_transcribed(COPIED, relocated=RELOCATED)
-    assert not [at for at in RELOCATED if COPIED.lo <= at < COPIED.hi]
+    assert [at for at in RELOCATED if COPIED.lo <= at < COPIED.hi] == [TABLE_OPERAND]
     assert COPIED.hi - COPIED.lo == aes.LINEF_COPY_BYTES == 2 * aes.header_constants("aes.h")["LINEF_COPY_WORDS"]
     assert case.long_in(BASE_IMAGE, COPIED.lo + aes.LINEF_TABLE_OPERAND) == aes.AES_LINEF_TABLE
 
@@ -122,7 +128,10 @@ def test_both_regions_are_the_same_bytes_on_both_blobs(blob):
             f"the operand at ${operand:x} does not name this blob's {symbol}")
         at = offset + LONG_BYTES
     assert ours[at:] == theirs[at:]
-    assert transcription.bytes_of(blob, COPIED.anchor, COPIED.lo, COPIED.hi - COPIED.lo) == bytes(BASE_IMAGE[COPIED.lo:COPIED.hi])
+    copied, offset = transcription.bytes_of(blob, COPIED.anchor, COPIED.lo, COPIED.hi - COPIED.lo), TABLE_OPERAND - COPIED.lo
+    theirs = bytes(BASE_IMAGE[COPIED.lo:COPIED.hi])
+    assert copied[:offset] == theirs[:offset] and copied[offset + LONG_BYTES:] == theirs[offset + LONG_BYTES:]
+    assert copied[offset:offset + LONG_BYTES] == blob.entry(TABLE).to_bytes(LONG_BYTES, "big"), "the handler does not name this blob's table"
 
 
 def test_the_seven_operands_are_every_word_of_the_text_that_names_gem_s_code():
@@ -133,8 +142,9 @@ def test_the_seven_operands_are_every_word_of_the_text_that_names_gem_s_code():
               if not operand.pc_relative and aes.AES_TEXT[0] <= operand.value < aes.AES_TEXT[1]}
     calls = {_operand(at): int(text.split()[-1], 16) for at, text in rom_data.instructions(REGION.lo, REGION.hi)
              if text and text.startswith("jsr 0x")}
-    assert {**naming, **calls} == THE_ROM_NAMES and set(THE_ROM_NAMES) == set(RELOCATED)
-    assert len(RELOCATED) == 7
+    in_the_text = {at for at in RELOCATED if REGION.lo <= at < REGION.hi}
+    assert {**naming, **calls} == THE_ROM_NAMES and set(THE_ROM_NAMES) == in_the_text
+    assert len(in_the_text) == 7
 
 
 def test_the_by_value_sites_are_the_census_s_rows_of_gem_entry():
@@ -163,14 +173,14 @@ def test_each_value_is_stored_where_the_rom_stores_it():
 
 def test_no_word_of_a_blob_names_the_rom_s_gemstart_and_one_names_the_handler_s_copy_source(blob):
     """WHO NAMES GEMSTART BY VALUE: no word of a blob names the ROM's gem_entry or gem_gemdos_call (the BIOS's
-    `exec_os` and the AES basepage do, in RAM: the machine's, not a build's) nor the ROM's handler — the one word
-    that names an address of the copied hundred bytes is THEIR OWN, the handler's `movea.l #$fee900` (the ROM's call
-    table, ruling W4-R3) —; and this blob's handler is named by ONE longword, gem_entry's operand."""
+    `exec_os` and the AES basepage do, in RAM: the machine's, not a build's) nor the ROM's handler, nor — since the
+    binding — the ROM's call table, which the handler's operand named until then; and this blob's handler is named
+    by ONE longword, gem_entry's operand."""
     longs = {blob.base + offset: int.from_bytes(blob.blob[offset:offset + LONG_BYTES], "big")
              for offset in range(0, len(blob.blob) - LONG_BYTES + 1, WORD_BYTES)}
     naming_the_rom = {at: value for at, value in longs.items()
                       if any(row.rom <= value < row.rom + row.bytes for row in ENTRIES.values())}
-    assert naming_the_rom == {blob.entry(HANDLER) + aes.LINEF_TABLE_OPERAND: aes.AES_LINEF_TABLE}, (
+    assert naming_the_rom == {}, (
         f"a word of the blob names the ROM's gemstart: { {hex(at): hex(value) for at, value in naming_the_rom.items()} }")
     holding = [at for at, value in longs.items() if value == blob.entry(HANDLER)]
     assert holding == [blob.entry(GEM_ENTRY) + _operand(COPIES_THE_HANDLER_AT) - REGION.lo]

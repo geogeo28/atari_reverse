@@ -14,7 +14,7 @@ counts in this file against its rows.
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): one row shown under the bar, the buffer flush at 1.01, is 1.13 on its own cycles behind the BIOS's.** 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
 | vdi + linea | 151 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): eight rows shown 1.00–1.10 are 1.26–1.66 on their own cycles behind an OS trap both shores run — a probe's measurement, no verdict changed.** shipped code 0.36–1.52x (`vq_key_s` 1.52 and `vdi_choice` 1.49 accepted at their shipped numbers); 48 ROM routines ship as byte-exact `.S` at 1.00 (their C carried by (T)), the escape's `.S` rows that reach the BIOS console's C through its own thunks 1.31–2.43x as shipped, verdict `own` (T←: its own instructions within the bar, the console's C carried by five cited Bconout(CON:) acceptances); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.42–1.10), fourteen rows over the bar as shipped carried by the DERIVED glue rule (T→G `glue`, 1.10–2.05 shipped, 0.69–1.08 net of the thunks); the GEMDOS-trap rows priced over a staged `trap #1` with LINEA_RETSAV dropped by name | COMPLETE but the deferred BLITTER bodies |
-| aes | 383 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): TEN rows shown 1.05–1.10 here are 1.10–1.60 on their own cycles behind a GEMDOS or BIOS trap the net-pricing classifier does not see (the bell ×4 1.60; six `dos_*` rows 1.10–1.19). Every "within the bar" in this cell is true of the ratios AS THE TABLE PRICES THEM and is NOT a claim about those ten; nothing is accepted.** shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)) and gemdosif's uda_insuper and psetup as `src/aes/pdpipe.S` (C 1.50 / 1.24, (T)), its pgmld, `__DOS`, the five vector takes and — since band 5 wave 3 — crit_err and dos_exec as `src/aes/gemdosif.S` (NINE routines: dos_exec 1.00 ×5, crit_err verified and unpriced, held to the ROM's cycles in its own battery) and the XBIOS door as `src/aes/trp14.S` (band 5 wave 1: seven routines at 1.00; their C 1.10–1.42 by (T) where it is over the bar, verified and unpriced where it is under it or takes a host argument); the process switch and the interrupts' glue as hand 68000 in `src/aes/switch.S` and `src/aes/irq.S` (the SWITCH kind, band 4 wave 2: dsptch, the mask brackets, gotopgm, savestate and switchto byte-exact, disp as the ROM's own instruction stream, the three interrupt glues, drawrat and justretf — 13 `.S` rows at 1.00, a yield through our whole dispatcher 0.75 on its own cycles and 0.92 on the whole run; the three glues and gotopgm verified and unpriced); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.20–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); every row whose C reaches the event layer through THE EVENT DOOR priced on its own cycles, its entries' calls among them (EV: 0.31–1.04; every entry of the door is REBOUND since FLIP 3 — its C twin on both builds, each call an ARRIVAL, the ROM's routine in the ROM's own cycles, nothing taken off either side. Since band 4 wave 0 the door's first entry, tak_flag, is: 88 rows moved by it, none over 0.82 — and since band 4 wave 1's FLIP 2 six more are, post_button, ct_chgown, unsync, ev_block, ap_rdwr and ev_button: 137 rows moved by it, every one a lower numerator against the same original, the highest 0.95, and ev_multi, the last, since FLIP 3 (26 leaf rows 0.63–0.87), and every row that calls a rebound entry held on TWO COUNTS since then — its own cycles, and the caller's own net of those calls: 366 rows since band 5 wave 2's close (365 at its wave 1's slice C, 337 at that wave's slices S and H, 241 at band 4 wave 3's steps S and T, 224 at its slices, 185 at flip 3), the highest caller's own 1.04 (gr_stilldn); 171 rows SWITCH since band 5 wave 2's close (170 at its wave 1's slice C, 149 at that wave's slices S and H, 108 at band 4 wave 3) — a call blocked (or a bare yield), parked by our own dispatcher and woken, one returning run on both shores, 0.46–0.88 on their own cycles (the 149 before slice C 0.60–0.88, and 0.64–0.97 with their thunks: the 0.88 is a session's put-away slice, every other row at or under 0.75 and 0.83; slice C's 21 — the screen manager's handlers, the screen manager their process; since wave 2's close measured at each shore's own ctlmgr's arrival, ct_msgup's two aside — 0.46–0.77), ev_timer's first four rows, fm_alert's two and fs_input's five (SLICES of two sessions the user is waited for in) and the event tape's fourteen (ap_trecd 6, ap_tplay 8) among them — gr_stilldn, gr_watchbox (V+EV), ap_sendmsg; band 3 wave 1's window update, screen lock, drag loops and menus 0.31–0.82; band 3 wave 2's forms and alerts 0.29–0.87 over a sixth door entry, ev_button; band 3 wave 3's file selector, fs_input, 0.61–0.95 by the SLICES of six sessions (eight since band 4 wave 3's step S: two more in which the user is waited for) and 0.73–0.77 on its three no-memory arms; the rows taken THROUGH INTERRUPTS (56, 0.59–0.95 — 39 of them SLICES of 7 sessions too long for one row, each the run between two arrivals both shores make at one PC, our memory held to the ROM's at both) priced the same way, their deliveries laid at the same door calls on every run of both sides — our run watched at the door's entries, the original's watched too, both sides' calls equal entry by entry and frame by frame); newrect's and mkrect's ALCYON ENTRIES in `src/aes/wmupdate.S` — the routines the target hands everyobj on draw_change's walk — target-only glue, their cycles counted as glue (T→G); just_draw's, `src/aes/obdraw.S`, IS GONE since band 5 wave 3's door diet (ob_draw holds the walk as its own body and calls just_draw as C calls: 0.73–0.88 own, 0.86–0.98 with the thunks under its traps), gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; the selector's rows that reach GEMDOS priced over GEMDOS REPLAYED (the ROM's own answers and DTAs, call by call, every frame in a ledger the differential compares); `dos_free`, `dos_sdta`, `dos_close`, the bell's Cconout glue and band 5's `dos_gdrv`, `dos_chdir`, `dos_sdrv` verified and unpriced (a host argument) BAND 5 WAVE 4's SLICE B ADDS THE BUILD'S OWN START-UP, PRICED AS STRETCHES of the our-boot machine's runs beside the ROM's own boot (A LABELLED STAGING: the blob laid at the pre-init stop and entered at its own gem_entry; "ours booted" claimed to deskmain's entry and no further): gem_main 0.57–0.86, the `#E` reader 0.97–0.98 over real GEMDOS in place, sh_main 0.63–0.92, sh_cmd 0.45–0.82 — sixteen rows on their own cycles, the OS both run held to one number —, gem_gemdos_call's six `.S` rows at 1.00, gem_entry verified at its checkpoints and unpriced (NEVER RETURNS); NET OF THE ROM'S LINE-F HANDLER five of those rows read 1.15–1.28 (reported, AWAITING 22). AND ITS SLICE F, THE FULL FLIP, MOVED WHO RUNS THE TRAP AND NO FIGURE: vector `$88` holds the build's own `trap #2` handler as every Tier 3 run of ours is entered (the selector switch a VDI call runs is ours — the ROM's own bytes, in neither own column, not one cycle of the ROM's on a kit call of ours) and every row from a machine's idle, the desk's own machine's too, runs BEHIND THE DOOR — a door TAKEOVER, a labelled staging: eight longwords laid by the harness over what the ROM's own start-up stored, so that at the machine's idle no longword holds, by value, the ROM's copy of a routine the registry declares (17 routines — not every ROM routine: twelve live longwords hold others no door can map, the wave log's slice F entry); the table's lines are what they were but the legend's. BAND 5 WAVE 3 ADDED, WITH NO ROW THEN (linked, held at Tier 1, bound nowhere — the door flip's): the trap door as `src/aes/trapdoor.S` (the fourth `.S` kind: `trap #2`'s handler, its way out, ub_trampoline byte-pinned, aes_entry a stream) and the accessory loader in C, `src/aes/loader.c` (sndcli, ldaccs, free_accs, cre_aproc). | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE; band 3 wave 0: THE EVENT DOOR with its pilots (gr_stilldn, gr_watchbox, ap_sendmsg, ct_mouse), the object editor (ob_edit and its ten helpers) and the window library's pure half (23 routines); band 3 wave 1: the window messages and update with the screen lock (13 routines), the interactive gemgrlib and the menu library (16), five more door entries and interrupts delivered at door entries; band 3 wave 2: the forms and the alerts (gemfmlib, gemfmalt, the keyboard-queue leaves fq / dq and fm_do's bell — 16 routines), ev_button the sixth door entry, the interrupted rows priced and fully vetted, keys delivered through the BIOS keyboard handler; band 3 wave 3: the file selector (gemfslib's nine event-free routines and fs_input run whole as sessions, dos_snext and the bell's Cconout glue — 11 routines and one unpriced), a case's own derivation budget, sessions priced by their slices with the partition held, GEMDOS replayed — BAND 3 COMPLETE; band 4 wave 0: the event door made REBINDABLE and tak_flag rebound (flip 1 of three), gemasync's lists with evremove (8 routines), the PDs and the pipes (9, two of them shipping as `.S`), a third process as the labelled STAGED APPLICATION (Tier 1 only); band 4 wave 1 phase A: the input and the waits (34 routines in C at 0.31–0.91 — geminput's posts and click counter, the fork queue and its four fork functions, iasync and its arms, gemevlib; forker, ev_timer and drawrat verified and unpriced), six twins linked and PENDING (flip 2 is phase B: nothing flipped), every blocking arm held to the ROM at dsptch, a word an interrupt shares held at every instruction boundary of both blobs; band 4 wave 2 phase A: THE DISPATCHER (the switch and the glue as `.S`, disp_act / mwait_act / idle in C at 0.38–0.75, forker priced at 0.60–1.04, the glue installed by our own code on target, a host scheduler model behind a switch that defaults to refusing) and ev_multi's twin PENDING with its woken cases (14 more ✅ rows; nothing flipped — FLIP 3 is the next commit); band 4 wave 2's FLIP 3: ev_multi rebound, the door all C; band 4 wave 3: THE ROWS THAT SWITCH — the foundation's pilots, the waits, ev_multi and the door users (87 rows, the memory-laying hook road retired), then its steps S and T: THE SESSIONS THAT SWITCH (a slice's marks per process; fm_alert's and fs_input's ends-blocked cases taken on through their wakes, 7 rows) and THE EVENT TAPE, ap_trecd and ap_tplay in C (`src/aes/aptape.c`: 2 routines, 14 rows, the bare yield into another process a registered row) — 108 rows switch; step R: the door's retirement — BAND 4 COMPLETE; band 5 wave 0: the pre-init machines and the ROM's own boot (harness, no row); band 5 wave 1: slice S, THE OPCODE SWITCH AND THE MARSHAL (`src/aes/gemsuper.c`: 2 routines), and slices H and G, THE LEAVES ROUND gem_main AND THE SHELL (26 routines: geminit's, gemshlib's, the cartridge chain, the desk's memory and three desk leaves, gemdosif's leftovers with pgmld and the vector takes, the XBIOS door) — 149 rows switch; slice C (gemctrl's four handlers) is next |
+| aes | 383 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): TEN rows shown 1.05–1.10 here are 1.10–1.60 on their own cycles behind a GEMDOS or BIOS trap the net-pricing classifier does not see (the bell ×4 1.60; six `dos_*` rows 1.10–1.19). Every "within the bar" in this cell is true of the ratios AS THE TABLE PRICES THEM and is NOT a claim about those ten; nothing is accepted.** shipped C 0.10–1.10x (the worst two AT the bar: `dos_alloc`'s failure arm, 1.0993, an image-relative store, and `gsx_tcalc`'s empty string in the small font, 1.097, through xstrpix's glue); 35 ROM routines ship as ONE byte-exact `src/aes/optimize.S` at 1.00 (their C carried by (T), 1.11–2.78), five of gemgsxif's Line-F-free atoms as `src/aes/gsx.S` (C 1.20–2.21, (T)), four more as `src/aes/gsxif.S` (gsx_mret, ratinit, gsx_mxmy, gsx_button: C 1.46–1.81, (T)) and five of gemgraf's as `src/aes/gemgraf.S` (gr_inside, gr_crack, gsx_gclip, gsx_chkclip, gsx_bxpts: C 1.44–2.07, (T)) and gemdosif's uda_insuper and psetup as `src/aes/pdpipe.S` (C 1.50 / 1.24, (T)), its pgmld, `__DOS`, the five vector takes and — since band 5 wave 3 — crit_err and dos_exec as `src/aes/gemdosif.S` (NINE routines: dos_exec 1.00 ×5, crit_err verified and unpriced, held to the ROM's cycles in its own battery) and the XBIOS door as `src/aes/trp14.S` (band 5 wave 1: seven routines at 1.00; their C 1.10–1.42 by (T) where it is over the bar, verified and unpriced where it is under it or takes a host argument); the process switch and the interrupts' glue as hand 68000 in `src/aes/switch.S` and `src/aes/irq.S` (the SWITCH kind, band 4 wave 2: dsptch, the mask brackets, gotopgm, savestate and switchto byte-exact, disp as the ROM's own instruction stream, the three interrupt glues, drawrat and justretf — 13 `.S` rows at 1.00, a yield through our whole dispatcher 0.75 on its own cycles and 0.92 on the whole run; the three glues and gotopgm verified and unpriced); every row whose C reaches the VDI by `trap #2` priced on its OWN cycles (V: 0.20–1.07 against the ROM's AES text and Line-F handler, the OS both run in neither; 17 of them `glue`, 1.10–1.28 with their thunks); every row whose C reaches the event layer through THE EVENT DOOR priced on its own cycles, its entries' calls among them (EV: 0.31–1.04; every entry of the door is REBOUND since FLIP 3 — its C twin on both builds, each call an ARRIVAL, the ROM's routine in the ROM's own cycles, nothing taken off either side. Since band 4 wave 0 the door's first entry, tak_flag, is: 88 rows moved by it, none over 0.82 — and since band 4 wave 1's FLIP 2 six more are, post_button, ct_chgown, unsync, ev_block, ap_rdwr and ev_button: 137 rows moved by it, every one a lower numerator against the same original, the highest 0.95, and ev_multi, the last, since FLIP 3 (26 leaf rows 0.63–0.87), and every row that calls a rebound entry held on TWO COUNTS since then — its own cycles, and the caller's own net of those calls: 366 rows since band 5 wave 2's close (365 at its wave 1's slice C, 337 at that wave's slices S and H, 241 at band 4 wave 3's steps S and T, 224 at its slices, 185 at flip 3), the highest caller's own 1.04 (gr_stilldn); 171 rows SWITCH since band 5 wave 2's close (170 at its wave 1's slice C, 149 at that wave's slices S and H, 108 at band 4 wave 3) — a call blocked (or a bare yield), parked by our own dispatcher and woken, one returning run on both shores, 0.46–0.88 on their own cycles (the 149 before slice C 0.60–0.88, and 0.64–0.97 with their thunks: the 0.88 is a session's put-away slice, every other row at or under 0.75 and 0.83; slice C's 21 — the screen manager's handlers, the screen manager their process; since wave 2's close measured at each shore's own ctlmgr's arrival, ct_msgup's two aside — 0.46–0.77), ev_timer's first four rows, fm_alert's two and fs_input's five (SLICES of two sessions the user is waited for in) and the event tape's fourteen (ap_trecd 6, ap_tplay 8) among them — gr_stilldn, gr_watchbox (V+EV), ap_sendmsg; band 3 wave 1's window update, screen lock, drag loops and menus 0.31–0.82; band 3 wave 2's forms and alerts 0.29–0.87 over a sixth door entry, ev_button; band 3 wave 3's file selector, fs_input, 0.61–0.95 by the SLICES of six sessions (eight since band 4 wave 3's step S: two more in which the user is waited for) and 0.73–0.77 on its three no-memory arms; the rows taken THROUGH INTERRUPTS (56, 0.59–0.95 — 39 of them SLICES of 7 sessions too long for one row, each the run between two arrivals both shores make at one PC, our memory held to the ROM's at both) priced the same way, their deliveries laid at the same door calls on every run of both sides — our run watched at the door's entries, the original's watched too, both sides' calls equal entry by entry and frame by frame); newrect's and mkrect's ALCYON ENTRIES in `src/aes/wmupdate.S` — the routines the target hands everyobj on draw_change's walk — target-only glue, their cycles counted as glue (T→G); just_draw's, `src/aes/obdraw.S`, IS GONE since band 5 wave 3's door diet (ob_draw holds the walk as its own body and calls just_draw as C calls: 0.73–0.88 own, 0.86–0.98 with the thunks under its traps), gsx_moff's open nest (1.23) and gsx_graphic's mode held (1.24) accepted (A); every C caller of a transcribed core measured AS IT SHIPS (T→ `through`, 0.12–1.10); every ✅ row priced over a direct `jsr` (the Line-F handler's self-patched mask word `$cc44` dropped by name, each drop with its undropped companion), the three >6-argument cores (ob_sst, everyobj, inf_fldset) entered with our side's stack pointer lowered by what does not fit; each routine's Line-F-entered case verified and unpriced; the selector's rows that reach GEMDOS priced over GEMDOS REPLAYED (the ROM's own answers and DTAs, call by call, every frame in a ledger the differential compares); `dos_free`, `dos_sdta`, `dos_close`, the bell's Cconout glue and band 5's `dos_gdrv`, `dos_chdir`, `dos_sdrv` verified and unpriced (a host argument) BAND 5 WAVE 4's SLICE B ADDS THE BUILD'S OWN START-UP, PRICED AS STRETCHES of the our-boot machine's runs beside the ROM's own boot (A LABELLED STAGING: the blob laid at the pre-init stop and entered at its own gem_entry; "ours booted" claimed to deskmain's entry and no further): gem_main 0.57–0.86, the `#E` reader 0.97–0.98 over real GEMDOS in place, sh_main 0.63–0.92, sh_cmd 0.45–0.82 — sixteen rows on their own cycles, the OS both run held to one number —, gem_gemdos_call's six `.S` rows at 1.00, gem_entry verified at its checkpoints and unpriced (NEVER RETURNS); NET OF THE ROM'S LINE-F HANDLER five of those rows read 1.15–1.28 (reported, AWAITING 22). AND ITS SLICE F, THE FULL FLIP, MOVED WHO RUNS THE TRAP AND NO FIGURE: vector `$88` holds the build's own `trap #2` handler as every Tier 3 run of ours is entered (the selector switch a VDI call runs is ours — the ROM's own bytes, in neither own column, not one cycle of the ROM's on a kit call of ours) and every row from a machine's idle, the desk's own machine's too, runs BEHIND THE DOOR — a door TAKEOVER, a labelled staging: eight longwords laid by the harness over what the ROM's own start-up stored, so that at the machine's idle no longword holds, by value, the ROM's copy of a routine the registry declares (18 routines — not every ROM routine: twelve live longwords hold others no door can map, the wave log's slice F entry); the table's lines are what they were but the legend's. BAND 5 WAVE 3 ADDED, WITH NO ROW THEN (linked, held at Tier 1, bound nowhere — the door flip's): the trap door as `src/aes/trapdoor.S` (the fourth `.S` kind: `trap #2`'s handler, its way out, ub_trampoline byte-pinned, aes_entry a stream) and the accessory loader in C, `src/aes/loader.c` (sndcli, ldaccs, free_accs, cre_aproc). | STARTED — bands 0+1: the LEAVES and the OBJECT/RESOURCE layer; band 2 wave 1: the `trap #2` bridge and gemgsxif's atoms, shell find + resource load, newrect; band 2 wave 2: the rest of gemgsxif (the `$a000` bridge), gemgraf and gemgrlib's non-interactive animations; band 2 wave 3: the object draw path (ob_format, far_call, ob_user, just_draw, ob_draw, ob_change) — BAND 2 COMPLETE; band 3 wave 0: THE EVENT DOOR with its pilots (gr_stilldn, gr_watchbox, ap_sendmsg, ct_mouse), the object editor (ob_edit and its ten helpers) and the window library's pure half (23 routines); band 3 wave 1: the window messages and update with the screen lock (13 routines), the interactive gemgrlib and the menu library (16), five more door entries and interrupts delivered at door entries; band 3 wave 2: the forms and the alerts (gemfmlib, gemfmalt, the keyboard-queue leaves fq / dq and fm_do's bell — 16 routines), ev_button the sixth door entry, the interrupted rows priced and fully vetted, keys delivered through the BIOS keyboard handler; band 3 wave 3: the file selector (gemfslib's nine event-free routines and fs_input run whole as sessions, dos_snext and the bell's Cconout glue — 11 routines and one unpriced), a case's own derivation budget, sessions priced by their slices with the partition held, GEMDOS replayed — BAND 3 COMPLETE; band 4 wave 0: the event door made REBINDABLE and tak_flag rebound (flip 1 of three), gemasync's lists with evremove (8 routines), the PDs and the pipes (9, two of them shipping as `.S`), a third process as the labelled STAGED APPLICATION (Tier 1 only); band 4 wave 1 phase A: the input and the waits (34 routines in C at 0.31–0.91 — geminput's posts and click counter, the fork queue and its four fork functions, iasync and its arms, gemevlib; forker, ev_timer and drawrat verified and unpriced), six twins linked and PENDING (flip 2 is phase B: nothing flipped), every blocking arm held to the ROM at dsptch, a word an interrupt shares held at every instruction boundary of both blobs; band 4 wave 2 phase A: THE DISPATCHER (the switch and the glue as `.S`, disp_act / mwait_act / idle in C at 0.38–0.75, forker priced at 0.60–1.04, the glue installed by our own code on target, a host scheduler model behind a switch that defaults to refusing) and ev_multi's twin PENDING with its woken cases (14 more ✅ rows; nothing flipped — FLIP 3 is the next commit); band 4 wave 2's FLIP 3: ev_multi rebound, the door all C; band 4 wave 3: THE ROWS THAT SWITCH — the foundation's pilots, the waits, ev_multi and the door users (87 rows, the memory-laying hook road retired), then its steps S and T: THE SESSIONS THAT SWITCH (a slice's marks per process; fm_alert's and fs_input's ends-blocked cases taken on through their wakes, 7 rows) and THE EVENT TAPE, ap_trecd and ap_tplay in C (`src/aes/aptape.c`: 2 routines, 14 rows, the bare yield into another process a registered row) — 108 rows switch; step R: the door's retirement — BAND 4 COMPLETE; band 5 wave 0: the pre-init machines and the ROM's own boot (harness, no row); band 5 wave 1: slice S, THE OPCODE SWITCH AND THE MARSHAL (`src/aes/gemsuper.c`: 2 routines), and slices H and G, THE LEAVES ROUND gem_main AND THE SHELL (26 routines: geminit's, gemshlib's, the cartridge chain, the desk's memory and three desk leaves, gemdosif's leftovers with pgmld and the vector takes, the XBIOS door) — 149 rows switch; slice C (gemctrl's four handlers) is next |
 | desk | 0 | — | — (no row: nothing bound) | STARTED — band 6 wave 1a: units O and D, 59 routines in C, LINKED INTO BOTH BLOBS AND HELD AT TIER 1, NOTHING BOUND (`## Linked, unbound — desk (59)`, below the AES's section); the BIOS door ships as its ROM bytes (`src/desk/trp13.S`) |
 | data | — | — | — | NOT STARTED |
 
@@ -974,8 +974,10 @@ our door, marshal, switch and routines); ct_msgup's, a kit call over the ROM's a
 WINDOW: the accessory's own code and the ROM's AES under its trap, on both shores. Three of hctl_rect's drop ONE WORD MORE
 by name, a row's own by nature (`SwitchingRow.also_dropped`: contrl[3] after the menu's ct_mouse re-show — the ROM's
 stack word, the C's named one).
-THE TABLE TODAY: a FOREIGN WINDOW in 8 of its rows; the save word `$8996` dropped by name in 42 of the rows that
-switch; A TURN OF OUR SCREEN MANAGER priced under 35 of its rows (`test_status` holds all three, and the Components cell's count
+THE TABLE TODAY: a FOREIGN WINDOW in 0 of its rows; the save word `$8996` dropped by name in 42 of the rows that
+switch; A TURN OF OUR SCREEN MANAGER priced under 35 of its rows (and since band 6's slice B0 THE DESK'S TURN, a turn of
+ours priced as an accessory's under its own line — W6-R7 — where the 8 windows of the ROM's process stood: the desk's,
+and ct_msgup's spare PD's, another process's) (`test_status` holds all three, and the Components cell's count
 of the rows taken through interrupts). SINCE FLIP 4 a window is THE ROM'S PROCESS's — the desk or an accessory, woken by
 the screen manager's message or reading inside a row of its own: ctlmgr 2 (the desk's), mn_do 2, and one each of
 ap_sendmsg, ev_block, ap_rdwr and ct_msgup (AND, SINCE THE NARROW DOOR FLIP, AN ACCESSORY'S TURN INSIDE A ROW MEASURED
@@ -1121,7 +1123,7 @@ routine that reaches the OS by another trap — is the KNOWN PRICING GAP under t
 | `0xfeacd4` | `sh_write` (121, `src/aes/shell_buf.c`) | 1 row | 835 / 7578 both lines | **1.00** both lines (T→) | ✅ verified | both lines in; doexec stored, ISDEF/DODEF cleared, isgem as a flag ($0100 -> 1), `isover` unread; the stored pointers tagged |
 | `0xfead26` | `sh_get` (122, `src/aes/shell_buf.c`) | 1 row | 808 / 7690 a whole buffer | **0.98** a whole buffer (T→) | ✅ verified | 0/1/80/255/256 bytes of the DESKTOP.INF buffer; the bus |
 | `0xfead40` | `sh_put` (123, `src/aes/shell_buf.c`) | 1 row | 805 / 7160 a whole buffer | **0.98** a whole buffer (T→) | ✅ verified | 0/1/80/255/256 bytes into the DESKTOP.INF buffer; the bus |
-| `0xfee5c8` | `rom_ram` (`src/aes/resource.c`) | 9 rows | 43 / 660 past the last part .. 101491 / 1240844 the desk's first, replayed | **0.98** the default DESKTOP.INF (T→), **0.99** the desk's icons, three buffers (T→), **0.99** the rest of the desk's icons (T→), **0.45** past the last part (T→), **0.90** the AES's again (T→), **0.37** the desk's again, the desktop sized (T→), **0.19** the format dialogs' first (T→), **0.19** the desk's first, replayed (T→), **0.14** the AES's first, replayed (T→) | ✅ verified | every part: 3 DESKTOP.INF, 2/4 the desk's icons, 6/7/$7fff answer the entry address, a part < 0 is the AES's re-request; the format dialogs' first request is the snapshot's own next move (its flag 1), the desk's and the AES's first requests REPLAYED over fresh copies = the snapshot; the desk's re-request sizes the desktop through the desk's OWN global[] $96ba; the kept global[]s staged FILL (the review's three survivors killed); dsptch with AES_INDISP clear a host halt |
+| `0xfee5c8` | `rom_ram` (`src/aes/resource.c`) | 9 rows | 43 / 660 past the last part .. 101491 / 1240844 the desk's first, replayed | **0.98** the default DESKTOP.INF (V, `net`), **0.98** the desk's icons, three buffers (V, `net`), **0.98** the rest of the desk's icons (V, `net`), **0.45** past the last part (V, `net`), **0.82** the AES's again (V, `net`), **0.55** the desk's again, the desktop sized (V, `net`), **0.19** the format dialogs' first (V, `net`), **0.18** the desk's first, replayed (V, `net`), **0.14** the AES's first, replayed (V, `net`) — SINCE BAND 6's SLICE B0 the kind is `net` on all nine (THE METHOD MOVED, not the code, on eight: "the AES's again" 1,314 / 1,454 cycles unchanged, its 108 thunk cycles now netted); the desk's again moved by the code (its arm now runs ini_tree, unit D's binding and the yield: N1, ruling R4; the slice's entry has the before) | ✅ verified | every part: 3 DESKTOP.INF, 2/4 the desk's icons, 6/7/$7fff answer the entry address, a part < 0 is the AES's re-request; the format dialogs' first request is the snapshot's own next move (its flag 1), the desk's and the AES's first requests REPLAYED over fresh copies = the snapshot; the desk's re-request sizes the desktop through the desk's OWN global[] $96ba; the kept global[]s staged FILL (the review's three survivors killed); dsptch with AES_INDISP clear a host halt |
 | `0xfeaa58` | `rs_free` (111, `src/aes/resource.c`, through `dos_free`) | 1 row | 57 / 844 the desk's | **0.79** the desk's | ✅ verified | Mfree(global[7..8]) over the staged recording trap, the whole ordered ledger; both returns parked; DOS_AX the word, DOS_ERR the LONG's sign ($00008000, EIMBA, $80000000); rs_hdr untouched |
 | `0xfee4de` | `rom_rsc_init` (gem_entry's `jsr`, `src/aes/resource.c`, through `dos_alloc`) | 1 row | 51862 / 450030 the snapshot's own block | **1.00** the snapshot's own block (T→) | ✅ verified | Malloc answered with the snapshot's own block $cc72: the bundle copied byte for byte over a FILL-staged block, the six-part table (stale-staged) = the snapshot's; ROM findings: the Malloc is NOT checked, and the AES part's length runs 5 bytes into the desk's resource (a word count subtracted from a byte offset) |
 | `0xfe3bba` | `dos_alloc` (`src/aes/gemdosif.c`) | 3 rows | 23 / 336 an odd size, an odd block, 21 / 324 even, 20 / 322 no memory | **0.94** an odd size, an odd block, **0.98** even, **1.10** no memory | ✅ verified | direct and through Line-F over the recording trap: the size and the block each rounded up to even (a longword sum: $ffffffff asks for 0), the FAILURE ARM (DOS_ERR := 1, answer 0) pinned directly; ROM finding: a success does NOT clear DOS_ERR. "No memory" is AT THE BAR (1.0993): the C's DOS_ERR store is image-relative ($98ec is past a d16), 46 cycles against the ROM's absolute `move.w #1,$98ec`'s 20 |
@@ -3107,7 +3109,8 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       over REAL GEMDOS in place — no replay — and their ratio is the own-cycle one, the whole run's printed
       beside). SIXTEEN STRETCHES AND gem_gemdos_call's SIX `.S` ROWS; the registry's import reads the DESKTOP.INF
       capture for them (`REGISTRY_READS` gained it: `test_makefile.py` said so).
-      THE TABLE against `2925660`'s (5,678 lines → 5,777): 22 rows and their 76 lines under them, one line of
+      THE TABLE against `2925660`'s (5,678 lines → 5,841) — the length TODAY, which `test_status` holds this sentence to
+      (5,777 at this slice; +64 at band 6's slice B0, its re-derived rows): 22 rows and their 76 lines under them, one line of
       legend; NO EXISTING LINE MOVED. NO ROW IS OVER 1.00 — the highest the reader's 0.98 (0.98 with thunks):
       gem_main 0.59 / 0.58 (the first pass, without and with a DESKTOP.INF; whole run 0.74), 0.57 the teardown,
       0.86 the second pass; the reader 0.98 / 0.97 / 0.97; sh_main 0.92 the first pass, 0.75 its last, 0.86 a
@@ -3306,14 +3309,16 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       pass: `make gates`, `make guarded`, a `$90c` capture set, a from-empty build, the `my-code-review` skill — the
       orchestrator's.
   - **WAVE 4 — SLICE F: THE FULL FLIP — `$88` IS OURS AT EVERY TIER 3 RUN'S ENTRY, AND BEHIND THE DOOR, AT A MACHINE'S
-    IDLE, NO LONGWORD HOLDS BY VALUE THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES (17 routines: the scan's
-    list, not every ROM routine) — one word of the registry; THE DOOR of seven parts over eight longwords of a machine; the
+    IDLE, NO LONGWORD HOLDS BY VALUE THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES (18 routines since band 6's slice B0, the Line-F table `$fee900` the
+    eighteenth: the scan's list, not every ROM routine) — one word of the registry; THE DOOR of eight parts over nine
+    longwords of a machine (seven over eight at the flip; the binding's table kind the eighth part); the
     table's lines byte-identical but ONE, the legend's; 383 verified STILL** (2026-10-13; one agent alone in the tree,
     on `f0985a1`; the brief: `scratchpad/b5/W4/for_F.md`; scratch, probes and logs: `scratchpad/b5/W4/F/`; THE FIX
     PASS after two reviews — its sub-entry, below — reworded this entry to what tests hold, and its sentences here
     are the reworded ones). WHAT IS
-    TRUE NOW: `aes_event.GEM_TRAP_VECTOR.at_entry` is True — three of the registry's ten declarations are mapped AT A
-    RUN'S ENTRY (the fork queue's codes, the screen manager's entry and, new, the GEM trap's vector): EVERY TIER 3 RUN
+    TRUE NOW: `aes_event.GEM_TRAP_VECTOR.at_entry` is True — four of the registry's eleven declarations are mapped AT A
+    RUN'S ENTRY (the fork queue's codes, the screen manager's entry and, new, the GEM trap's vector — and since band 6's slice B0 the
+    Line-F table the handler's copy indexes, `$cc24`): EVERY TIER 3 RUN
     OF OURS over a machine whose `$88` holds the ROM's handler is entered with the build's own `trap #2` handler
     there (all but eight rows' machines: the vectors given back, a program's own — and NOT every blob run: one made
     through the kit's own class is entered over the snapshot's `$fe3ea6` still, the fix pass's sub-entry), and every `trap #2` it
@@ -3331,7 +3336,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     routine, no new `.S`, no kit edit, no cartridge (W4-R12); the Line-F table behind `$2c` is the ROM's, so the
     desk's turns stay foreign windows and "ours booted" still reads to deskmain's entry and no further (W4-R3);
     accessory machines stay door takeovers (W4-R2); NO SHIPPED OBJECT CHANGED. THE TABLE against `f0985a1`'s (5,777
-    lines → 5,777): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
+    lines → 5,841) — the length today, held by `test_status` (5,777 at the flip; +64 at band 6's slice B0): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
     turn, no class line (`scratchpad/b5/W4/F/tdiff_final.txt`, against `scratchpad/final36/tier3.txt`).
     - **(a) THE WORD, AND ITS REDS.** With the one word turned and nothing else, the slice's batteries (every
       `test_aes_*.py`, `test_tier3.py`, `test_status.py`, `test_transcribed.py`, `test_derived.py`,
@@ -3527,7 +3532,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
         `* **Next**`, AES_MAP, the README, the table's legend, `aes_boot.py` / `aes_event.py` / `aes_ctlmgr.py` /
         `test_aes_boot.py` / `test_aes_boot_w4.py`'s comments, a test's name and the vet's message) to what is held:
         AT A DOOR MACHINE'S IDLE NO LONGWORD HOLDS, BY VALUE, THE ROM'S COPY OF A ROUTINE THE REGISTRY DECLARES — THE
-        SCAN'S LIST IS 17 VALUES (`aes_boot.routines_by_value`: the sixteen routines the registry's
+        SCAN'S LIST IS 18 VALUES (17 at the flip; band 6's slice B0 added the Line-F table `$fee900`) (`aes_boot.routines_by_value`: the routines the registry's
         declarations name, and gem_entry), matched as whole longwords, of the 381 named AES entries a build has (the
         reviewer's count). THE TWELVE LIVE HOLDERS OF OTHER ROM ROUTINES the reviewer's wider scan found on every
         door machine (12 machines × both blobs and after the three continuations: `scratchpad/RW4F/B/probes/q1.out`,
@@ -3628,7 +3633,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
         sentences now read "... as every Tier 3 run of ours is entered ... A DOOR TAKEOVER, A LABELLED STAGING: every
         row from a machine's idle ... runs on our side over the ROM's own boot with 8 longwords of the machine (and
         each loaded program's first-entry frame) LAID BY THE HARNESS over what the ROM's own start-up stored ... no
-        longword holds, by value, the ROM's copy of a routine the relocation registry declares (17 routines, not every
+        longword holds, by value, the ROM's copy of a routine the relocation registry declares (18 routines, not every
         ROM routine)"; no row's line, no figure. 154 of 154 shipped objects sha256-identical to
         `scratchpad/final36/objs.txt`; `bench.bin` `967bb17b…`, the shipped `bench.bin` `f47fc909…`, the shipped ELF
         `4e739611…`. No source under `src/`, `include/` or `atari/` and no kit file was edited by this pass.
@@ -3727,7 +3732,8 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       declaration (slice T's figures: shipped 459,903 instructions / 5,155,292 cycles against the ROM's own boot's
       592,893 / 6,824,868; the handler's copy 80,338; 23 thunks, 23,424). NOT BOUND, HELD: the operand at
       `aes_rom_linef_handler + $16` is `$fee900` in both blobs and no longword of a blob holds the table's address;
-      the eighth relocation is DECLARED PENDING in the generator (`linef_table.PENDING_BINDING`, waits for slice B) —
+      the eighth relocation is DECLARED PENDING in the generator (`linef_table.PENDING_BINDING`, waits for slice B — MADE,
+      and the declaration retired, at band 6's slice B0: its entry) —
       not in `aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3`, which existing tests and this file pin EMPTY. THE COPY'S TAIL
       (design risk 9): gem_entry's 100-byte copy carries nine and a half longwords behind the handler — `gemstart.S`'s
       own, THE ROM'S; our table is indexed in the blob and no byte of it is copied. TWO EXISTING WHOLE-BLOB CLAIMS
@@ -4967,6 +4973,134 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       8 skipped, rc 0 (−9: the stand-in's tests; `## Suite`), the 176 base hashes identical after it. UNPINNED, BY
       NAME: the guard's 68040 arm (K7); `make gates`, `$90c`, `my-code-review` — THE
       ORCHESTRATOR'S.
+  - **BAND 6 SLICE B0 + H — THE BINDING AND THE OUR-SHORE BATTERY: THE ROM'S DESK OVER OUR AES ON EVERY MACHINE OF
+    OURS, 113 OF THE HANDS' 115 CHAINS HELD ON OUR SHORE; NOTHING FLIPS (the 215 stay held); 383 verified STILL**
+    (2026-10-16; on `91dc9a3`: the cut `scratchpad/b6/B/cut.md`, the briefs `scratchpad/b6/B/common.md`, `fix_b.md`;
+    TWO AUTHORS IN ONE TREE, disjoint files — A1 slice B0, the binding; A2 slice H, the our-shore battery — their
+    hand-backs `scratchpad/b6/B/{A1,A2}/handback.md` (A1's per-row list `A1/rows50.md`); two reviews
+    `scratchpad/RB/{A,B}/review.md`; then ONE FIX PASS alone in the tree, which wrote this entry: every number in it is
+    the fix pass's own build, collect, run or log unless it says whose measurement it is; its scripts and logs
+    `scratchpad/b6/B/FIX/`). WHAT "BOUND" MEANS: gemstart.S's EIGHTH RELOCATION — the Line-F handler's `movea.l
+    #<table>,a0` operand is `aes_linef_table` (the ROM's `$fee900`), and gem_entry's copy carries it to `$cc24` — so
+    on every machine of ours the ROM's desk calls OUR AES through OUR table and parks through OUR dispatcher; the
+    registry's TABLE KIND (`aes_event.LINEF_TABLE_SLOT`: `$cc24`, `{$fee900: aes_linef_table}`, mapped AT A RUN'S
+    ENTRY, proved by gem_main's stretches) is THE DOOR's eighth part (nine longwords), `tier3.code_relocations` maps it,
+    `linef_table.PENDING_BINDING` is retired (`lineftable.S` regenerated: comment lines only, its object identical).
+    NOTHING FLIPS: `LINKED_AND_NOT_FLIPPED` unchanged, every band-6 entry of the table the ROM's longword.
+    - **SLICE B0 (A1).** N1 (ruling R4): rom_ram's desk arm, which HALTED BY NAME (`trap #7`) where the ROM's yields,
+      calls `aes_ini_tree` — the ROM's own callee `$f6a8`, over `fp-10` — which calls unit D's C rsrc_gaddr binding;
+      its answer in a local, its host twin one NEW HOST SLOT (`HOST_SLOT_AES_ROM_RAM_DESKTOP`, `$7f9b2`, 4 B — no other
+      user), the leaf machine's cases through the ROM's own dispatcher guard (`aes_event.dsptch_s_guard`: `tst.b
+      indisp / bne rts`); the unbound pin exempts exactly `aes_deskbind.REFERRED_BY_BAND_5`. THE DOOR TAKEOVER'S
+      CLASSES BY NATURE (R5; the cut said two, A1 measured FIVE, each needed or refused: PD0's saved context, PD0's
+      whole stack, the desk's EVB parked address, GEMDOS's own stack — a return into the blob —, p_run's register-save
+      area; `aes_ctlmgr.the_bound_desk_s_classes`). THE DESK'S TURN (W6-R7): a third kind of window, `THE_DESK_S`
+      (and ct_msgup's spare PD, `ANOTHER_PROCESS_S`, the same pricing), a turn of ours priced net of what both shores
+      ran of the ROM's AES spans, on a line of its own, pinned in the NEW `test/aes_desk_turns_pinned.py` (10 rows ×
+      2 blobs, written by `tools/repin.py`). THE FIRST DISPATCH (found by A1): on idle-to-idle rows the ROM's dispatcher
+      loop calls our switch parts through our table — a line of its own. N8: the two narrowed whole-blob claims
+      restated (a thunk is a caller: `aes_stack.routines_handed_to`; ct_msgup called once, in its thunk). N9: the 513
+      battery reds of the prototype RECAST, none loosened (the staging retired in `test_aes_lineftable.py`, the idle
+      ours in `test_aes_ourboot.py` with a new live class `PD0_PARKED`, its past-the-cut bound 512 → 1024 — measured
+      863 shipped / 734 bench —, the door's ninth longword in the boot batteries; nine controls whose subject is a
+      ROM window under the labelled stand-in `tier3.relocations_before_the_binding`). R2 / R9 DECLARED (the user's)
+      and pinned in `test_aes_lineftable.py`: every desk-text reader of a void routine's D0 lies inside a binding
+      whose answer `test_desk_bind.READ_AT` says no one reads (15 thunked void routines have readers, all such); only
+      trp14's own two instructions name `$95b2`. THE TABLE (A1's `make bench`, re-measured by reviewer A
+      byte-identical): 2,259 rows in order, 32 moved + one legend line, 5,777 → 5,841 lines — the cut's 50 rows
+      re-derived on our side and listed by class (44 door takeovers under R5's classes, 27 of them byte-identical; 4
+      desk-turn rows and ev_block / ct_msgup priced by turn, 0.60–0.73; NO RATIO OF THE 50 MOVED) and rom_ram's 9 — its
+      kind "through" → `net` on all nine: THE METHOD MOVED on eight (reviewer A's F4: "the AES's again" 1,314 / 1,454
+      cycles unchanged, 0.90 with its 108 thunk cycles, 0.82 net), the desk's again 0.37 → 0.55 by the code (ini_tree +
+      binding + yield). 34 whole-run pin pairs and 16 desk-turn lines re-pinned from recorded runs (0 refused);
+      `PD0_BEFORE_THE_SHELL` 304 / 308. OBJECTS: only `src_aes_gemstart_S.o` and `src_aes_resource_c.o` differ from
+      base (169 identical); glue.S identical; both blobs 44 B shorter (bench 253,276 → 253,232, shipped 256,236 →
+      256,192).
+    - **SLICE H (A2), the our-shore campaign** (`test/aes_desk.py`'s last block, NEW `test/test_aes_desk_ours.py`):
+      `aes_desk.stepped_ours`, a KEPT derivation that runs the blob (the third, `test/derived.py`'s note), keyed by
+      the `Boot`'s `OurBoot`; `OUR_MACHINES` (each capture booted by OUR gem_entry, `$cc24` naming our table — the
+      ROM's machine `$fee900`); `walked_ours`; N4's per-shore stops (the rubber box's poll our C gr_stilldn's entry;
+      the viewer's two the ROM's until unit M flips). 113 OF 115 CHAINS WALK ON OUR SHORE, each held to THE THREE
+      INVARIANTS: the screen and the desk's block (its code addresses given the ROM's names) byte-equal, the OS's cycles
+      equal on every step, and THE CONVERSE — every band-6 routine still the ROM's with its own cycles equal on every
+      step (each PC charged by EVERY inventory start) — but ONE CLASS, `RUN_UNDER_BANDS_0_TO_5`, three spans a band-5
+      routine runs on the ROM's shore and ours runs as ours: ini_tree `$fe0b6e` (158 a pass) and the rsrc_gaddr binding
+      `$fde354` (218) under rom_ram's arm, dos_write's body (124 a pass: dos_read `$fe3a78`'s `moveq #$3f,d1; bra`
+      enters past dos_write's own `moveq #$40`) — R4's shape does NOT remove it (A2's measurement; the cut expected
+      it would). WHO RAN (W6-R5): no cycle of the ROM's GEM text outside the declared spans — band 6's 244 less
+      `flipped` (read off the blob's own bound table: 0 today) and SIX SPANS of bands 0–5 reached by a still-ROM
+      routine otherwise than through the table (`$fdae38` gemgraf's helper, `$fe39b6` __DOS, `$fe3c3e` its body,
+      dos_free's body `$fe3c28..`, `$fe3a08` dos_sfirst's `moveq #1 / rts`, lmul `$fe3db4`), each pinned to a chain it
+      runs in. PD0 PER CHAIN (`DEPTHS`, the four stacks, lowest STORES): the cut's §4 ROM column re-measured equal; the
+      deepest of ours A: File > Open, 1,504 of W6-R4's 1,548. W6-R8's TWO CHAINS (the launch, the disk copy) REFUSED
+      ON OUR SHORE AS NAMED CLASSES: the ROM's own walk of each stores over the blob's span (the launch all of it, the
+      copy 254,900 B). N6: `aes_boot.surfaced` returns `devices`, `printed`, `drive_b` from `booted`, `_continue` and
+      `served`; the eleven `_Run`s outside `aes_boot.py` make no `Boot` and are NOT OWED (provisional ruling below).
+    - **THE FIX PASS** (one agent, alone in the tree; its brief's rulings the ORCHESTRATOR'S, PROVISIONAL — AWAITING
+      (24)). (1) THE DESK'S LIVE FRAMES (reviewer A's F1, SHOULD-FIX): PD0's class could NOT be narrowed to the frames
+      under the desk's lowest ROM frame — MEASURED on all four takeover machines, 56 bytes ABOVE that frame (`$a288`)
+      differ: dead trap frames of each build's AES (SR `$2300`, a return into the ROM's GEMDOS glue `$fe3bce` /
+      `$fe3bba` against our `aes_dos_alloc`'s) in locals deskmain (`link a6,#-72`) and desk_evnt_multi `$fdded8` (its
+      six answer words) allocate and do not write; and they TRAVEL — ev_multi writes only the words of the events that
+      occurred and desk_evnt_multi copies all six out after the yield, so a menu row's run carries each build's dead
+      bytes into deskmain's frame (`$a34e..`; a first narrowed compare with "untouched since" excused reddened there).
+      So PD0's class stays the whole stack (`aes_ctlmgr`'s note) and THE LIVE FRAMES ARE HELD OTHERWISE: a row's two
+      runs are entered with them LAID AS THE ROM'S (`aes_ctlmgr.lay_the_desk_s_live_frames`, A LABELLED STAGING in
+      `tier3._two_shores` — every frame link and return of the desk's chain held equal first, refused by name
+      otherwise) and compared BYTE FOR BYTE where they end (`tier3.vet_the_desk_s_live_frames`: from the desk's lowest
+      ROM frame, read off the ROM's run by its `link a6` chain, to UDA0's top), on every ctlmgr row and every handler
+      row behind the door; no figure moved. RB-A's R1 now dies on THAT memory assertion. (2) THE FIRST DISPATCH HELD TO
+      THE BAR (F2): `tier3.vet_the_first_dispatch_within_the_bar`, refused by name over 1.10 (or a cost of ours against
+      none of the ROM's), never accepted; its line prints the ratio — today 0.76–0.82 on the 11 ctlmgr rows. RB-A's R3
+      (an 8-pass spin in `aes_disp_act`) does NOT cross it — the line goes 0.80 → 0.85 — and dies on the exact cycle
+      pins, as before; a spin of 1,024 dies on the bar (R3c). (3) The stale "not bound" text: `atari/target.mk`,
+      `transcription.py`, README's sixth kind, this ledger's three `PENDING_BINDING` sentences (annotated as made at
+      B0). (4) R2's pin asserts each reader lies INSIDE the binding it is given to (`_the_binding_holding`: entry to
+      the next inventory start; F5) with a reader test; R9's scan says what it reads — absolute-long operands; absolute-
+      short cannot name `$95b2`, a register-based access is not scanned and is recorded UNPINNED by name (F6); R8 killed
+      (`test_the_exemption_covers_the_cores_it_names_and_no_other`), R7 killed (two stops laid by hand: a parameter
+      naming PD0 on one shore alone is no class). (5) THE CONVERSE CLASS EXACT (reviewer B's F1): one pass for each
+      time the band-5 caller ran, counted off the ROM's own step profile at the caller's site (rom_ram's arm's `addq.l
+      #4,sp` at `$fee74a`, 8 cycles; dos_read's `moveq` at `$fe3a78`, 4), our shore running that site never; dos_write's
+      pass 124 (measured: the body dos_read enters; a desk call's is 128). (6) The screen and the desk's block held
+      where EVERY STEP ends (F2; 255 intermediate step-ends, equal). (7) `PD0_BYTES` one home (`aes_desk`, imported by
+      both shores' batteries); the gate = that less `aes_stack.nest_on_the_first_stack` on our shore (244 → 1,548);
+      our machine's PD0 span asserted; THE DEPTH IS THE LOWEST STORE, not the lowest SP — the later hard gate reads
+      the same measure with `aes_stack.unstored_under`'s bound said beside it (provisional). (8) W6-R8's discriminator
+      (no walked chain's ROM walk stores a byte over the blob; the launch's span read off the blob, not a literal),
+      dos_free entered past its start declared (`aes_desk.ENTERED_PAST_ITS_START`: not a cycle of `$fe3c26..$fe3c27`
+      on our shore), the class's spans checked against `still_the_rom_s()`. THE TABLE: 12 lines moved against the
+      tree's pre-fix copy, the legend's and the 11 first-dispatch lines (now "= r, held <= 1.10 by itself"); 5,841
+      lines; no row, no ratio. OBJECTS: none moved by the fix pass (171 identical to A1's; vs base gemstart and
+      resource alone); glue.S `d83d2bc5`; shipped blob `3ab76b3f…`.
+      MUTANTS (one sweep, `scratchpad/b6/B/FIX/sweep.log`, private tree, kit watchdog loaded, forced rebuild for C/asm,
+      `__pycache__` cleared, every restore hash-verified; driver `FIX/mut/run_mutant.py`): R1_evmulti_answers_shifted
+      (RB-A's: the ev_multi thunk hands the answers +2) — KILLED, 6 failed: THE DESK'S LIVE FRAMES (a memory
+      assertion; before the pass, two cycle pins); F1b_live_frames_unread — KILLED (1, the reader test);
+      F1c_live_frames_not_laid — KILLED (146: the live frames differ where the runs end — the staging is needed);
+      F1d_lay_unchecked — KILLED (1); R2_pd0_class_widened (RB-A's, 0x400 lower) — KILLED (140); R3_disp_act_slowed
+      (RB-A's spin 8) — KILLED (78, the exact cycle pins; NOT by the bar); R3b_disp_act_spin64 — KILLED (78, the pins;
+      not by the bar); R3c_disp_act_spin1024 — KILLED (105, THE FIRST DISPATCH over the bar: 69,578 against 12,564);
+      F2_first_dispatch_bar_doubled — KILLED (1); R7_parked_any — KILLED (1, was SURVIVED); R8_exemption_unrestricted
+      — KILLED (1, was SURVIVED); F4_extent_unchecked — KILLED (1); F5_whole_passes_again — KILLED (1);
+      F5b_caller_site_ignored_on_ours — KILLED (1); F5c_dos_write_pass_128 — KILLED (8); F6_steps_misaligned — KILLED
+      (80); F7_pd0_bytes — KILLED (115); F7b_nest_not_read — KILLED (1); F8_blob_span_wider — KILLED (2);
+      F8b_dos_free_body — KILLED (27); R10_save_area_short (RB-A's) — KILLED (169). REVIEWER B's R1 / R1b / R2 (in-process
+      data mutants, re-run against the final reader: `FIX/rb_b_r1.log`): ini_tree a second pass short — KILLED (was
+      SURVIVED); never run — KILLED (was SURVIVED); the desk's own dos_write dropped — KILLED. THE AUTHORS' (their own
+      drivers, no watchdog — RB-A F9 / RB-B F8; the reviewers re-ran M3, M9, M11 and A1's logs with it): A1 11 / 11
+      KILLED (M1–M8, M10, M11; none crashed); A2 12 / 12 KILLED (M11 by the walk's named refusal, not an assertion).
+      THE REVIEWERS': A — R1 KILLED (only by two cycle pins on B0's files), R2–R6, R9, R10 KILLED, R7 and R8 SURVIVED (now
+      killed); B — B1 pixel, B2 OS cycles, B3 who-ran, B4 depth KILLED on our blob; R1 / R1b SURVIVED (now killed), R2,
+      R3 KILLED, R5 EQUIVALENT (the spans equal on 113 / 113). UNPINNED, BY NAME: the class's `still_the_rom_s` check
+      (equal by the data until F1 flips one: `flipped` is empty); a register-based reader of `$95b2`; the switching rows'
+      desk stack (`aes_switching.desk_drops`, put back as found) — the live-frames compare is the ctlmgr and handler
+      rows'. RECORDS: the transient `test_derived` reds of A1's discovery run ROOT-CAUSED by reviewer A (A1 edited
+      `test/aes_stack.py` under its own run; reproduced by appending a byte mid-run, 25 reds; two concurrent unedited
+      runs green) — `test_derived` is not robust to a tree edited under it, NOT a store race; N6's eleven `_Run`s not
+      owed; the battery's cost (reviewer B: cold 119 s / warm 12 s at -n 4, ≈150 CPU-s a cold gate).
+      NOT RUN by the fix pass: `make gates`, a `$90c` capture set, a from-empty build, the `my-code-review` skill — the
+      orchestrator's.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -5036,7 +5170,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   that moves re-derived and listed, the three invariants on every chain, units O and D in C. WHAT IT OWES BY NAME FROM
   THIS WAVE: the two whole-blob claims narrowed to leave the thunks out (`aes_stack.routines_handed_to`; ct_msgup's
   "called by no instruction of a blob"); THE PENDING EIGHTH RELOCATION, declared in the generator
-  (`linef_table.PENDING_BINDING`) and not in `aes_event`'s registry; THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
+  (`linef_table.PENDING_BINDING`; MADE AND RETIRED at slice B0) and not in `aes_event`'s registry; THE D0 A VOID ROUTINE OF OURS LEAVES A ROM
   CALLER (seven binding sites, ours differs on four — to settle BEFORE the binding); the private reaches the wave's
   entry lists. (The ruling on the oracle's MOVE16 — owed before the File-menu handler is priced — is given and done:
   slice M16; with it the by-hand Line-F stops, the second review's B-H16, are gone.)
@@ -5113,6 +5247,18 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   turn priced as an accessory's (W6-R7); W6-R8's three kit items and a bigger PSG ledger (R-H-2) NOT authorized — a
   disk copy or a launch whose Malloc or Pexec reaches the blob stays on the ROM's shore and is a labelled class on
   ours, and the print is answered at its first instruction.
+  **BAND 6 SLICES B0 + H ARE IN** (their entry, above; 383 verified STILL, NOTHING FLIPPED): THE TABLE IS BOUND — the
+  ROM's desk calls our AES through our Line-F table on every machine of ours — and the hands' campaign holds 113 of its
+  115 chains on our shore (screen, desk block, OS cycles, every ROM desk routine's own cycles, who-ran, PD0's depth;
+  W6-R8's two refused by name). **NEXT, IN ORDER** (the cut's §6, the user's R1: the hard gate binds every flip that
+  deepens a path): SLICE D, THE PD0 DIET — the desk's and the draw path's frames, measured on a private flipped build
+  (the cut's prototype B: 9 chains over 1,548, "folder: File > Close" 1,686), every chain ≤ 1,548 with the nest
+  charged — BEFORE wave 1b's and wave 2's flips; then F1 (units O + D: trp13's row, the binding frame, unit O's seven
+  hosted thunks), F2 (wave 1b's 100, four groups), F3 (wave 2's 44 + `$fde844`), F4 (wave 4's 20: the desk door's four
+  `jsr`s, the viewer's C-side stops, UTIL_FRAME), each held by `test_aes_desk_ours.py` (its routines leave
+  `still_the_rom_s`, their class entries with them); then W3a (the 17-routine cycle + `$fe2172`, bound, held
+  target-only — the user's R3) and W3b (deskmain, under the hard gate). The `$90c` capture set over band 6 (never
+  run): the orchestrator's, at B0 and at W3b.
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -5605,7 +5751,8 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
         instruction") — every Line-F caller of everyobj and of ct_msgup is ours, the same premise; the alternative
         is not to emit those two thunks until slice B; (3) THE GENERATED FILE'S CENSUS (its 239 ROM longwords are
         literals: listed as held, checked by the table's own test) — or band 6's routines named first; (4) THE
-        PENDING RELOCATION DECLARED IN THE GENERATOR (`linef_table.PENDING_BINDING`), not in `aes_event`'s registry —
+        PENDING RELOCATION DECLARED IN THE GENERATOR (`linef_table.PENDING_BINDING`; retired at slice B0, the registry's
+        table kind in its place), not in `aes_event`'s registry —
         or moved there at slice B with the tests that pin that registry empty.
       - SLICE H's: A FOLDER THAT WAS ON THE DISK FROM POWER-ON CANNOT BE OPENED on the device model — the desk forces
         a media change and GEMDOS's next call is Rwabs of the folder's cluster, which the ROM's driver answers
@@ -5828,6 +5975,38 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       - PD0 WITH THE WAVE BOUND (arithmetic, B's and A's): the copy's path ≈ 636 and Format's ≈ +80 over the ROM's, the
         engine's ≈ 60 deeper — all under 1,548.
       - THE SWEEP'S SURVIVORS, RECORDED (each named in the entry's sweep).
+      - **THE USER'S RULINGS OF 2026-10-15 / 16, AS GIVEN** (the user's own, not provisional; the slice B cut's §7):
+        W6-R1 the table first; THE MOVE16 KIT FIX (done, slice M16); W6-R4 A HARD GATE AT 1,548 B (PD0); W6-R7 the
+        desk's turn priced as an accessory's; R1 — the hard gate binds EVERY FLIP THAT DEEPENS A PATH (so slice D, the
+        diet, lands before the flips that cross it); R2 + R9 — DECLARE the void routines' D0 and app_blddesk's
+        AES_XBIOS_RETURN, each pinned (no ROM instruction that runs on our shore reads it); R3 — wave 3 held
+        TARGET-ONLY on the bound machine (no host twin); R8 — band 5's missing trap frames: the table moves at units
+        A / C / G's flips (not slice B0). W6-R8 and the bigger PSG ledger NOT authorized (a launch and a disk copy
+        stay the ROM's shore, labelled classes on ours).
+      - PROVISIONAL RULINGS OF SLICE B0 + H's FIX PASS'S BRIEF (the orchestrator's, `scratchpad/b6/B/fix_b.md`):
+        R4 AS BUILT — rom_ram's desk arm → `aes_ini_tree` → unit D's `aes_desk_rsrc_gaddr` (the ROM's own shape),
+        the host slot `$7f9b2` (no other user) and the `dsptch_s_guard` hook accepted. R5 — the five by-nature door
+        classes accepted, NOT named in the row ids (no 44-row rename); PD0's stays the WHOLE STACK by the fix pass's
+        measured reason (the entry's item 1), the live frames held by a labelled staging and an exact compare where a
+        row's runs end. W6-R7's desk-turn netting accepted, and its extension to ct_msgup's spare PD (another
+        process's ROM text over our AES — beyond the user's ruling's letter). THE FIRST DISPATCH priced against the
+        bar (0.76–0.82). desk_rsrc_load UNPINNED at its arrivals with the new reason (the binding's yield), revisited
+        at F1. A2's four: the converse class kept BY NATURE but EXACT BY CALLER; dos_read → dos_write's body
+        confirmed in bytes (`$fe3a78 723f 6002`); N6's eleven `_Run`s not owed; `still_the_rom_s` kept (no-entry
+        parts the ROM's until a flip says otherwise — enforced by failing tests: reviewer B's item 8).
+      - THE AUTHORS' "TO RULE ON", WITH THEIR RESOLUTION: A1 (1) N1's shape — ruled (R4 as built); (2) R5's five
+        classes and the row ids — ruled (no rename); (3) the desk-turn netting and ct_msgup — ruled (provisional);
+        (4) the first dispatch — ruled (priced, the fix pass's item 2); (5) the whole-stack drop — the takeover's
+        class STAYS whole by the measured reason, the live frames compared at a row's end (the fix pass's item 1; the
+        switching rows' put-back-as-found drop UNCHANGED, recorded); the `relocations_before_the_binding` stand-in
+        accepted by reviewer A (nine controls, no row measured so) — NOT ruled by the user; (6) desk_rsrc_load —
+        ruled (unpinned, revisit at F1); (7) `THE_SAVE_FRAME_EQUAL` empty, its red on WM_TOPPED's words — accepted by
+        reviewer A, not ruled. A2 (1)–(4) — ruled above.
+      - THE FIX PASS'S OWN, FOR THE USER: THE LIVE-FRAMES STAGING (our shore's run of a ctlmgr or handler row entered
+        with the desk's dead locals laid as the ROM's — what a desk that READ an uninitialised local would then do
+        alike on both shores; no figure moved with it); THE HARD GATE'S MEASURE (the lowest store, `unstored_under`'s
+        bound beside it — as written in `test_aes_desk_ours.py`, provisional); R3 (RB-A's spin) does not cross the
+        first dispatch's bar and is held by the exact pins only.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -5954,9 +6133,22 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make guarded` (the gate; `make test` collects the same ids): **30,818 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (band 6 slices B0 + H's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **30,962 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 SLICES B0 + H — THE BINDING AND THE OUR-SHORE BATTERY, WITH THEIR FIX PASS (2026-10-16; two authors in one
+  tree on `91dc9a3`, two reviews, then one fix pass alone in the tree — the wave log's entry; objects: gemstart's and
+  resource's moved by A1, NONE by the fix pass; the table 5,777 → 5,841 lines by A1's re-derived rows, then 12 lines by
+  the fix pass's priced first-dispatch line and legend): ONE `make test` in the shared tree (`PYTEST_ARGS="-n 8"`),
+  `build/*.so` and every `__pycache__` removed first, **30,962 passed / 8 skipped**, rc 0, 679 s
+  (`scratchpad/b6/B/FIX/final.log`; RUN ONCE). RE-SUMMED, ITEMISED BY FILE against the gate-speed fix pass's own
+  collection (30,970 = 30,962 + 8 skipped, against 30,826; `pytest --collect-only`, 290 files then and 291 now:
+  `scratchpad/gatespeed/FIX/collect_perfile.txt`, `scratchpad/b6/B/FIX/collect_perfile.txt`): +144 —
+  `test_aes_desk_ours.py` NEW, 129 (A2's 127; the fix pass's gate reader and W6-R8's discriminator); `test_aes_boot_w4.py`
+  100 → 102 (A1); `test_aes_ctlmgr.py` 191 → 195 (the fix pass: the live frames' three, the first dispatch's bar);
+  `test_aes_lineftable.py` 484 → 487 (A1's two, the fix pass's R2 extent reader); `test_aes_ourboot.py` 126 → 127 (R7's
+  pin); `test_aes_rom_ram.py` 32 → 36 (A1's three, R8's pin); `test_repin.py` 14 → 15 (A1); no file lost a test.
 - THE GATE-SPEED CHANGE — PARTS 1 AND 2, ITS REVIEW AND ITS FIX PASS (2026-10-15/16; harness, tests and docs only: no
   source, no row; "Harness — gate speed" above): THREE `make gates` from an EMPTY build/, alone on the machine, each
   **30,818 passed / 8 skipped**, rc 0 — `FRESH=1` 781 s, the next default 740 s, store warm 398 s

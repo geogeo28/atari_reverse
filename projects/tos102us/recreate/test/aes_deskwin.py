@@ -162,8 +162,8 @@ def the_rom_s_run(the_row):
 
 # ---- A CASE, and what it holds -----------------------------------------------------------------------------------------
 Case = namedtuple("Case", "name chain nth arm arguments why traps budget", defaults=(1, None, None, None, 0, None))
-# A CASE OVER THE LEAF MACHINE (`aes.leaf_machine`: the dispatcher's bare `rts` for dsptch) where the C cannot run at
-# its arrivals at all — its `chain`. NO ARGUMENT CLASS (arrivals exist; the HARNESS cannot run the C there): its id
+# A CASE OVER THE LEAF MACHINE (`aes.leaf_machine`: the dispatcher's bare `rts` for dsptch — a C yield answered by THE
+# ROM'S OWN GUARD, `aes_event.dsptch_s_guard`) where the C cannot run at its arrivals at all — its `chain`. NO ARGUMENT CLASS (arrivals exist; the HARNESS cannot run the C there): its id
 # says UNPINNED AT ITS ARRIVALS, and its `why` why.
 LEAF_MACHINE = "the leaf machine"
 UNPINNED_AT_ARRIVAL = "UNPINNED AT ITS ARRIVALS"
@@ -223,7 +223,8 @@ def ran(each, yields):
         the_row = row(label(each), each.name, arguments, pokes, signature.restype is not None, each.budget)
         companion, the_rom_s = held(the_row), the_rom_s_run(the_row)
         return companion.answer, the_rom_s.d0, the_rom_s.idles
-    result = plain(each.name, arguments, pokes, answers_of(each))
+    leaf = {"hook": aes_event.dsptch_s_guard} if each.chain == LEAF_MACHINE else {}
+    result = plain(each.name, arguments, pokes, answers_of(each), **leaf)
     answer = {None: None, aes.WORD_ANSWER: result.answer, aes.LONG_ANSWER: result.long_answer}[signature.restype]
     return (answer() if answer else None), result.info["regs"]["d0"], 0
 

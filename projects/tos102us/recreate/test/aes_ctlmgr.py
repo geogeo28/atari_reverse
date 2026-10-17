@@ -36,10 +36,12 @@ from harness import addrs, make_image
 
 import aes
 import aes_boot
+import aes_desk
 import aes_event
 import aes_gemctrl as gc
 import aes_switch
 import case
+import vdi_helpers
 
 ENTRY, SYMBOL = addrs.AES_ROM_CTLMGR, aes_boot.ENTRY_SYMBOL
 THE_ROM_S_BODY = (addrs.AES_ROM_CTLMGR, addrs.AES_ROM_ICTLMGR)     # the ROM's ctlmgr, `$fe49d2..$fe4a6a`
@@ -308,19 +310,134 @@ def the_rom_s_machine(woken):
 # OWN MACHINE BEHIND THE DOOR idles in the ROM's all the same: it loads no program, and the desk parks last.
 TWO_IDLES = (aes_boot.TRAP_SAVE_FRAME, aes_boot.LINE_F_MASK)
 
+# THE BOUND DESK (band 6 slice B0, N2; the orchestrator's ruling R5: classes BY NATURE). Since the door's ninth part
+# (`aes_event.LINEF_TABLE_SLOT`) the ROM's desk on a takeover machine calls OUR AES through our table from the
+# takeover on, and PARKS THROUGH OUR DISPATCHER (its machine, the desk's own among them, idles in OURS: both
+# `TWO_IDLES` apply). So PD0 is a process of our event layer as a program the door took is, and differs from the
+# ROM-booted machine in THAT PROCESS'S OWN CLASSES (`aes_boot`'s per-program three: its saved context, its stack from its
+# UDA's state block to its top — two builds' frames under the desk's —, a wait's parameter that is an address in that
+# stack) — and in TWO OF GEMDOS'S, where the desk's last `trap #1` left OUR build's state:
+#   * GEMDOS'S OWN STACK below where its entry parks A7: dead between two traps, it holds the return address of the
+#     trap's caller — the ROM's glue on its shore, OUR build's (`aes_dos_alloc`) on ours;
+#   * p_run's REGISTER-SAVE AREA (the AES's basepage): the trapping caller's registers and the address of its frame —
+#     a place in PD0's stack, two builds' depths.
+# Each located from the machine's own pointers, and the two of GEMDOS's as `vdi_helpers.GEMDOS_DOOR_WINDOWS` names
+# them. Named PER COMPARISON beside `aes_boot.compared`'s (a takeover machine's comparison is made there), and each
+# REFUSED where the machines do not differ in it — a class nobody needs is none.
+THE_DESK_S_NAME = b"the desk"
+THE_GEMDOS_STACK = "GEMDOS's own stack: the desk's last trap's caller, a return into the blob"
+THE_GEMDOS_SAVE_AREA = "p_run's register-save area: the desk's last trap's registers and frame, in PD0's stack"
+_Process = namedtuple("_Process", "name pd stack")
+
+
+def the_desk_s_stack(machine):
+    """`(lo, top)`: PD0's stack on `machine` — from its UDA's state block (through the PD's own pointer) to UDA0's top,
+    where gem_entry starts it (`AES_UDA1`: the screen manager's UDA follows)."""
+    return (machine.long(aes.SHELL_PD + aes.PD_UDA) & aes_boot.BUS) + aes.UDA_STATE_BYTES, aes.AES_UDA1
+
+
+# THE DESK'S LIVE FRAMES (the fix pass of slice B0, reviewer A's F1). The stack class above is PD0's WHOLE stack: it
+# cannot be narrowed to the frames under the desk's lowest ROM frame, by a measured reason. On all four machines 56
+# bytes ABOVE that frame differ at the takeover — dead trap frames of each build's AES (SR `$2300` and a return into
+# the ROM's GEMDOS glue, `$fe3bce` / `$fe3bba`, against our `aes_dos_alloc`'s) in locals the desk's frames allocate and
+# do not write: deskmain's (`link a6,#-72`) and desk_evnt_multi's six answer words (`$fdded8`). And they TRAVEL: ev_multi
+# writes only the words of the events that occurred, and desk_evnt_multi copies all six out to deskmain's locals after
+# the yield, so a row's run carries each build's dead bytes into deskmain's frame (measured: the menu rows, `$a34e..`).
+# So the live frames are held otherwise: OUR SHORE'S RUN of a row is entered with them laid as THE ROM'S
+# (`lay_the_desk_s_live_frames`, a labelled staging: the dead bytes of the takeover the ROM's, every frame link and
+# return held equal first), and where the two runs END they are compared byte for byte (`tier3.vet_the_desk_s_live_frames`)
+# — what our AES writes into the desk's frames (an answer through a pointer the desk hands it) is compared there.
+def _the_desk_s_frames(memory):
+    """The A6 of every frame of THE DESK'S OWN, lowest first, in PD0's stack over a ROM-shore `memory` where the desk
+    is parked, and UDA0's top. Walked up the ROM's frame chain (Alcyon's `link a6`: the caller's A6 at `0(a6)`, the
+    return at `4(a6)`) from the A6 savestate keeps in PD0's UDA: the desk's frames begin at the first whose return
+    lies in the desk's ROM text (`aes_desk.DESK_TEXT`, `UTILITY_TEXT`). REFUSED BY NAME where the chain leaves the stack
+    before it reaches one: no ROM frame of the desk's is parked there."""
+    lo, top = (case.long_in(memory, aes.SHELL_PD + aes.PD_UDA) & aes_boot.BUS) + aes.UDA_STATE_BYTES, aes.AES_UDA1
+    frame, frames = case.long_in(memory, lo - aes.UDA_STATE_BYTES + aes.UDA_A6) & aes_boot.BUS, []
+    while lo <= frame < top - aes.LONG_BYTES:
+        returns_to = case.long_in(memory, frame + aes.LONG_BYTES) & aes_boot.BUS
+        if frames or any(text_lo <= returns_to < text_hi for text_lo, text_hi in (aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT)):
+            frames.append(frame)
+        frame = case.long_in(memory, frame) & aes_boot.BUS
+    if not frames:
+        raise aes_boot.Refused(f"PD0's frame chain leaves its stack [{lo:#x}, {top:#x}) at {frame:#x} before a return "
+                               f"into the desk's text: the desk is not parked in a ROM frame of its own")
+    return frames, top
+
+
+def the_desk_s_live_frames(memory):
+    """`(lo, top)`: THE DESK'S OWN FRAMES (`_the_desk_s_frames`) — from the return slot of the call it is parked under
+    to UDA0's top."""
+    frames, top = _the_desk_s_frames(memory)
+    return frames[0] + aes.LONG_BYTES, top
+
+
+def lay_the_desk_s_live_frames(ours, rom):
+    """OUR SHORE'S MACHINE `ours` (an image, in place) GIVEN THE ROM'S BYTES OVER THE DESK'S LIVE FRAMES of the ROM's
+    machine `rom` it starts beside (the note above) — A LABELLED STAGING, laid where a row's two runs are entered. What
+    it may lay is DEAD BYTES alone: REFUSED BY NAME where a frame link or a return of the desk's chain differs (the
+    desk would stand in other frames). The count of bytes laid."""
+    frames, top = _the_desk_s_frames(rom)
+    lo = frames[0] + aes.LONG_BYTES     # (the lowest frame's own link is its callee's: the AES's, under the desk's)
+    links = [(f"{at:#x}", case.long_in(rom, at), case.long_in(ours, at)) for frame in frames
+             for at in (frame, frame + aes.LONG_BYTES) if lo <= at < top and case.long_in(rom, at) != case.long_in(ours, at)]
+    assert not links, f"the desk's frame chain on our machine is not the ROM's: {links[:4]} (the ROM's, ours)"
+    laid = sum(1 for at in range(lo, top) if rom[at] != ours[at])
+    ours[lo:top] = bytes(rom[lo:top])
+    return laid
+
+
+def the_bound_desk_s_gemdos_windows(memory):
+    """GEMDOS's two windows of the bound desk (above) over `memory`, as `(lo, hi, why)`: its own stack, and p_run's
+    register-save area (through the machine's own p_run)."""
+    basepage = case.long_in(memory, addrs.GEMDOS_P_RUN) & aes_boot.BUS
+    (stack_lo, stack_hi, _why), = (window for window in vdi_helpers.GEMDOS_DOOR_WINDOWS
+                                   if window[1] == addrs.GEMDOS_SUPERVISOR_STACK)
+    return ((stack_lo, stack_hi, THE_GEMDOS_STACK),
+            (basepage + addrs.BASEPAGE_SAVED_D0, basepage + addrs.BASEPAGE_SAVED_FRAME + aes.LONG_BYTES, THE_GEMDOS_SAVE_AREA))
+
+
+def the_bound_desk_s_classes(rom, ours):
+    """`{class: (lo, hi)}` the takeover machine `ours` differs from the ROM-booted `rom` in BECAUSE ITS DESK IS BOUND."""
+    desk = _Process(THE_DESK_S_NAME, aes.SHELL_PD, the_desk_s_stack(ours))
+    assert ours.long(addrs.GEMDOS_P_RUN) == rom.long(addrs.GEMDOS_P_RUN), "the two machines run two GEMDOS processes"
+    return {**aes_boot._of_a_program(rom, ours, desk),
+            **{why: (lo, hi) for lo, hi, why in the_bound_desk_s_gemdos_windows(ours.ram)}}
+
+
+def outside_the_bound_desk_s_classes(rom, ours, differing):
+    """The `(address, length)` runs of `differing` (a `compared`'s) left OUTSIDE `the_bound_desk_s_classes` — and
+    `{class: bytes it excused}`, each REFUSED where it excused none."""
+    classes, left, within = the_bound_desk_s_classes(rom, ours), [], {}
+    for at, length in differing:
+        for byte in range(at, at + length):
+            excused = [name for name, (lo, hi) in classes.items() if lo <= byte < hi]
+            if excused:
+                within[excused[0]] = within.get(excused[0], 0) + 1
+            elif left and left[-1][0] + left[-1][1] == byte:
+                left[-1] = (left[-1][0], left[-1][1] + 1)
+            else:
+                left.append((byte, 1))
+    needed = (THE_GEMDOS_STACK, THE_GEMDOS_SAVE_AREA, aes_boot.PROGRAM_CONTEXT.format(THE_DESK_S_NAME.decode()))
+    assert all(within.get(name) for name in needed), f"a class of the bound desk excused nothing: {within}"
+    return left, within
+
 
 @functools.cache
 def _taken(key, blob):
     """THE MACHINE OUR SHORE'S RUNS START FROM (`our_machine`), as `aes_boot` made it: held where it is made to be
     the ROM-booted one outside the classes such a machine differs in by nature — `TWO_IDLES` named exactly where
-    the two idle in two dispatchers (each REFUSED by `compared` where the machines do not differ in it)."""
+    the two idle in two dispatchers (each REFUSED by `compared` where the machines do not differ in it), and THE BOUND
+    DESK'S (`the_bound_desk_s_classes`)."""
     if key == gc.THE_DESK:
         taken = aes_boot.desk_machine(ours=blob, door=aes_event.THE_DOOR)
     else:
         taken = aes_boot.accessory_machine(*gc.ACCESSORY_MODES[key], ours=blob, door=aes_event.THE_DOOR)
     booted = gc.machine(key)
     beside = aes_boot.compared(booted, taken, also=TWO_IDLES if taken.idle != booted.idle else ())
-    assert not beside.differing and booted.idle == aes_boot.THE_ROM_S, f"{key}: the takeover machine differs at {beside.differing[:4]}"
+    left, _within = outside_the_bound_desk_s_classes(booted, taken, beside.differing)
+    assert not left and booted.idle == aes_boot.THE_ROM_S, f"{key}: the takeover machine differs at {left[:4]}"
     assert taken.resumed_in(taken.screen_manager()) == aes_boot.OURS
     return taken
 
@@ -347,10 +464,12 @@ def our_machine(woken, blob):
 
 
 def our_machine_s_programs(woken, blob):
-    """THE LOADED PROGRAMS OF THAT MACHINE, behind our door: `((pd, (lo, top)), ...)` — each one's stack span as the
-    door's takeover found it; none for a machine that loads none (the desk's)."""
-    taken = _taken(woken.machine, blob).takeover
-    return tuple((program.pd, program.stack) for program in (taken.door.programs if taken.door else ()))
+    """THE PROCESSES OF THAT MACHINE OUR EVENT LAYER PARKS BESIDE THE SCREEN MANAGER, behind our door: `((pd, (lo,
+    top)), ...)` — each loaded program's stack span as the door's takeover found it, and, THE DOOR BINDING THE LINE-F
+    TABLE (band 6 slice B0), THE DESK's: PD0, its stack from its UDA's state block to its top (`the_bound_desk_s_classes`)."""
+    taken = _taken(woken.machine, blob)
+    loaded = tuple((program.pd, program.stack) for program in (taken.takeover.door.programs if taken.takeover.door else ()))
+    return (*loaded, (aes.SHELL_PD, the_desk_s_stack(taken)))
 
 
 def register(woken):
