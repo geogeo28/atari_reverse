@@ -5101,6 +5101,105 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       owed; the battery's cost (reviewer B: cold 119 s / warm 12 s at -n 4, ≈150 CPU-s a cold gate).
       NOT RUN by the fix pass: `make gates`, a `$90c` capture set, a from-empty build, the `my-code-review` skill — the
       orchestrator's.
+  - **BAND 6 SLICE D — THE PD0 DIET: EVERY WALKED CHAIN OF THE 215-FLIPPED STATE UNDER W6-R4's 1,548 B, IN C (no `.S`,
+    no `optimize` attribute, no FRAME_DIET mark); NOTHING FLIPS; 383 verified STILL** (2026-10-16; on `ca30133`: the
+    brief `scratchpad/b6/D/brief.md`, one author alone in the tree — its hand-back `scratchpad/b6/D/handback.md`, the
+    full table `depth_table.txt`, the levers' diffs `lev/` —, one review `scratchpad/RD/review.md` (no blocker, three
+    should-fix in the tool), then ONE FIX PASS alone in the tree (`scratchpad/b6/D/fix_d.md`), which wrote this entry:
+    every number here is the fix pass's own run unless it says whose; its logs `scratchpad/b6/D/FIX/`).
+    - **THE MECHANISM** (the author's finding, the review's measurements agree): GCC's DEFERRED POPS (`-fdefer-pop`) —
+      a call's pushed arguments stay on the stack under the next call until up to 32 bytes pile up. A routine split
+      off its deep caller saves PD0 only where the helper's arguments are POPPED BEFORE THE DEEP CALL (a branch between,
+      a sibling-call jump, or 32 B reached); otherwise the helper's own frame stands where the caller's registers stood
+      and the split costs bytes (L7b, L12, and the reviewer's C1 and C2 below all failed on it).
+    - **THE LEVERS, EACH MEASURED ALONE ON THE FLIPPED BUILD, THEN TOGETHER** (all `src/desk/`; PD0 saved, the cycles
+      our blob runs over the 10 deep chains where recorded): L1 win_bldview split — its item loop `lay_the_items` and
+      its sliders `the_sliders_set`, entered by a SIBLING-CALL JUMP so nothing of win_bldview stands under the sliders'
+      wind_set — −64 folder close, −56 two-windows close, −12 folder opened / A: File > Open / A: opened (deskview.c);
+      L3 close_folder's arithmetic and zoom `zoom_onto_the_middle` −68 folder close (desksupp.c); L4 desk_verify's
+      local the 8-byte GRECT it uses and wind_get through `get_rect_called` −32 folder close, −12 the opens; L5
+      do_fopen's local the GRECT it holds −8; L6 do_wredraw through `get_rect_called`, its local its two rectangles
+      (`WIN_FRAME_REDRAW_BYTES`) −16 Print, +7,574 cycles (+0.037 %); L7 do_wopen's rectangles `the_rectangles_read`,
+      the corner re-read from its frame where used −12 Print, +2,802; L8 act_redrawn_inside `always_inline` −20 Print,
+      −5,542; L9 pro_run's `the_command_run` −16 Print, +416; L10 + L11 do_diropen's `the_window_s_path_named` and
+      `the_window_redrawn` (its frame 36 → 12 B) −24 folder close / folder opened / A: File > Open / A: opened, +142.
+      NOT TAKEN: L7b (do_wopen's growbox in the helper too: +16, its 20 argument bytes deferred under act_chg), L12
+      (set_slider handed its axis: nothing over L1). TOGETHER: −192 folder close, −92 folder opened, −64 Print, −48 A:
+      File > Open and A: opened, −56 two-windows close; our blob's cycles +9,018 on the 10 deep chains (+0.044 %),
+      +47,512 over the 107 walked (+0.030 %), the worst chain +0.095 % (folder: deletes unconfirmed — the file dragged to
+      the trash). The fix pass took off the ninth attribute, `lay_the_items`' `noinline` (the review's F5: GCC keeps it
+      out of line unasked) — `deskview.o` BYTE-IDENTICAL without it, so no depth moved.
+    - **PD0 PER CHAIN** (bytes, the write ledgers' lowest store; ROM = the ROM's own desk on the ROM's AES; bound =
+      `DEPTHS`, today's shipped blob, unflipped — UNCHANGED by the slice, all 113 re-derived by the tool `--unflipped`;
+      flipped before = HEAD's tree flipped, the cut's prototype B to the byte; after = this slice; then the margin to
+      1,548, and to it with wave 3's estimated +40 / +80 B — the cut's [I], deskmain's ROM frames made C):
+
+          ROM  bound  before  after  margin  w3+40  w3+80  chain
+         1438   1442    1600   1536     -12    +28    +68  file: File > Open, Print clicked (printed, and the printer not ready: two chains)
+         1460   1504    1584   1536     -12    +28    +68  A: File > Open
+         1446   1490    1570   1522     -26    +14    +54  A: opened (and window: two windows, text view: and files: A: opened)
+         1410   1414    1606   1514     -34     +6    +46  folder: opened
+         1398   1428    1686   1494     -54    -14    +26  folder: File > Close
+         1242   1232    1472   1472     -76    -36     +4  the six "dragged onto the folder" chains
+         1350   1354    1500   1464     -84    -44     -4  folder: selected, File > Show Info, Return
+         1364   1380    1514   1458     -90    -50    -10  two windows: File > Close Window (one left on top)
+      every other walked chain ≤ 1,454 (`scratchpad/b6/D/depth_table.txt`). 107 walked on the flipped state, 0 over
+      (HEAD flipped: 9 over, worst +138); 75 shallower, none deeper. Refused as declared: W6-R8's two, N4's six. Over all
+      115 chains the fix pass's run `FIX/flip.json` is EQUAL TO THE REVIEWER'S `RD/flip.json` and the author's, PD0 and
+      cycles chain by chain; `--unflipped` `FIX/unflip.json` = `DEPTHS` for all 113.
+    - **THE MARGIN IS 12 B, ON THREE FAMILIES, AND WAVE 3 DOES NOT FIT ON IT**: at +40 four families go over (+6..+28),
+      at +80 eleven — W3b needs 28–68 B MORE. THE TWO CHEAP CANDIDATES THE REVIEWER MEASURED ARE NO-GO: C1 do_wopen's
+      spill as two helpers (Print −8, but A: File > Open +16 → 1,552, OVER: the wind_open helper itself stands under
+      wm_open); C2 do_dopen's drive check / diropen arm split (A: File > Open +36 → 1,572). Like L7b and L12: deferred
+      pops or arguments standing under a deep call. So W3b's diet is expected to need FRAME_DIET's `no-defer-pop` on the
+      desk's deep frames (AWAITING (8)'s mark, ≈ 20–28 B a frame where a < 32 B pop is deferred; test_stack_diet held to
+      PD0 then) or deeper C restructuring — THE USER'S TO RULE ON WHEN W3b COMES (R-D2, AWAITING (24)).
+    - **THE TOOL** (NEW, `tools/flipped_depths.py`; README, "W6-R4 ON THE FLIPPED STATE"): a private copy, `--patch`
+      levers, THE FLIP (the held list emptied, `lineftable.S` generated again, sh_cmd's four built-ins at copies of their
+      thunks on target), a forced rebuild, the walk on our shore, PD0 per chain against the gate measured on that blob
+      (1,792 less the 244-byte nest). EXIT NON-ZERO (the fix pass's items 1–3, the review's F1–F3): the blob NOT
+      FLIPPED — every band-6 routine with a C core and a table entry read off the private blob's OWN bound table
+      (`aes_desk.still_the_rom_s`, who-ran's reading; 214 on the flipped build, 0 left the ROM's); a chain over the gate;
+      a step whose write ledger saturated (a refusal by name, `aes_desk.depths`' rule); a refusal outside its DECLARED
+      list or reading otherwise than declared (W6-R8's launch and copy on either state; N4's five viewer chains and the
+      one walked after them on the flipped state — F4 takes them out); a declared refusal that walks. Run: 2:28 flipped
+      and 0:47 unflipped with the walks' derivations kept; ~10–15 min cold at `--jobs 6`.
+    - **THE FAST PIN** (ruling R-D1, provisional): `test_aes_desk_ours.py` reads the SHIPPED ELF in seconds — the eight
+      helpers (`lay_the_items`, `the_sliders_set`, `zoom_onto_the_middle`, `get_rect_called`, `the_rectangles_read`,
+      `the_command_run`, `the_window_s_path_named`, `the_window_redrawn`) each a routine of its own, `act_redrawn_inside`
+      none, and `aes_win_bldview` ending in a jump to `the_sliders_set`; plus the tool's self-checks held without a
+      flipped build (today's unflipped blob reads as all 214 held routines the ROM's; the ledger refusal; the declared
+      list each way; W6-R8's two = `REFUSED_ON_OUR_SHORE`, N4's = every chain with a step at the viewer's key waits).
+      No slow tool test in the suite: the flipped numbers are the tool's and this entry's.
+    - **OBJECTS, TABLE, PINS**: four objects moved against HEAD — `src_desk_{deskact,desksupp,deskview,deskwin}_c.o`;
+      the fix pass moved NONE (171 identical to the reviewed slice; both blobs and `glue.S` `755e80ff…` identical);
+      `build/bench/tier3.txt` after `make bench` BYTE-IDENTICAL to HEAD's (no row moved: the dieted routines are
+      "linked, unbound" and have no row); `test_aes_desk_ours.DEPTHS` unchanged; `transcription.py`'s
+      C_CALLERS_OF_TRANSCRIBED_CORES follow four calls into their helpers (lay_the_items ×2, the_command_run,
+      the_window_s_path_named), the cores and the shipped glue unchanged. No battery compares a frame byte of a dieted
+      routine that moved (host slots unchanged; the frames shrink on target only). Faithfulness (the review, lever by
+      lever): the same calls, order, arguments and ROM-visible stores; L7's re-read corner is the one stored (nothing
+      between do_xyfix and the reads writes `frame+0..3`). The fix pass's own: the frames spelt offset + size
+      (`SUPP_FRAME_WORK + GRECT_BYTES`, `OPEN_FRAME_WORK + GRECT_BYTES`), `WIN_FRAME_REDRAW_BYTES` =
+      `WIN_FRAME_SECOND_RECT + GRECT_BYTES`; the attributes listed in `include/stack_diet.h`'s header, NOT as FRAME_DIET
+      entries (ruling R-D3, provisional); the tool's nits (one private-imports helper, the truncation widths named, the
+      chain counts said, the test's generator import leaving `sys.path` as it found it). `names.txt`: NONE (the helpers
+      are static).
+    - **MUTANTS — every one, its verdict.** THE AUTHOR'S (the tool's text steps): M1 the clear after `def
+      thunk_symbol(`, M2 the copies left `.local`, M3 the host entered at the thunks — KILLED, 1 each. THE REVIEWER'S:
+      by the tool D2 (L8 off: Print 1,556), D3 (L11 inlined: A: File > Open 1,552), D5 (L3 inlined: folder close 1,562)
+      KILLED; D1 (`lay_the_items`' `noinline` off) SURVIVED — the attribute inert, now removed; D4 (`get_rect_called`
+      inlined: +16 / +8 / +8, 1,544) SURVIVED the tool — inside the 12-B margin — and is KILLED by the fast pin
+      (below); Tier 1 B1–B6 (path-named order, the root's y, the sliders' order, wind_open at the pre-xyfix corner, the
+      tail count kept, the zoom's half) KILLED (4, 2, 4, 2, 2, 2); T1 (the tool's flip step lost) SURVIVED then. THE FIX
+      PASS'S (`FIX/sweep.log`: a private tree, the kit watchdog loaded, a forced rebuild for C, `__pycache__` cleared,
+      every restore hash-equal; every red an AssertionError, no crash; BASE green before and after): T1 re-run —
+      KILLED (the tool exits 1, "the blob is NOT FLIPPED", 214 routines, before any walk); D2, D3, D4, D5 against the
+      fast pin — KILLED in seconds (1 each); P1 win_bldview's tail call blocked — KILLED (the jump pin); P2
+      `lay_the_items` inlined — KILLED (2); P3 `the_sliders_set` inlined — KILLED (2); M1 the ledger check dropped, M2
+      a refusal's reason unread, M3 a declared refusal walking ignored, M4 the flipped check reading `flipped` for
+      `still_the_rom_s`, M5 a viewer chain undeclared, M6 W6-R8's copy declared to read otherwise — KILLED (1 each).
+    - NOT RUN by the fix pass: `make gates`, a `$90c` capture set, `my-code-review` — the orchestrator's.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -5256,9 +5355,16 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   charged — BEFORE wave 1b's and wave 2's flips; then F1 (units O + D: trp13's row, the binding frame, unit O's seven
   hosted thunks), F2 (wave 1b's 100, four groups), F3 (wave 2's 44 + `$fde844`), F4 (wave 4's 20: the desk door's four
   `jsr`s, the viewer's C-side stops, UTIL_FRAME), each held by `test_aes_desk_ours.py` (its routines leave
-  `still_the_rom_s`, their class entries with them); then W3a (the 17-routine cycle + `$fe2172`, bound, held
+  `still_the_rom_s`, their class entries with them) AND BY `tools/flipped_depths.py` (below); then W3a (the 17-routine cycle + `$fe2172`, bound, held
   target-only — the user's R3) and W3b (deskmain, under the hard gate). The `$90c` capture set over band 6 (never
   run): the orchestrator's, at B0 and at W3b.
+  **BAND 6 SLICE D IS IN** (its entry, above; 383 verified STILL, NOTHING FLIPPED): THE PD0 DIET, in C — on a private
+  215-flipped build of the shipped blob every walked chain is ≤ 1,548 (worst 1,536: Print and A: File > Open, 12 B
+  spare; was 1,686), measured by the NEW `tools/flipped_depths.py`. **NEXT: F1 (units O + D: trp13's row, the binding
+  frame, unit O's seven hosted thunks)**, then F2, F3, F4 as above. EACH F-SLICE RE-RUNS `tools/flipped_depths.py` ON
+  ITS OWN TREE BEFORE IT LANDS AND MUST EXIT 0 (its C can eat the 12 B; F4 takes N4's six declared refusals out of the
+  tool as it declares the viewer's C-side stops). W3b owes its own diet: 28–68 B more than this margin, the cheap
+  splits measured NO-GO — FRAME_DIET `no-defer-pop` on the desk is the user's call then (AWAITING (24), R-D2).
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -6007,6 +6113,22 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
         alike on both shores; no figure moved with it); THE HARD GATE'S MEASURE (the lowest store, `unstored_under`'s
         bound beside it — as written in `test_aes_desk_ours.py`, provisional); R3 (RB-A's spin) does not cross the
         first dispatch's bar and is held by the exact pins only.
+    (24, continued) BAND 6 SLICE D — THE PD0 DIET (its entry, above). NOTHING HERE IS THE USER'S WORD but R-D2's
+      question: the fix pass's brief's rulings (`scratchpad/b6/D/fix_d.md`) are the ORCHESTRATOR'S, PROVISIONAL.
+      - R-D1 (provisional): the diet's flipped numbers live in this ledger and the tool, NOT in a slow suite test; the
+        suite holds what makes them in seconds — the shipped ELF's symbols (the eight helpers routines of their own,
+        act_redrawn_inside none, win_bldview's jump) and the tool's self-checks.
+      - R-D3 (provisional): `noinline` / `always_inline` are NOT FRAME_DIET marks (that register is for `optimize`
+        attributes and their compile-twice proof): a list of them and what each saved in `include/stack_diet.h`'s
+        header; `lay_the_items`' attribute removed (it measured nothing — its object byte-identical without it).
+      - ITEMS 1–4 OF THE FIX PASS (provisional): the tool refuses an unflipped blob (read off its own bound table); a
+        saturated write ledger is a named refusal; the refusals are held to a declared list (W6-R8's two, N4's six on
+        the flipped state) both ways; the fast ELF pin of item R-D1.
+      - R-D2, THE USER'S, WHEN W3b COMES: the margin is 12 B on three families and wave 3's +40–80 B does not fit on it
+        (28–68 B short); the reviewer's two cheap candidates measured NO-GO (C1 +16, C2 +36 on A: File > Open); the
+        likely lever is FRAME_DIET `no-defer-pop` on the desk's deep frames — AWAITING (8)'s mark extended to PD0, with
+        `test_stack_diet.py` held to PD0 — or deeper C restructuring. RECORDED: the review's D4 (get_rect_called inlined)
+        stays inside the margin (1,544) by the tool's measure; the fast pin reds on it.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -6133,10 +6255,19 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (band 6 slices B0 + H's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **30,962 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (band 6 slice D's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **30,971 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 SLICE D — THE PD0 DIET, WITH ITS FIX PASS (2026-10-16; one author alone in the tree on `ca30133`, one review,
+  then one fix pass alone in the tree — the wave log's entry; objects: the four desk objects moved by the author, NONE by
+  the fix pass; the table BYTE-IDENTICAL to HEAD's after `make bench`): ONE `make test` in the shared tree
+  (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` removed first, **30,971 passed / 8 skipped**, rc 0, 632 s
+  (`scratchpad/b6/D/FIX/final.log`; RUN ONCE). RE-SUMMED, ITEMISED BY FILE against slice B0 + H's fix pass's own
+  collection (30,979 = 30,971 + 8 skipped, against 30,970; `pytest --collect-only`, 291 files both:
+  `scratchpad/b6/B/FIX/collect_perfile.txt`, `scratchpad/b6/D/FIX/collect_perfile.txt`): +9 — `test_aes_desk_ours.py`
+  129 → 138 (the author's three tool steps; the fix pass's four tool self-checks and two shipped-ELF pins); no other
+  file's count moved.
 - BAND 6 SLICES B0 + H — THE BINDING AND THE OUR-SHORE BATTERY, WITH THEIR FIX PASS (2026-10-16; two authors in one
   tree on `91dc9a3`, two reviews, then one fix pass alone in the tree — the wave log's entry; objects: gemstart's and
   resource's moved by A1, NONE by the fix pass; the table 5,777 → 5,841 lines by A1's re-derived rows, then 12 lines by

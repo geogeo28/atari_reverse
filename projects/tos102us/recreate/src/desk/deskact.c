@@ -266,8 +266,10 @@ static inline uint16_t changed_state(uint16_t state, int16_t value, int16_t set)
     return set ? (uint16_t)(state | (uint16_t)value) : (uint16_t)(state & ~(uint16_t)value);
 }
 
-/* The window's objects redrawn over the part of `rect` inside `clip` (rc_intersect leaves it there), where any is. */
-static void act_redrawn_inside(uint8_t *image, int16_t window, uint32_t clip, uint32_t rect)
+/* The window's objects redrawn over the part of `rect` inside `clip` (rc_intersect leaves it there), where any is.
+ * INLINED in both callers (W6-R4): a call of its own stands its four arguments and its return under do_wredraw, on a
+ * deep path of PD0. */
+__attribute__((always_inline)) static inline void act_redrawn_inside(uint8_t *image, int16_t window, uint32_t clip, uint32_t rect)
 {
     if (aes_rc_intersect(image, clip, rect))
         aes_do_wredraw(image, window, rect_word(image, rect, GRECT_X), rect_word(image, rect, GRECT_Y),

@@ -352,11 +352,9 @@ static void set_slider(uint8_t *image, uint32_t window, uint32_t frame, int16_t 
     (void)aes_desk_wind_set(image, handle, place_field, place, 0, 0, 0);
 }
 
-/* $fe2f68 — win_bldview: THE VIEW BUILDER. The window's root freed at the rectangle; win_ocalc over what the
- * rectangle fits; then, row by row from the first file shown, each file an item object under the root — one column
- * and one row more than fit, where the view has them — at its place on the grid (the items of the view's columns not
- * shown skipped at each row's end); then the two sliders. */
-void aes_win_bldview(uint8_t *image, uint32_t window, int16_t x, int16_t y, int16_t w, int16_t h)
+/* win_bldview's items: the window's root freed at the rectangle, win_ocalc over what the rectangle fits (the first
+ * file shown into the frame), then each file an item object under the root (win_bldview's comment, below). */
+static void lay_the_items(uint8_t *image, uint32_t window, int16_t x, int16_t y, int16_t w, int16_t h)
 {
     uint16_t frame_local[FRAME_LOCAL_WORDS(VIEW_FRAME_BYTES)];
     uint32_t frame = host_slot_claim(AES_DESK_VIEW_FRAME, frame_local), globals = desk_globals(image), file;
@@ -393,9 +391,31 @@ void aes_win_bldview(uint8_t *image, uint32_t window, int16_t x, int16_t y, int1
                 file = bus_long(image, file + FNODE_NEXT);
         }
     }
+    host_slot_release(AES_DESK_VIEW_FRAME);
+}
+
+/* ...and its two sliders, the horizontal then the vertical, set over a frame of their own (wind_get's answers). */
+__attribute__((noinline)) static void the_sliders_set(uint8_t *image, uint32_t window)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(VIEW_FRAME_BYTES)];
+    uint32_t frame = host_slot_claim(AES_DESK_VIEW_FRAME, frame_local);
+
     set_slider(image, window, frame, WF_HSLSIZE, WF_HSLIDE, WNODE_PNCOL, WNODE_VNCOL, WNODE_CVCOL);
     set_slider(image, window, frame, WF_VSLSIZE, WF_VSLIDE, WNODE_PNROW, WNODE_VNROW, WNODE_CVROW);
     host_slot_release(AES_DESK_VIEW_FRAME);
+}
+
+/* $fe2f68 — win_bldview: THE VIEW BUILDER. The window's root freed at the rectangle; win_ocalc over what the
+ * rectangle fits; then, row by row from the first file shown, each file an item object under the root — one column
+ * and one row more than fit, where the view has them — at its place on the grid (the items of the view's columns not
+ * shown skipped at each row's end); then the two sliders. TWO ROUTINES OF ITS OWN, AND THE SECOND ENTERED AS A JUMP
+ * (W6-R4): the item loop keeps eleven registers, and the sliders' wind_set redraws the window — the deepest path of
+ * PD0 — so nothing of win_bldview's, nor of the loop's, stands under it. (GCC keeps the loop out of line unasked: an
+ * attribute there measured nothing. `test_aes_desk_ours.py` holds both as routines of the shipped ELF, and the jump.) */
+void aes_win_bldview(uint8_t *image, uint32_t window, int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    lay_the_items(image, window, x, y, w, h);
+    the_sliders_set(image, window);
 }
 
 /* $fe3760 — win_isel: the first child of `root` after `current` (from its first, for none) that is SELECTED. */

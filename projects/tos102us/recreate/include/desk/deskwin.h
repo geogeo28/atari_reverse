@@ -96,6 +96,7 @@
 #define WIN_FRAME_SECOND_RECT GRECT_BYTES
 #define WIN_FRAME_THIRD_RECT  (2 * GRECT_BYTES)
 #define WIN_FRAME_BYTES       (3 * GRECT_BYTES)   /* do_wfull's: -8(a6), -16(a6), -24(a6)                        */
+#define WIN_FRAME_REDRAW_BYTES (WIN_FRAME_SECOND_RECT + GRECT_BYTES) /* do_wredraw's local, to its second rectangle's end (W6-R4: PD0) */
 #define WIN_FRAME_STRING      0          /* long: the free string's address rsrc_gaddr answers ($fe0b8a -4(a6)) */
 
 /* ---- band 6 wave 2: pro_run, desk_clear, desk_verify, do_wopen ---------------------------------------------------- */

@@ -26,6 +26,13 @@
  * command line spells, and the one implied setting it would reset is spelt inside it: below); and each mark is
  * held to what it buys: the function's frame with it against the frame without. `STACK_DIET_MARKS_OFF` is that
  * guard's switch, no build's. The cycles a mark costs are Tier 3's to hold (the bar, per row).
+ *
+ * NOT MARKS, AND NOT IN THIS REGISTER — THE DESK'S PD0 SPLIT (band 6 slice D, W6-R4; PD0 saved on the flipped build by
+ * `tools/flipped_depths.py`, the ledger's slice D entry): `noinline` on the_sliders_set (win_bldview leaves to it by a
+ * jump: −64 folder close), zoom_onto_the_middle (−68), get_rect_called (−32 folder close, −16 Print),
+ * the_rectangles_read (−12 Print), the_command_run (−16 Print), the_window_s_path_named + the_window_redrawn (−24 File
+ * > Open), `always_inline` on act_redrawn_inside (−20 Print); each held as a routine of the shipped ELF, or as none, by
+ * `test/test_aes_desk_ours.py`.
  */
 #ifndef TOS102US_STACK_DIET_H
 #define TOS102US_STACK_DIET_H

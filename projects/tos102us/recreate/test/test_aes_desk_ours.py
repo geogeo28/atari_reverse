@@ -29,7 +29,10 @@ THE NUMBERS ARE THE SHIPPED BLOB'S over these hands and these captures, measured
 flip slice moves its rows (its routines leave `still_the_rom_s`, its depths move) — and says so.
 """
 import functools
+import importlib.util
 import inspect
+import re
+import sys
 from collections import namedtuple
 
 import pytest
@@ -40,6 +43,7 @@ import aes
 import aes_boot
 import aes_desk as desk
 import aes_stack
+import derived
 import transcription
 from aes_boot import OURS, Refused
 
@@ -232,6 +236,144 @@ def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_ga
     assert {name: desk.depths(name)[desk.PD0_STACK] for name in THE_ROM_S_PD0} == THE_ROM_S_PD0
     assert max(((name, depths[0]) for name, depths in DEPTHS.items()), key=lambda found: found[1]) == DEEPEST_PD0
     assert DEEPEST_PD0[1] <= pd0_gate()
+
+
+# ---- W6-R4 ON THE FLIPPED STATE: THE MEASURING TOOL'S STEPS, held to today's sources (band 6 slice D) ----------------------
+# `tools/flipped_depths.py` builds the shipped blob with every linked routine of band 6 flipped, in a private tree, and
+# walks every chain there — the gate each flip slice (F1..F4) and deskmain's (W3b) is measured on before it lands (its
+# numbers are STATUS's). Each text step it takes is held here to the source it edits, so a slice that moves an
+# anchor reds here and not in the middle of a measuring run.
+@functools.cache
+def _the_tool():
+    spec = importlib.util.spec_from_file_location("flipped_depths", derived.RECREATE / "tools" / "flipped_depths.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def _the_generator():
+    """`bench/linef_table.py` — imported here, not at the top (it imports every battery's registry), with bench/ on
+    the path for that import alone."""
+    bench = str(derived.RECREATE / "bench")
+    sys.path.insert(0, bench)
+    try:
+        import linef_table
+    finally:
+        sys.path.remove(bench)
+    return linef_table
+
+
+def test_the_tool_empties_the_generator_s_held_list_before_its_thunks_are_named():
+    tool = _the_tool()
+    source = (derived.RECREATE / tool.GENERATOR).read_text()
+    emptied = tool.emptied(source)
+    assert emptied.count(tool.EMPTIED) == 1 and emptied.index(tool.EMPTIED) < emptied.index("def thunk_symbol(")
+    assert emptied.replace(tool.EMPTIED, "", 1) == source
+
+
+def test_the_tool_copies_sh_cmd_s_four_thunks_out_of_the_flipped_table(monkeypatch):
+    """The flipped table (the generator over an empty held list) has a thunk for each of sh_cmd's four built-ins, each
+    entering its core; the tool's copies are those bodies, global. Today's table has none of them (nothing flipped)."""
+    tool, generator = _the_tool(), _the_generator()
+    with pytest.raises(AssertionError, match="no thunk"):
+        tool.door_thunks((derived.RECREATE / tool.TABLE).read_text())
+    monkeypatch.setattr(generator, "LINKED_AND_NOT_FLIPPED", {})
+    copies = tool.door_thunks(generator.text())
+    for thunk in tool.BUILT_INS.values():
+        copy = tool.FLIPPED_PREFIX + thunk
+        assert f"    .globl {copy}\n" in copies and f"\n{copy}:\n" in copies
+        assert f"jsr     {thunk.removeprefix(transcription.LINEF_THUNK_PREFIX)}\n" in copies
+
+
+def test_the_tool_enters_sh_cmd_s_four_built_ins_at_the_copies_on_target_alone():
+    tool = _the_tool()
+    flipped = tool.sh_cmd_flipped((derived.RECREATE / tool.SHELL).read_text())
+    host, target = flipped.split("#ifdef RECREATE_HOST_DIFFERENTIAL\n", 1)[1].split("#else\n", 1)
+    for rom, thunk in tool.BUILT_INS.items():
+        assert flipped.count(f"(image, {tool.FLIPPED_PREFIX}{rom}, AES_SH_TAIL_TEXT") == 1 and f"(image, {rom}," not in flipped
+        assert f"#define {tool.FLIPPED_PREFIX}{rom} {rom}\n" in host
+        assert f"#define {tool.FLIPPED_PREFIX}{rom} {tool.FLIPPED_PREFIX}{thunk}\n" in target
+
+
+# ...AND ITS THREE SELF-CHECKS (slice D's fix pass: the review's F1-F3), each held where it can be without a flipped build.
+def test_the_tool_reads_every_held_routine_with_an_entry_as_the_rom_s_off_today_s_unflipped_blob():
+    """THE FLIPPED CHECK reads the blob's OWN bound table: on today's shipped blob — nothing flipped — it reports
+    exactly the routines the generator holds back that have an entry of the table, so a flip step lost in a private
+    tree (the review's T1) is refused before a walk."""
+    tool, generator = _the_tool(), _the_generator()
+    with_no_entry = {getattr(addrs, name) for name in generator.LINKED_HELD_NO_TABLE_ENTRY}
+    held = {getattr(addrs, name) for name in generator.LINKED_AND_NOT_FLIPPED}
+    assert with_no_entry and not with_no_entry & set(generator.rom_table())
+    assert tool.linked_still_the_rom_s(desk, generator) == sorted(held)
+
+
+OurBoot = namedtuple("OurBoot", "stored writes_truncated")     # what the tool reads of a step of ours
+OurStep = namedtuple("OurStep", "boot blob")
+
+
+def test_the_tool_refuses_a_walk_whose_write_ledger_saturated_and_measures_the_lowest_store_otherwise():
+    tool = _the_tool()
+    lo, hi, stored_at, cycles = 0x1000, 0x1800, 0x1200, 7
+    steps = [OurStep(OurBoot(((stored_at, 2),), False), cycles), OurStep(OurBoot((), False), cycles)]
+    assert tool.measured(steps, lo, hi) == {"pd0": hi - stored_at, "blob_cycles": 2 * cycles}
+    steps.append(OurStep(OurBoot((), True), cycles))
+    assert tool.measured(steps, lo, hi) == {"refused": tool.LEDGER_SATURATED}
+
+
+
+def test_the_tool_s_refusals_are_held_to_its_declared_list_each_way():
+    """A refusal outside the list, or reading other than its declaration, and a declared refusal that walks, are each
+    the tool's non-zero exit; a declared refusal as declared is not."""
+    tool = _the_tool()
+    declared = tool.declared_refusals(unflipped=False)
+    launched, copied = tool.REFUSED_ON_EITHER_STATE
+    found = {launched: {"refused": f"step 0: {tool.NO_IDLE_REACHED} 6000000 instructions"}, copied: {"pd0": 1}}
+    assert tool.misrefused(found, declared) == ([], [copied])
+    found = {launched: {"refused": "Rwabs of drive 254"}, "a chain": {"refused": tool.NO_IDLE_REACHED}}
+    assert tool.misrefused(found, declared) == ([launched, "a chain"], [])
+    assert set(tool.declared_refusals(unflipped=True)) == {launched, copied}
+
+
+def test_the_tool_s_declared_refusals_are_w6_r8_s_two_and_every_chain_that_stops_at_the_viewer():
+    """W6-R8's two are this battery's (`REFUSED_ON_OUR_SHORE`, reading what it reads); the flipped state's are EVERY
+    chain with a step at the viewer's key waits (the ROM's stops, N4) — a viewer chain added and not declared reds here."""
+    tool = _the_tool()
+    assert set(tool.REFUSED_ON_EITHER_STATE) == set(REFUSED_ON_OUR_SHORE)
+    assert all(reads in REFUSED_ON_OUR_SHORE[name][2] for name, (_why, reads) in tool.REFUSED_ON_EITHER_STATE.items())
+    viewer = {desk.VIEWER_AT_A_PAGE_S_END, desk.VIEWER_AT_THE_FILE_S_END}
+    assert not viewer & set(desk.OUR_STOPS)
+    stopping = {name for name, chain in desk.CHAINS.items() if any(step.until in viewer for step in chain.steps)}
+    assert set(tool.REFUSED_ON_THE_FLIPPED_STATE) == stopping
+
+
+# ---- W6-R4's DIET, ON THE SHIPPED ELF (slice D): the split helpers stay routines of their own -----------------------------
+# The diet's PD0 numbers are the tool's (a flipped build: minutes); what makes them is held here in seconds — each
+# helper a routine of the shipped ELF (inlined back, its frame or its arguments stand under a deep draw again: the
+# review measured +16..+68 B over the gate), act_redrawn_inside none (called, +20), and win_bldview leaving to its
+# sliders by a JUMP (a call would stand its frame under the sliders' redraw). `include/stack_diet.h` lists them.
+PD0_SPLIT_HELPERS = ("lay_the_items", "the_sliders_set", "zoom_onto_the_middle", "get_rect_called", "the_rectangles_read",
+                     "the_command_run", "the_window_s_path_named", "the_window_redrawn")
+PD0_INLINED = "act_redrawn_inside"
+SLIDERS_LEFT_TO = ("aes_win_bldview", "the_sliders_set")      # `(the routine, the one it ends by jumping to)`
+A_JUMP_TO = re.compile(r"(?:jmp|bra[swl]?) (?:0x)?[0-9a-f]+ <(\w+)>")
+
+
+def _shipped_functions():
+    """The function names of the shipped ELF, a name GCC split or specialised (`name.isra.0`) read as its own."""
+    return {symbol.name.split(".")[0] for symbol in transcription.symbol_table(transcription.SHIPPED_ELF) if symbol.kind in "Tt"}
+
+
+def test_the_diet_s_helpers_are_routines_of_the_shipped_elf_and_act_redrawn_inside_is_none():
+    functions = _shipped_functions()
+    assert [helper for helper in PD0_SPLIT_HELPERS if helper not in functions] == []
+    assert PD0_INLINED not in functions
+
+
+def test_win_bldview_leaves_to_its_sliders_by_a_jump():
+    routine, jumped_to = SLIDERS_LEFT_TO
+    body = transcription.listing(transcription.SHIPPED_ELF).split(f"<{routine}>:\n", 1)[1].split("\n\n", 1)[0]
+    last = body.splitlines()[-1].split("\t")[-1].strip()
+    assert (found := A_JUMP_TO.fullmatch(last)) and found.group(1) == jumped_to, f"{routine} ends in {last!r}"
 
 
 # ---- THE CAMPAIGN ON OUR SHORE: a case a chain -----------------------------------------------------------------------------------------

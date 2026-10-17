@@ -130,6 +130,33 @@ static void the_top_window_made_current(uint8_t *image)
     aes_desk_verify(image, (int16_t)bus_word(image, globals + DESK_G_WLASTSEL), DESK_VERIFY_CHANGED);
 }
 
+/* do_diropen's opened path made the window's: its PNODE kept and made active, the window's name (the cartridge's, or
+ * the path's) and its info line made and set. A frame of its own (W6-R4): what it keeps in registers would otherwise
+ * stand in do_diropen's frame under do_wopen's and desk_verify's redraws, deep paths of PD0. */
+__attribute__((noinline)) static void the_window_s_path_named(uint8_t *image, uint32_t window, int16_t drive, uint32_t opened)
+{
+    set_bus_long(image, window + WNODE_PATH, opened);
+    (void)aes_pn_active(image, bus_long(image, window + WNODE_PATH));
+    if (drive == CARTRIDGE_DRIVE) {
+        (void)aes_strcpy(image, CARTRIDGE_NAME, window + WNODE_NAME);
+        (void)aes_strcpy(image, window + WNODE_NAME, AES_DESK_ROOT_NAME);
+    } else {
+        aes_win_sname(image, window);
+    }
+    aes_win_sinfo(image, window);
+    set_text(image, window, WF_NAME, window + WNODE_NAME);
+    set_text(image, window, WF_INFO, window + WNODE_INFO);
+}
+
+/* do_diropen's old window redrawn over the rectangle at `rect`. A call of its own (W6-R4): inlined, the rectangle's
+ * four addresses — read again here after do_wopen's — are kept in do_diropen's frame under do_wopen and desk_verify,
+ * deep paths of PD0. */
+__attribute__((noinline)) static void the_window_redrawn(uint8_t *image, uint32_t window, uint32_t rect)
+{
+    aes_do_wredraw(image, window_handle(image, window), rect_word(image, rect, GRECT_X), rect_word(image, rect, GRECT_Y),
+                   rect_word(image, rect, GRECT_W), rect_word(image, rect, GRECT_H));
+}
+
 /* $fe1068 — do_diropen (`desk/desksupp.h`). */
 int16_t aes_do_diropen(uint8_t *image, uint32_t window, int16_t new_window, int16_t icon, int16_t drive, uint32_t path,
                        uint32_t name, uint32_t ext, uint32_t rect)
@@ -144,17 +171,7 @@ int16_t aes_do_diropen(uint8_t *image, uint32_t window, int16_t new_window, int1
         aes_desk_wait(image, DESK_WAIT_DONE);
         return DO_DIROPEN_DONE;
     }
-    set_bus_long(image, window + WNODE_PATH, opened);
-    (void)aes_pn_active(image, bus_long(image, window + WNODE_PATH));
-    if (drive == CARTRIDGE_DRIVE) {
-        (void)aes_strcpy(image, CARTRIDGE_NAME, window + WNODE_NAME);
-        (void)aes_strcpy(image, window + WNODE_NAME, AES_DESK_ROOT_NAME);
-    } else {
-        aes_win_sname(image, window);
-    }
-    aes_win_sinfo(image, window);
-    set_text(image, window, WF_NAME, window + WNODE_NAME);
-    set_text(image, window, WF_INFO, window + WNODE_INFO);
+    the_window_s_path_named(image, window, drive, opened);
     if (icon > 0) {
         aes_do_wopen(image, new_window, window_handle(image, window), icon, rect_word(image, rect, GRECT_X),
                      rect_word(image, rect, GRECT_Y), rect_word(image, rect, GRECT_W), rect_word(image, rect, GRECT_H));
@@ -163,8 +180,7 @@ int16_t aes_do_diropen(uint8_t *image, uint32_t window, int16_t new_window, int1
     }
     aes_desk_verify(image, window_handle(image, window), DESK_VERIFY_CHANGED);
     if (!new_window)
-        aes_do_wredraw(image, window_handle(image, window), rect_word(image, rect, GRECT_X), rect_word(image, rect, GRECT_Y),
-                       rect_word(image, rect, GRECT_W), rect_word(image, rect, GRECT_H));
+        the_window_redrawn(image, window, rect);
     aes_desk_wait(image, DESK_WAIT_DONE);
     return DO_DIROPEN_DONE;
 }
@@ -211,7 +227,7 @@ int16_t aes_do_dopen(uint8_t *image, int16_t icon)
 int16_t aes_do_fopen(uint8_t *image, uint32_t window, int16_t icon, int16_t drive, uint32_t path, uint32_t name,
                      uint32_t ext)
 {
-    uint16_t frame_local[FRAME_LOCAL_WORDS(SUPP_FRAME_BYTES)];
+    uint16_t frame_local[FRAME_LOCAL_WORDS(SUPP_FRAME_WORK + GRECT_BYTES)];  /* to the work area's end, held under do_diropen (W6-R4) */
     uint32_t work = host_slot_claim(AES_DESK_SUPP_FRAME, frame_local) + SUPP_FRAME_WORK;
 
     get_work(image, window, work);
@@ -281,8 +297,10 @@ static inline int16_t half_of(int16_t value)
     return (int16_t)(value / 2);
 }
 
-/* $fe1972 — close_folder (`desk/desksupp.h`). */
-int16_t aes_close_folder(uint8_t *image, uint32_t window, int16_t drive, uint32_t path, uint32_t name, uint32_t ext)
+/* close_folder's box: shrunk from an icon's size at the middle of the window's work area onto that work area. A
+ * frame of its own (W6-R4): the work area and the registers its arithmetic keeps would stand under do_fopen, on the
+ * deepest path of PD0. */
+__attribute__((noinline)) static void zoom_onto_the_middle(uint8_t *image, uint32_t window)
 {
     uint16_t frame_local[FRAME_LOCAL_WORDS(SUPP_FRAME_BYTES)];
     uint32_t work = host_slot_claim(AES_DESK_SUPP_FRAME, frame_local) + SUPP_FRAME_WORK, globals = desk_globals(image);
@@ -295,6 +313,12 @@ int16_t aes_close_folder(uint8_t *image, uint32_t window, int16_t drive, uint32_
                   - half_of((int16_t)bus_word(image, globals + DESK_G_HICON)));
     host_slot_release(AES_DESK_SUPP_FRAME);
     aes_zoom_closed(image, 0, window_handle(image, window), x, y);
+}
+
+/* $fe1972 — close_folder (`desk/desksupp.h`). */
+int16_t aes_close_folder(uint8_t *image, uint32_t window, int16_t drive, uint32_t path, uint32_t name, uint32_t ext)
+{
+    zoom_onto_the_middle(image, window);
     (void)aes_do_fopen(image, window, 0, drive, path, name, ext);
     return DO_OPEN_DONE;
 }

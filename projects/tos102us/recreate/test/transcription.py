@@ -894,7 +894,7 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_obj_init", "aes_movs"), ("aes_obj_init", "aes_r_set"), ("aes_obj_walloc", "aes_r_set"), ("aes_obj_wfree", "aes_r_set"),
     ("aes_obj_ialloc", "aes_r_set"), ("aes_pro_chdir", "aes_strcpy"), ("aes_pro_cmd", "aes_strcpy"), ("aes_ini_str", "aes_lstcpy"),
     ("aes_do_xyfix", "aes_max"), ("aes_do_wfull", "aes_rc_equal"), ("aes_win_top", "aes_streq"), ("aes_win_ontop", "aes_streq"),
-    ("aes_win_ocalc", "aes_min"), ("aes_win_bldview", "aes_min"), ("aes_win_bldview", "aes_movs"), ("set_slider", "aes_mul_div"),
+    ("aes_win_ocalc", "aes_min"), ("lay_the_items", "aes_min"), ("lay_the_items", "aes_movs"), ("set_slider", "aes_mul_div"),
     ("aes_win_sinfo", "aes_lstcpy"), ("aes_win_sinfo", "aes_merge_str"),
     # ---- end of group G1's ----
     # ---- band 6 wave 1b, group G2 (units A, K, J: `src/desk/deskapp.c`, `desktop.c`, `desksupp.c`) ---- app_getfh's
@@ -951,7 +951,7 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # ---- band 6 wave 2, group G3 (units I, J, K, L: `src/desk/deskwin.c`, `desksupp.c`, `desktop.c`, `deskview.c`) ----
     # pro_run's tail measured; do_diropen's cartridge name and format's tail copied; fun_close's path measured; win_blt's
     # scroll held between its bounds, its work area copied and compared; win_slide's slider scaled
-    ("aes_pro_run", "aes_strlen"), ("aes_do_diropen", "aes_strcpy"), ("aes_desk_do_format", "aes_strcpy"),
+    ("the_command_run", "aes_strlen"), ("the_window_s_path_named", "aes_strcpy"), ("aes_desk_do_format", "aes_strcpy"),
     ("aes_fun_close", "aes_strlen"), ("aes_win_blt", "aes_max"), ("aes_win_blt", "aes_min"), ("aes_win_blt", "aes_rc_copy"),
     ("aes_win_blt", "aes_rc_equal"), ("aes_win_slide", "aes_mul_div"),
     # ---- end of group G3's wave-2 ----

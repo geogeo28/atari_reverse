@@ -493,6 +493,27 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   each stores over the span our blob lies in (the launch all of it), and no walked chain's ROM walk stores a byte
   there.
 
+### W6-R4 ON THE FLIPPED STATE — `tools/flipped_depths.py` (band 6 slice D)
+
+The suite's `DEPTHS` are the shipped blob's AS IT IS (nothing of band 6 flipped). The hard gate binds every flip that
+deepens a path (the user's R1), so each flip slice is measured BEFORE it lands on the state it is heading for: a private
+build with EVERY linked routine of band 6 flipped.
+
+    .venv/bin/python tools/flipped_depths.py <private dir> --jobs 6 [--json out.json] [--patch lever.diff]... [chain ...]
+    .venv/bin/python tools/flipped_depths.py <private dir> --unflipped --jobs 6       # the tree as it is: = `DEPTHS`
+
+It copies the project and `tools/` into the private dir (build/ and kept/ without deletion: a second run is cheap),
+applies each `--patch` (a lever measured without touching a shared file), flips (LINKED_AND_NOT_FLIPPED emptied,
+`lineftable.S` generated again, sh_cmd's four built-ins entered at copies of their thunks on target), rebuilds by force,
+REFUSES IF THE BLOB IS NOT FLIPPED (read off its own bound table, as who-ran reads it), walks every chain on our shore
+and prints PD0 per chain against the gate measured on that blob. A step whose write ledger saturated is a refusal. EXIT
+NON-ZERO: the blob not flipped, a chain over the gate, a chain refused that the tool does not DECLARE (W6-R8's two on
+either state; N4's six viewer chains on the flipped state — F4 takes them out), or a declared one that walks.
+COST: a first copy ~700 MB and 10–15 min at `--jobs 6`; 2–3 min when the walks' derivations are kept. WHEN: every flip
+slice (F1..F4) and W3b, on its own tree, before it lands — it must exit 0; a diet lever, as a `--patch`. Its text steps,
+its three self-checks and the diet's split helpers (each a routine of the shipped ELF, `win_bldview`'s jump) are held
+in seconds by `test_aes_desk_ours.py`; the flipped numbers themselves are the tool's and STATUS's.
+
 ### A DESK ROUTINE AT ITS ARRIVAL — units O and D (wave 1a), the four groups of wave 1b and of wave 2, wave 4's two (`test/aes_desk*.py`)
 
 Band 6's first two units — the desk's eighteen leaves filed in AES modules (`src/desk/deskleaf.c`, unit O) and its
@@ -3862,7 +3883,8 @@ recreate/
 │                       the blob's ceiling); `room_poison.py` / `test_room_poison.py` (the read guard: a poison
 │                       differential over every priced row)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
-│                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files)
+│                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),
+│                       flipped_depths.py (W6-R4's PD0 gate on a private flipped build)
 ├── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
 │                       bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
 │                       the shipped configuration's blob and its generated glue; gates/ (`make gates`' logs),
