@@ -10,6 +10,7 @@
 #include "staged_call.h"
 #include "transcribed.h"
 #include "aes/aes.h"
+#include "aes/dosglue.h"
 #include "aes/fmdo.h"
 #include "aes/gemdosif.h"
 #include "aes/switch.h"
@@ -37,46 +38,13 @@ uint32_t aes_dos_alloc(uint8_t *image, uint32_t bytes)
 }
 
 /* ---- `__DOS` ($fe3c3e): the return address it was reached with parked, the trap, and the verdict ---------------- */
-
-/* Its tail ($fe3c46): the answer's word in AES_DOS_AX, its LONG's sign in AES_DOS_ERR. The sign is also what it leaves
- * in D1, which dos_open tests (`tst.w d1`) — the answer here. */
-static int16_t dos_verdict(uint8_t *image, uint32_t answer)
-{
-    int16_t failed = (int32_t)answer < 0;
-
-    wr16(image + AES_DOS_AX, (uint16_t)answer);
-    wr16(image + AES_DOS_ERR, (uint16_t)failed);
-    return failed;
-}
-
-/* $fe3c28, the way dos_free, dos_sdta, dos_close and the bell's Cconout reach `__DOS`: their caller's return address (a
- * ROM code address, stored as the data it is) parked in AES_DOS_RETURN, and `__DOS`'s own inside the glue in AES_TRAP1_RETURN — both
- * before the trap. */
-static void park_both_returns(uint8_t *image, uint32_t return_site)
-{
-    wr32(image + AES_DOS_RETURN, return_site);
-    wr32(image + AES_TRAP1_RETURN, AES_DOS_TRAP_RETURN);
-}
-
-/* ...and what every such call answers once the trap is back: the verdict taken, the trap's whole D0. */
-static inline uint32_t dos_answered(uint8_t *image, uint32_t answer)
-{
-    (void)dos_verdict(image, answer);
-    return answer;
-}
-
-/* A call through $fe3c28 over the LONGWORD its caller pushed: both return addresses parked, the trap, the verdict — and
- * the trap's whole D0 the answer. */
-static inline uint32_t dos_through_with_a_long(uint8_t *image, uint32_t return_site, uint16_t function, uint32_t argument)
-{
-    park_both_returns(image, return_site);
-    return dos_answered(image, gemdos_trap_word_long(image, function, argument));
-}
+/* (`aes/dosglue.h`: the verdict, the two parked returns, the call through $fe3c28 over a longword — the way dos_free,
+ * dos_sdta, dos_close and the bell's Cconout reach `__DOS` — one home with the desk's entries of the glue.) */
 
 /* ...and over a WORD. */
 static inline uint32_t dos_through_with_a_word(uint8_t *image, uint32_t return_site, uint16_t function, uint16_t argument)
 {
-    park_both_returns(image, return_site);
+    park_both_returns(image, return_site, AES_DOS_TRAP_RETURN);
     return dos_answered(image, gemdos_trap_word_word(image, function, argument));
 }
 
@@ -107,7 +75,7 @@ uint32_t aes_dos_cconout(uint8_t *image, uint32_t return_site, int16_t character
 /* ...and over NOTHING: the function word alone (Dgetdrv's). */
 static inline uint32_t dos_through_with_nothing(uint8_t *image, uint32_t return_site, uint16_t function)
 {
-    park_both_returns(image, return_site);
+    park_both_returns(image, return_site, AES_DOS_TRAP_RETURN);
     return dos_answered(image, gemdos_trap_word(image, function));
 }
 

@@ -117,14 +117,13 @@ TRANSCRIBED_SOURCES := $(filter-out $(GEMSTART_SOURCES), $(TRANSCRIBED_SOURCES))
 LINEFTABLE_SOURCES := $(RECREATE)/src/aes/lineftable.S
 TRANSCRIBED_SOURCES := $(filter-out $(LINEFTABLE_SOURCES), $(TRANSCRIBED_SOURCES))
 # ---- end of slice T's ----
-# ---- band 6 wave 1a, the fix pass ----
-# THE DESK'S BIOS DOOR is a seventh kind, and a transcription in waiting: trp13 (`$fee478`), the ROM's sixteen bytes,
-# byte-pinned, its C twin proved at Tier 1 (`aes_trp13`, `src/desk/deskleaf.c`) and measured over the bar (+214 cycles
-# a call) — trp14's case. Listed APART, and outside the transcriptions' two directories, because it is LINKED AND NOT
-# ENTERED: every build links it (kit.mk sweeps `src/*/*.S`), no word of a build names it, and it has NO ROW of
-# `include/transcribed.h` — a row would make the Line-F table's entries for it ours, which waits for the binding
-# (ruling W6-R1). At its flip it becomes a row as `src/aes/trp14.S` is. Pinned by `test/test_desk_leaves.py`.
-DESKDOOR_SOURCES := $(RECREATE)/src/desk/trp13.S
-# ---- end of the fix pass's ----
+# ---- band 6 slice F1 (N12) ----
+# THE DESK'S BIOS DOOR, trp13 (`$fee478`): the ROM's sixteen bytes, its C twin proved at Tier 1 (`aes_trp13`,
+# `src/desk/deskleaf.c`) and measured over the bar (+214 cycles a call) — trp14's case, and since its flip A ROW OF
+# THE TRANSCRIBED TABLE as `src/aes/trp14.S` is (band 6 wave 1a held it apart, linked and not entered, as a seventh
+# kind). Its file stays in `src/desk/` (kit.mk sweeps `src/*/*.S`: a move would reorder the link), so it is added to
+# the transcriptions' list by name, in its own line.
+TRANSCRIBED_SOURCES += $(RECREATE)/src/desk/trp13.S
+# ---- end of slice F1's ----
 TRANSCRIBED_ENTRIES := $(shell sed -n 's/^[[:space:]]*ENTRY.\([a-z0-9_]*\),.*/\1/p' $(TRANSCRIBED_TABLE))
 TRANSCRIBED_C_CORES := $(subst _rom_,_,$(TRANSCRIBED_ENTRIES))

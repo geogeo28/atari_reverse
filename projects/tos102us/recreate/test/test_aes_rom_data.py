@@ -62,6 +62,8 @@ ROM_ADDRESSES_AS_DATA = {
                    "AES_PGMLD_PEXEC_RETURN": RETURN_SITE, "AES_PGMLD_MSHRINK_RETURN": RETURN_SITE,
                    "AES_PGMLD_EMPTY_TAIL": REGION_TABLE, "GEM_TRAP2": CODE, "AES_ROM_CRIT_ERR": CODE,
                    "AES_ROM_CRIT_ERR_ALERTS": REGION_TABLE},
+    # ...and the glue's own steps' ONE HOME (band 6 slice F1, N13): the call through $fe3c28 parks `__DOS`'s return site.
+    "aes/dosglue.h": {"AES_DOS_TRAP_RETURN": RETURN_SITE},
     # (`gemdosif.S` names NO ROM address since the narrow door flip: the trap door's operand is `trapdoor.S`'s label
     # and crit_err's the file's own, each a `Relocated` of its pin.)
     # set_defdrv's two return sites from dos_sdrv, and desk_free's seven from dos_free (host arguments, as rsrc_free's).

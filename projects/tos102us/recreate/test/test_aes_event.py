@@ -4680,7 +4680,7 @@ THE_DESK_S_CONTEXT, THE_DESK_S_STACK, THE_DESK_S_PARKED = ("the desk's saved con
 ANOTHER_S_CONTEXT, ANOTHER_S_STACK = "another process's saved context (its turn over our AES)", "another process's stack (its turn over our AES)"
 # ...and THE X FLAG of the dispatcher's own save word, on the rows that DECLARE it (`aes_switching.THE_X_FLAG_ALONE`:
 # the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
-# follows GCC's `seq` / `neg`, and no other.
+# follows GCC's `seq` / `neg`, and since band 6 slice F1 the ten desk bindings' rows that declare it — and no other.
 THE_DECLARED_X_FLAG = "the X flag of the dispatcher's save word, declared"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
@@ -4698,6 +4698,17 @@ ROWS_THAT_SWITCH = {
     # band 5's leaves that leave by the dispatcher: all_run's three (a yield, then the lock), and the two rows each of
     # the desk's rsrc_free binding and desk_free (GEMDOS frees the block, or refuses it)
     "aes_all_run": 3, "aes_desk_rsrc_free": 2, "aes_desk_free": 2,
+    # band 6 slice F1: THE DESK'S BINDINGS (`test_desk_bind.py`, unit D flipped) — every case at a hands' arrival a row that
+    # switches but the held bindings' and NOT_A_ROW's: 91 (27 door users', 64 with no door)
+    "aes_desk_appl_write": 2, "aes_desk_evnt_button": 2, "aes_desk_evnt_dclick": 2, "aes_desk_form_alert": 3,
+    "aes_desk_form_center": 3, "aes_desk_form_dial": 2, "aes_desk_form_do": 3, "aes_desk_form_error": 1,
+    "aes_desk_graf_growbox": 2, "aes_desk_graf_mkstate": 3, "aes_desk_graf_mouse": 4, "aes_desk_graf_rubbox": 1,
+    "aes_desk_graf_shrinkbox": 3, "aes_desk_menu_bar": 2, "aes_desk_menu_icheck": 3, "aes_desk_menu_ienable": 2,
+    "aes_desk_menu_tnormal": 2, "aes_desk_objc_add": 3, "aes_desk_objc_change": 2, "aes_desk_objc_find": 4,
+    "aes_desk_objc_offset": 2, "aes_desk_objc_order": 2, "aes_desk_rsrc_gaddr": 2, "aes_desk_shel_get": 2,
+    "aes_desk_shel_put": 2, "aes_desk_shel_write": 2, "aes_desk_wait": 2, "aes_desk_wind_calc": 2,
+    "aes_desk_wind_close": 2, "aes_desk_wind_create": 2, "aes_desk_wind_delete": 2, "aes_desk_wind_find": 4,
+    "aes_desk_wind_get": 5, "aes_desk_wind_open": 2, "aes_desk_wind_set": 6, "aes_desk_wind_update": 3,
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -4738,8 +4749,11 @@ BY_NATURE_CENSUS = {
     # No DOOR USER's row drops a bracket's word: none of them waits on a time, and no tick reaches tchange's
     # bracket on a path that does not wait.
     THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: ROWS_THAT_SWITCH, THE_DISPATCHER_S_STACK: ROWS_THAT_SWITCH,
-                           # the desk's rsrc_free binding where GEMDOS frees the block, and desk_free through it
-                           THE_DECLARED_X_FLAG: {"aes_desk_free": 1, "aes_desk_rsrc_free": 1},
+                           # the desk's rsrc_free binding where GEMDOS frees the block, and desk_free through it — and,
+                           # since band 6 slice F1, the ten desk bindings' rows that declare it (`test_desk_bind.X_FLAG_DIFFERS`)
+                           THE_DECLARED_X_FLAG: {"aes_desk_free": 1, "aes_desk_rsrc_free": 1, "aes_desk_objc_find": 3,
+                                                 "aes_desk_rsrc_gaddr": 2, "aes_desk_shel_write": 1, "aes_desk_wind_find": 3,
+                                                 "aes_desk_wind_get": 1},
                            # (...and under the opcode switch's arms, `test_aes_gemsuper.py`: a playback's timer record
                            # at two speeds, two recordings' sleep, evnt_timer and two evnt_multi with a timer;
                            # appl_read's read, evnt_mesag's and two evnt_multi that ask a message — one of them at the
@@ -4817,11 +4831,6 @@ STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = {
     ("aes_ap_tplay, four records played slowly: the wait is twenty-five ticks", THE_BRACKET_S_SAVE_WORD),
     ("aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
     ("aes_ap_tplay, four records played, the cursor shown: the VDI's cursor routine queues each point", THE_BRACKET_S_SAVE_WORD),
-    # ...AND THE X FLAG THE TWO FREED ROWS DECLARE: the ROM's run stores the byte with the value the machine holds
-    # (its X is clear before and after — it is OUR build's that differs), so no byte of the ROM's "changes"; what
-    # holds the declaration is Tier 3 (`aes_switching.THE_X_FLAG_ALONE`: one not needed is refused).
-    ("aes_desk_rsrc_free, the desk's resource freed, then a yield back to the desk", THE_DECLARED_X_FLAG),
-    ("aes_desk_free, the running desk's eight blocks freed in order, a yield after the resource's", THE_DECLARED_X_FLAG),
     # ...and the same playback through the opcode switch's arm (`test_aes_gemsuper.py`)
     ("aes_dispatch, opcode 14, as aes_ap_tplay, a wait and a press played: no mouse record", THE_BRACKET_S_SAVE_WORD),
     ("aes_dispatch, appl_tplay: at half speed, a top byte on its records", THE_BRACKET_S_SAVE_WORD),
@@ -4891,6 +4900,16 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
         for kind, ((lo, hi, _why),) in kinds.items():
             changed = [at for at in range(lo, hi) if the_rom_s.memory[at] != the_rom_s.started[at]]
             inside = [(low, high) for low, high in drops if lo <= low and high <= hi]
+            if kind == THE_DECLARED_X_FLAG:
+                # THE X FLAG IS NO KIND THE ROM'S RUN ALONE CAN SAY (band 6 slice F1): over an arrival's machine it changes
+                # wherever the ROM's own arithmetic before the yield leaves another X than the machine's last dispatch
+                # (the desk's shel_get and shel_put) — and BOTH builds change it alike; Tier 3 compares the byte whole and
+                # refuses a declaration not needed. So it is named exactly where the row DECLARES it (below), whatever
+                # the ROM's run does to it.
+                of_a_kind += inside
+                if inside:
+                    census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
+                continue
             assert all(any(low <= at < high for low, high in inside) for at in changed), f"{name}: {kind} changed and not dropped"
             # ...AND THE OTHER WAY: a kind is dropped only where the run CHANGES something of it — on every row and
             # every kind but ONE NAMED PAIR, which the run STORES with the value its ROM-made machine already holds
@@ -5300,6 +5319,19 @@ SLOTS_HELD_WHERE_PARKED = {
                         "AES_HCTL_WINDOW_DRAG_ANSWERS, process 1", "AES_GR_RUBWIND_RECT", "AES_GR_SLIDEBOX_RECTS"),
     "aes_ct_msgup": (),
     "aes_hctl_rect": ("AES_MN_DO_FRAME", "AES_HCTL_RECT_CHOICE, process 1"),
+    # ---- band 6 slice F1 (N14): THE DESK'S BINDINGS that are door users, unit D's rows that switch (`test_desk_bind.py`:
+    # `DOOR_USER_BINDINGS`) ---- what each holds where the desk is parked: the bindings' own frame (`AES_DESK_BIND_FRAME`:
+    # the answer words evnt_button hands the AES by address) and, under form_do / form_alert / form_error, the event
+    # layer's own frames above them. ONE FRAME FOR EVERY PROCESS: the desk, process 0, is the one process that calls a
+    # binding (no accessory or AES routine does: unit D's battery read all 171 call sites). (wind_get's binding holds
+    # `AES_DESK_BIND_FRAME` across its own yield too — a row with no door, which this audit does not read.)
+    **{f"aes_desk_{binding}": () for binding in (
+        "appl_write", "graf_rubbox", "menu_bar", "wind_close", "wind_open", "wind_set", "wind_update")},
+    "aes_desk_evnt_button": ("AES_DESK_BIND_FRAME",),
+    "aes_desk_form_do": ("AES_FM_DO_FRAME",),
+    "aes_desk_form_alert": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_desk_form_error": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", "AES_FM_ERROR_CODE"),
+    # ---- end of slice F1's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

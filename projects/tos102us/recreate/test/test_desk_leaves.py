@@ -1,10 +1,10 @@
 r"""THE DESK'S LEAVES FILED IN AES MODULES, AT TIER 1 — band 6 wave 1a, unit O (`src/desk/deskleaf.c`): thirteen
 entries of the DOS glue, gemgraf's gsx_pline, app_alloc and app_free, gsx_hardcopy and the BIOS door trp13.
 
-LINKED AND NOT BOUND (ruling W6-R1 is the user's): both blobs link the eighteen cores, no instruction of a blob
-outside their own object reaches one, and every Line-F table entry that names one of the routines stays THE ROM'S
-(`UNBOUND`, below). So nothing here is "ours ran on a machine": it is the routine against the ROM's own routine on
-the host library — at THE ARRIVALS the hands' chains make (`aes_deskleaves.py` says how a case is taken at one, and
+FLIPPED SINCE BAND 6 SLICE F1 (ruling W6-R1, the user's): both blobs link the eighteen cores, and every Line-F table
+entry that names one of the routines is OURS — seventeen thunks, trp13's two its `.S` (`FLIPPED`, below) — so the ROM's
+desk calls them on every machine of ours (held there by `test_aes_desk_ours.py`). Tier 1 here is the routine against the
+ROM's own routine on the host library — at THE ARRIVALS the hands' chains make (`aes_deskleaves.py` says how a case is taken at one, and
 what is staged over it: the scripted trap and a frame laid before the call, EACH SAID IN THE CASE'S ID — `SCRIPTED`,
 `FRAME_LAID`, `LAST_CALL_TRAP`, `DRIVER_REPLAYED`) and, where no chain reaches an arm, over a LABELLED ARGUMENT CLASS.
 SEVENTEEN OF THE EIGHTEEN HAVE AN ARRIVAL; gsx_hardcopy has none (its printer is a device the model has not).
@@ -14,8 +14,9 @@ compared on every case, and held equal to the ROM's own run IN PLACE at every ar
 COUNTED (`D0_BEYOND_THE_ANSWER`; A0 by `test_a0_at_return_is_the_address_the_glue_returned_through…`): never silently
 equal, never silently dropped.
 
-THE BIOS DOOR SHIPS AS ITS SIXTEEN ROM BYTES (`src/desk/trp13.S`, trp14's kind): pinned here on both blobs and held
-to the ROM at the door's three arrivals through the transcription relation; `aes_trp13` is its Tier-1 twin.
+THE BIOS DOOR SHIPS AS ITS SIXTEEN ROM BYTES (`src/desk/trp13.S`, a row of the transcribed table as trp14's is): pinned
+here on both blobs and held to the ROM at the door's three arrivals through the transcription relation — its Tier 3 rows;
+`aes_trp13` is its Tier-1 twin. AND EVERY BLOB CASE AT AN ARRIVAL IS A ROW (`ROWS`, at the end).
 """
 import contextlib
 import functools
@@ -46,8 +47,17 @@ import vdi_escape
 from case import merge_pokes
 from opcodes import BSR_W, RTS
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-import linef_table                      # noqa: E402
+BENCH = Path(__file__).resolve().parents[1] / "bench"
+
+
+def _linef_table():
+    """`bench/linef_table.py` — imported HERE, never at the module's top: it imports every battery's registry
+    (`test_boot_snapshot`), and this module registers rows of its own (`ROWS`, below), so an import at the top would
+    splat the registry before this module's rows are in it (band 6 slice F1)."""
+    if str(BENCH) not in sys.path:
+        sys.path.insert(0, str(BENCH))
+    import linef_table
+    return linef_table
 
 WORD_BYTES, LONG_BYTES = aes.WORD_BYTES, aes.LONG_BYTES
 RECREATE = Path(__file__).resolve().parents[1]
@@ -975,13 +985,38 @@ def test_the_blob_cases_are_the_ones_listed_and_leave_out_the_hardcopy_alone():
         "the ids say which cases stage the trap that keeps its last call: the glue's, and only theirs")
 
 
-@pytest.mark.parametrize("blob_name", tuple(isr.BLOBS))
-@pytest.mark.parametrize("label", ON_THE_BLOBS, ids=[blob_id(label) for label in ON_THE_BLOBS])
-def test_a_blob_s_core_is_held_to_the_rom_s_routine_over_the_same_machine__unbound_unpriced(label, blob_name):
+# trp13's C TWIN SHIPS NOWHERE since its flip (a row of the transcribed table): the shipped blob's `aes_trp13` is the glue
+# into the `.S`, which parks ITS OWN return in AES_BIOS_RETURN where the twin parks the site it is handed — trp14's twin's
+# arrangement (`test_aes_trp14.py`). So the twin's blob cases run on the bench blob, which links it; the `.S` is held at
+# the same arrivals by the transcription relation (`test_the_door_s_transcription_behaves_as_the_rom_…`, its rows).
+THE_SHIPPED_BLOB = "the shipped blob"
+ON_A_BLOB = [(label, blob_name) for label in ON_THE_BLOBS for blob_name in isr.BLOBS
+             if not (on_the_blobs()[label]["name"] == dl.TRP13 and blob_name == THE_SHIPPED_BLOB)]
+
+
+@pytest.mark.parametrize("label, blob_name", ON_A_BLOB, ids=[f"{blob_id(label)}-{blob_name}" for label, blob_name in ON_A_BLOB])
+def test_a_blob_s_core_is_held_to_the_rom_s_routine_over_the_same_machine(label, blob_name):
     """THE TARGET ARMS RUN (`aes_deskleaves.on_a_blob`): the ROM's routine and the blob's core over one machine — an
     arrival's megabyte less the blob's span, or the leaf machine — held by the kit's second differential: D0 at the
-    declared width, the megabyte, the streams. Not a row; and the core ran (its cycles are its own, above the entry's)."""
+    declared width, the megabyte, the streams; and the core ran (its cycles are its own, above the entry's). (Since the
+    flip each such case of an arrival is a ROW too: `ROWS`, below.)"""
     measured = dl.on_a_blob(isr.blob_named(blob_name), **on_the_blobs()[label])
+    assert measured.recreate_net > 0 and measured.original_net > 0
+
+
+# ...AND THE GLUE INTO THE `.S` AS IT SHIPS (slice F1's fix pass): drive_check, Format and the copy reach the door through
+# the shipped blob's `aes_trp13` thunk (`bench/shipped_glue.py`), which no bound path runs yet — so each arrival enters it
+# here, a C call of the thunk ON THE SHIPPED BLOB held to the ROM's door by the same second differential. Beside the
+# BIOS's save frame it leaves out AES_BIOS_RETURN alone: the `.S` parks the glue's return there, the ROM's door its own
+# caller's (the declared divergence, `test_the_bios_door_s_parked_return_is_named_by_trp13_alone`).
+GLUE_S_RETURN_PARKED = ((BIOS_RETURN, BIOS_RETURN + LONG_BYTES,
+                         "AES_BIOS_RETURN: the `.S` parks the glue's return, the ROM's door its caller's — read by trp13 alone"),)
+
+
+@pytest.mark.parametrize("label", DOOR_ARRIVALS)
+def test_the_shipped_glue_into_the_door_is_held_to_the_rom_s_door(label):
+    door_s = on_the_blobs()[f"trp13: {label}"]
+    measured = dl.on_a_blob(isr.blob_named(THE_SHIPPED_BLOB), **{**door_s, "dropped": door_s["dropped"] + GLUE_S_RETURN_PARKED})
     assert measured.recreate_net > 0 and measured.original_net > 0
 
 
@@ -1007,61 +1042,66 @@ def test_what_the_blob_cases_trap_with_is_kept_and_compared__the_rom_s_own_last_
     assert dl.the_rom_s_last_call(bench, **on_the_blobs()["dos_setdt: a file copied into a folder"]) == (dl.FDATIME, (handle, 1), stamp)
 
 
-# ---- UNBOUND: linked into both blobs, reached by nothing ----------------------------------------------------------------------------
+# ---- FLIPPED (band 6 slice F1): linked into both blobs, and the table's entries the unit's ----------------------------------------
 BLOBS = pytest.mark.parametrize("blob_name", tuple(isr.BLOBS))
 def cores():
     """`{the core's symbol: its routine}` for the eighteen."""
     return {routines.core_symbol(name): name for name in dl.UNIT_O}
 
 
-@BLOBS
-def test_both_blobs_link_the_eighteen_cores_and_no_function_outside_the_unbound_desk_reaches_one(blob_name):
-    """LINKED: every core is a sized function of the blob, and the door's `.S` entry is defined. UNBOUND
-    (`aes_deskbind.bound_referrers`, one pin for every unit of the desk): no function outside the unbound desk — the
-    held cores and what only they reach (the file's own statics among them) — references ANY held core (a call, a
-    branch, an address taken: `transcription.call_graph`); wave 1b's routines call five of the eighteen by design.
-    And nothing references the `.S`."""
-    blob = isr.blob_named(blob_name)
-    defined = {symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.kind in "Tt"}
-    assert set(cores()) <= defined
-    assert not aes_deskbind.bound_referrers(blob, dl.UNIT_O)
-    graph = transcription.call_graph(blob.elf)
-    assert TRP13_ENTRY in defined and not [caller for caller, callees in graph.items() if TRP13_ENTRY in callees], (
-        "the door's `.S` is linked and reached by nothing")
-
-
-@BLOBS
-def test_no_longword_of_a_blob_outside_the_unbound_desk_holds_a_core_s_address(blob_name):
-    """...and none is named BY VALUE (`aes_deskbind.bound_longwords`): no longword of the blob's bytes, at any even
-    offset, is a held core's address (a table entry, a vector's holder) — nor the door's `.S` entry's — but an
-    operand of the unbound desk's own instructions (a held core's `jsr` of another, wave 1b's C calling unit O's)."""
-    assert not aes_deskbind.bound_longwords(isr.blob_named(blob_name), also={TRP13_ENTRY})
-
-
+TRP13_ENTRY = transcription.transcription_symbol(dl.TRP13)
 TRP13_ENTRIES = 2                       # the door has two entries in the ROM's table (`$f1a0`, `$f708`); every other routine one
 
 
-def test_every_line_f_table_entry_that_names_a_routine_of_the_unit_stays_the_rom_s():
+@BLOBS
+def test_both_blobs_link_the_eighteen_cores_and_the_table_reaches_seventeen_through_their_thunks(blob_name):
+    """LINKED: every core is a sized function of the blob, and the door's `.S` entry is defined. FLIPPED: the
+    seventeen thunked cores are each called by THEIR OWN THUNK of the table (`linef_to_<core>`), and no function of the
+    unbound desk's but the unit's own reaches them otherwise — what calls them besides is the desk's C of later waves
+    (held, wave 1b's) and the unit's own. The door's `.S` is reached by the table's two entries and, on the shipped
+    blob, by the glue its C callers reach it through (`aes_trp13`: drive_check's, Format's, the copy's)."""
+    blob = isr.blob_named(blob_name)
+    defined = {symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.kind in "Tt"}
+    assert set(cores()) <= defined and TRP13_ENTRY in defined
+    graph = transcription.call_graph(blob.elf)
+    thunked = set(cores()) - {routines.core_symbol(dl.TRP13)}
+    for core in thunked:
+        assert core in graph[_linef_table().THUNK_PREFIX + core], f"{core}'s thunk does not call it"
+    assert not aes_deskbind.bound_referrers(blob, ()), "a function outside the unbound desk refers to a core still held"
+    callers = sorted(caller for caller, callees in graph.items() if TRP13_ENTRY in callees)
+    assert callers == (["aes_trp13"] if blob_name == THE_SHIPPED_BLOB else []), callers
+
+
+@BLOBS
+def test_no_longword_of_a_blob_outside_the_unbound_desk_holds_a_held_core_s_address(blob_name):
+    """...and no held core is named BY VALUE (`aes_deskbind.bound_longwords`) outside the unbound desk's own
+    instructions — the unit's own cores are no longer held: the table names its thunks and the door's `.S`."""
+    assert not aes_deskbind.bound_longwords(isr.blob_named(blob_name))
+
+
+def test_every_line_f_table_entry_that_names_a_routine_of_the_unit_is_ours():
     """THE TABLE'S VERDICT (`bench/linef_table.py`): the eighteen routines of the unit — nineteen entries, trp13's two
-    — are declared with an Alcyon signature, which would make each OURS, THROUGH A THUNK, and are held THE ROM'S by the
-    generator's declared exception (`LINKED_AND_NOT_FLIPPED`), until the binding is ruled. (trp13's `.S` is no native
-    entry either: it has no row of the transcribed table.)"""
-    held = linef_table.LINKED_AND_NOT_FLIPPED
-    assert set(dl.UNIT_O) <= set(held)
+    — are OURS: seventeen THROUGH A THUNK of their core, and trp13's two NATIVE, its `.S` entry (a row of the
+    transcribed table since the flip). None is held."""
+    linef_table = _linef_table()
+    assert not set(dl.UNIT_O) & set(linef_table.LINKED_AND_NOT_FLIPPED)
     of_the_unit = {getattr(addrs, name): name for name in dl.UNIT_O}
     entries = [entry for entry in linef_table.entries() if entry.target in of_the_unit]
     assert {of_the_unit[entry.target] for entry in entries} == set(dl.UNIT_O), "every routine of the unit has a Line-F word"
     assert len(entries) == len(dl.UNIT_O) - 1 + TRP13_ENTRIES and sum(entry.target == addrs.AES_ROM_TRP13 for entry in entries) == TRP13_ENTRIES
-    assert all(entry.verdict == linef_table.THE_ROM_S and entry.symbol is None for entry in entries)
-    assert not any(linef_table.THUNK_PREFIX + core in linef_table.text() for core in cores())
+    for entry in entries:
+        name = of_the_unit[entry.target]
+        expected = ((linef_table.OURS_NATIVE, TRP13_ENTRY) if name == dl.TRP13
+                    else (linef_table.OURS_THROUGH_A_THUNK, linef_table.thunk_symbol(name)))
+        assert (entry.verdict, entry.symbol) == expected, f"{name}: {entry.verdict}, {entry.symbol}"
 
 
-# ---- THE BIOS DOOR AS IT SHIPS: `src/desk/trp13.S`, its sixteen ROM bytes — linked and not entered --------------------
+# ---- THE BIOS DOOR AS IT SHIPS: `src/desk/trp13.S`, its sixteen ROM bytes — A ROW OF THE TRANSCRIBED TABLE -----------
 # By the rule (`include/transcribed.h`): its C twin measured over the bar — 1.355 / 1.253 / 1.053 at its three
-# arrivals, +214 cycles a call (`aes_trp13`'s comment) — so it ships as the ROM's instructions, as trp14 does. Unlike
-# trp14 it has NO ROW of the transcribed table yet (a row is a native entry of the Line-F table, which waits for the
-# binding): A SEVENTH KIND, `atari/target.mk`'s DESKDOOR_SOURCES, held here.
-TRP13_ENTRY = transcription.transcription_symbol(dl.TRP13)
+# arrivals, +214 cycles a call (`aes_trp13`'s comment) — so it ships as the ROM's instructions, as trp14 does. Band 6
+# wave 1a held it a kind of its own, linked and not entered; SINCE ITS FLIP (band 6 slice F1, N12) it is a row of the
+# transcribed table, the Line-F table's two entries for it are the `.S` (native), and its C callers reach it on the
+# shipped blob through glue.
 TRP13_BYTES = 16
 TRP13_REGION = transcription.pinned_region(addrs.AES_ROM_TRP13, addrs.AES_ROM_TRP13 + TRP13_BYTES, dl.TRP13)
 # What a transcription case stages that the C's did not (trp14's arrangement): the BIOS's register save moved into the
@@ -1080,19 +1120,34 @@ def test_the_door_s_region_is_the_door_alone_and_trp14_follows_it():
     assert TRP13_REGION.hi == addrs.AES_ROM_TRP14
 
 
-def test_the_door_is_a_kind_of_its_own_linked_and_not_entered():
-    """`atari/target.mk`'s DESKDOOR_SOURCES as make expands it: the one source, its one `.globl` the door's entry — no
-    row of the transcribed table (so no native entry of the Line-F table, no Tier-3 row), and in no other kind."""
-    names = ("DESKDOOR_SOURCES", "TRANSCRIBED_SOURCES", "SWITCH_SOURCES", "TRAPDOOR_SOURCES", "GEMSTART_SOURCES", "LINEFTABLE_SOURCES",
-             "ALCYON_ENTRY_SOURCES")
+def test_the_door_is_a_row_of_the_transcribed_table_and_its_source_a_transcription():
+    """`atari/target.mk`'s TRANSCRIBED_SOURCES as make expands it names `src/desk/trp13.S` (by name: its file stays in the
+    desk's directory), its one `.globl` the door's entry — A ROW of the transcribed table, its Tier 3 rows registered,
+    and no other kind lists it."""
+    names = ("TRANSCRIBED_SOURCES", "SWITCH_SOURCES", "TRAPDOOR_SOURCES", "GEMSTART_SOURCES", "LINEFTABLE_SOURCES", "ALCYON_ENTRY_SOURCES")
     lists = {name: transcription.make_variable(RECREATE, name) for name in names}
-    ours = lists["DESKDOOR_SOURCES"]
-    assert [Path(source).resolve() for source in ours] == [Path(source).resolve() for source in transcription.deskdoor_sources()]
-    assert [Path(source).name for source in ours] == ["trp13.S"]
+    ours = [source for source in lists["TRANSCRIBED_SOURCES"] if Path(source).name == "trp13.S"]
+    assert [Path(source).resolve() for source in ours] == [(RECREATE / "src" / "desk" / "trp13.S").resolve()]
     assert not any(set(ours) & set(lists[other]) for other in names[1:])
-    assert transcription.DESKDOOR_GLOBLS == {TRP13_ENTRY} and TRP13_ENTRY not in transcription.TRANSCRIBED
-    assert not any(row[1] == TRP13_ENTRY for row in transcription.TRANSCRIPTIONS), "no Tier-3 row"
-    assert not [entry for entry in linef_table.entries() if entry.symbol == TRP13_ENTRY]
+    assert transcription.globl_entries(ours) == {TRP13_ENTRY} and transcription.TRANSCRIBED[TRP13_ENTRY] == ("d2", "a2")
+    assert {row[0] for row in transcription.TRANSCRIPTIONS if row[1] == TRP13_ENTRY} == set(DOOR_ARRIVALS)
+
+
+# THE DOOR'S PARKED RETURN UNDER A C CALLER ON THE SHIPPED BLOB — trp14's class (ruling R9's kind, the user's: declared):
+# the glue's `jsr` into the `.S` makes the `.S` park THE GLUE'S return in AES_BIOS_RETURN, where the C twin parks the
+# site its caller hands it. DECLARED, and PINNED as R9's is: the only instructions of the ROM that name the longword are
+# trp13's own two — its park and, after its trap, its read of what it parked — so nothing reads what a call left there
+# once the call has returned. (The scan's reach as R9's: absolute-long operands of the GEM text.)
+BIOS_DOOR_PARKS_AT, BIOS_DOOR_READS_BACK_AT = addrs.AES_ROM_TRP13, addrs.AES_ROM_TRP13 + 8
+MOVE_L_POP_TO_ABSOLUTE, MOVE_L_ABSOLUTE_PUSH, TRAP_13 = 0x23DF, 0x2F39, 0x4E4D
+
+
+def test_the_bios_door_s_parked_return_is_named_by_trp13_alone():
+    named = [at - WORD_BYTES for at in range(0, len(BASE_IMAGE) - LONG_BYTES + 1, WORD_BYTES)
+             if case.long_in(BASE_IMAGE, at) == aes.AES_BIOS_RETURN and aes.AES_TEXT[0] <= at < aes.AES_TEXT[1]]
+    assert named == [BIOS_DOOR_PARKS_AT, BIOS_DOOR_READS_BACK_AT]
+    assert [case.word_in(BASE_IMAGE, at) for at in named] == [MOVE_L_POP_TO_ABSOLUTE, MOVE_L_ABSOLUTE_PUSH]
+    assert case.word_in(BASE_IMAGE, BIOS_DOOR_READS_BACK_AT - WORD_BYTES) == TRAP_13
 
 
 def door_case(at):
@@ -1103,8 +1158,7 @@ def door_case(at):
     frame = vdi.pack_words(function, *words)
     frame += bytes(-len(frame) % LONG_BYTES)
     caller = frames.frame_caller(len(frame) // LONG_BYTES)
-    machine = merge_pokes(dl.less_the_blob(arrived.boot.ram, transcription.bench()), aes_event.savptr_in_the_band(),
-                          {frames.FRAME_ARGUMENTS_AT: frame})
+    machine = merge_pokes(dl.arrival_s_machine(arrived.boot.ram), aes_event.savptr_in_the_band(), {frames.FRAME_ARGUMENTS_AT: frame})
     return caller, machine
 
 
@@ -1113,7 +1167,76 @@ def test_the_door_s_transcription_behaves_as_the_rom_at_the_chains_arrivals_and_
     """THE `.S` AGAINST THE ROM'S DOOR through the transcription relation (the whole register file, the megabyte, the
     chip traffic), over the frame each arrival's caller pushed and THE MACHINE'S OWN BIOS — Drvmap, the forced media
     change through the ROM's floppy driver, Bconout to the console. And what the C twin could not: THE SAME CYCLES
-    (the re-probe the rule expects: 1.00 at each, where the twin read 1.355 / 1.253 / 1.053). Not a row."""
+    (the re-probe the rule expects: 1.00 at each, where the twin read 1.355 / 1.253 / 1.053). Its rows are these cases."""
     caller, machine = door_case(DOOR_ARRIVALS[label])
     measured = transcription.run_transcription(dl.TRP13, machine, caller=caller)
     assert measured.recreate_net == measured.original_net > 0
+
+
+# ---- band 6 slice F1: THE UNIT'S ROWS ------------------------------------------------------------------------------------------
+# THE FLIPPED LEAF'S ROW (the orchestrator's provisional ruling R6: the ROM's arrival machine, taken over at the arrival):
+# EACH BLOB CASE OF AN ARRIVAL, REGISTERED. Its machine is the arrival's megabyte whole but the harness's window
+# (`aes_deskleaves.row_pokes`; a LABELLED STAGING where the routine traps GEMDOS — the unit's recording trap scripted with
+# the ROM's run in place's answers, `SCRIPTED`, said in the row's name — and the frame staged on the harness's stack;
+# unit O's Tier 1 convention, in place of the blob cases' trap that keeps its last call); Tier 3 lays the blob and maps
+# the registry's code slots at the entry (the table at `$cc24` and the door's: THE TAKEOVER), and prices the routine on
+# its own cycles against the ROM's, the 1.10 bar. Argument classes (the leaf machine's, the fifth arrival's lists made
+# other) stay Tier 1's.
+#   * PRICED: every routine whose core takes no host argument, at each arrival its blob cases hold.
+#   * VERIFIED AND UNPRICED (`aes_gemdosif.register_unpriced`): the six glue entries that take their caller's return site
+#     — a host argument no frame carries, band 5's glue's class (`test_tier3.UNPRICED_AT_A_ROM_ENTRY`) — at the same
+#     arrivals: the cases their thunks are entered by through the table (`test_aes_lineftable.py`, N15).
+#   * trp13: its `.S` rows at its three arrivals (the transcription relation, the machine's own BIOS: `DOOR_ARRIVALS`),
+#     and its C twin verified and unpriced at Drvmap's (trp14's arrangement: the case the table's native entry is
+#     entered by).
+#   * gsx_hardcopy: NO ARRIVAL (its printer's Scrdmp) — verified and unpriced over its argument class, the leaf machine
+#     with Scrdmp's staged routine (the case its thunk is entered by), and priced nowhere.
+HOSTED = set(dl.PARKS_ITS_CALLER_S_RETURN) - {dl.TRP13}
+AT_AN_ARRIVAL = [label for label in ON_THE_BLOBS if on_the_blobs()[label].get("ram") is not None and not label.startswith("app_free (")
+                 and on_the_blobs()[label]["name"] != dl.TRP13]
+
+
+def row_label(label):
+    """A row's label: the blob case's less its routine, the scripted trap said where it is staged."""
+    said = f"{label} [{SCRIPTED}]" if on_the_blobs()[label].get("answers") else label
+    return said.split(": ", 1)[1]
+
+
+def _registered(label):
+    spec = on_the_blobs()[label]
+    name = spec["name"]
+    pokes = dl.row_pokes(name, spec["arguments"], ram=spec.get("ram"), layers=spec.get("layers", ()), answers=spec.get("answers"),
+                         settles_the_mask=spec.get("settles_the_mask", False))
+    row_name = f"{routines.core_symbol(name)}, {row_label(label)}"
+    answered = vdi.ALCYON[name].restype is not None
+    return aes.ROWS.register(row_name, getattr(addrs, name), pokes, priced=name not in HOSTED, answered=answered)
+
+
+ROWS = {label: _registered(label) for label in AT_AN_ARRIVAL}
+DRVMAP_ARRIVAL = "Drvmap: a drive opened, its letter checked against the map"
+for _label, _at in DOOR_ARRIVALS.items():
+    _caller, _machine = door_case(_at)
+    transcription.register_transcription(dl.TRP13, _label, _machine, caller=_caller)
+_arrived = dl.arrival(DOOR_ARRIVALS[DRVMAP_ARRIVAL])
+ROWS["trp13 (the C twin)"] = aes.ROWS.register(
+    f"aes_trp13, {DRVMAP_ARRIVAL} (the C twin: a host argument, and the `.S` ships)", addrs.AES_ROM_TRP13,
+    aes.staged(dl.TRP13, vdi.as_signed(dl.TRP13, _arrived.arguments),
+               merge_pokes(dl.arrival_s_machine(_arrived.boot.ram), aes_event.savptr_in_the_band())), priced=False)
+ROWS["gsx_hardcopy"] = aes.ROWS.register(
+    "aes_gsx_hardcopy, ARGUMENT CLASS (no arrival: Scrdmp's staged routine, no dump pending)", addrs.AES_ROM_GSX_HARDCOPY,
+    aes.staged(dl.GSX_HARDCOPY, (), aes.leaf_machine(onto=merge_pokes(vdi_escape.hardcopy_pokes(0),
+                                                                      aes.stale_fields("GSX_SUBFUNCTION", "GSX_OPCODE")))),
+    priced=False, answered=False)
+PRICED_ROWS, UNPRICED_ROWS = 16, 11     # priced at arrivals; verified and unpriced (the six hosted's nine arrivals, trp13's twin, the hardcopy)
+
+
+def test_the_unit_s_rows_are_its_blob_cases_at_arrivals_each_routine_one_at_least():
+    """EVERY ROUTINE OF THE UNIT HAS A ROW: a priced one at an arrival (the eleven without a host argument but the
+    hardcopy), a verified unpriced one (the six hosted glue entries, at their arrivals; trp13's twin; the hardcopy's
+    class) — and trp13 its `.S` rows besides. The row names say every staging."""
+    rows = {routine for routine in dl.UNIT_O for row in ROWS.values() if row[1] == getattr(addrs, routine)}
+    assert rows == set(dl.UNIT_O)
+    priced = [row for row in ROWS.values() if row in aes.ROWS.cases]
+    assert (len(priced), len(ROWS) - len(priced)) == (PRICED_ROWS, UNPRICED_ROWS)
+    assert {row[1] for row in priced} == {getattr(addrs, name) for name in set(dl.UNIT_O) - HOSTED - {dl.TRP13, dl.GSX_HARDCOPY}}
+    assert all(f"[{SCRIPTED}]" in row[0] for row in ROWS.values() if row[0].startswith("aes_dos_"))

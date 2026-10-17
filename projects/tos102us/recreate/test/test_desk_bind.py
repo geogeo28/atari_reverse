@@ -1,5 +1,7 @@
 """THE DESK'S AES BINDINGS (`src/desk/deskbind.c`; band 6 wave 1a, unit D): the forty routines `$fddde6..$fde4ff` and
-desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F1, FLIPPED but one: the
+Line-F table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (appl_exit, evnt_multi and
+objc_draw held: `aes_deskbind.HELD_AT_F1`).
 
     binding(arguments):  ret = the AES routine(the same, re-pushed);  dsptch();  return ret
 
@@ -18,11 +20,13 @@ desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND 
       - NO WORD IN C: the seven bindings of `void` implementations;
       - THE NESTED RELEASE'S LEFTOVER: wm_open's and wm_set's known divergence (`aes/wmupdate.h`), met at every
         arrival of wind_open and at wind_set's WF_NEWDESK.
-  * UNBOUND, held on both blobs: no function outside `deskbind.c` refers to a binding, the Line-F table's entries for
-    them are the ROM's, no registry names one.
+  * FLIPPED (band 6 slice F1), held on both blobs: each binding's thunk of the table calls its core, and no function
+    outside the unbound desk refers to a core still held; EVERY CASE AT AN ARRIVAL IS A ROW (`ROWS`, below: a row that
+    switches, or the two that never yield a plain one), priced by Tier 3 over the arrival's machine (the orchestrator's
+    provisional ruling R6).
 
-WHAT IS NOT HELD: any row, any price, anything of a blob's run; an objc_draw of a tree with G_USERDEF objects (the
-text view: it calls the desk's own draw code `$fde844`, unit E's, the ROM's still).
+WHAT IS NOT HELD: an objc_draw of a tree with G_USERDEF objects (the text view: it calls the desk's own draw code
+`$fde844`, unit E's, the ROM's still); the argument classes' prices (Tier 1's alone).
 """
 import functools
 import re
@@ -136,6 +140,13 @@ def _a_disabled_item(arrived):
     return (arrived.arguments[0], disabled, arrived.arguments[2])
 
 
+def _four_out_pointers_apart(arrived):
+    """graf_mkstate's own arguments, its four out pointers made four DIFFERENT words of the same frame: the arrival's
+    x pointer, the two words after it, and its buttons pointer (every desk run hands x, y and keys one address)."""
+    x_out, _y_out, buttons_out, _keys_out = arrived.arguments
+    return (x_out, x_out + aes.WORD_BYTES, buttons_out, x_out + 2 * aes.WORD_BYTES)
+
+
 def _grown_from_a_little_rectangle(arrived):
     """form_dial's own arguments, the type GROW and the little rectangle four words that all differ."""
     return (GROW, 8, 16, 24, 32, *arrived.arguments[5:])
@@ -185,6 +196,8 @@ CASES = (
     Case("GRAF_RUBBOX", RUBBER, wake=LET_GO_AT_ONCE, arguments=_with(2, A_LEAST_WIDTH),
          why="a least width of 40 beside the least height of 6 (the desk's one caller hands 6 and 6)"),
     Case("GRAF_MKSTATE", SELECTED), Case("GRAF_MKSTATE", RUBBER), Case("GRAF_MKSTATE", "file: selected"),
+    Case("GRAF_MKSTATE", SELECTED, arguments=_four_out_pointers_apart,
+         why="four DIFFERENT out pointers (no desk run passes distinct ones: x, y and keys share one address at all three arrivals)"),
     Case("GRAF_GROWBOX", OPENED), Case("GRAF_GROWBOX", "window: its fuller clicked"),
     Case("GRAF_SHRINKBOX", CLOSED), Case("GRAF_SHRINKBOX", CLOSER), Case("GRAF_SHRINKBOX", "folder: File > Close"),
     Case("MENU_TNORMAL", INFO, arm=lambda a: a[2] == 1), Case("MENU_TNORMAL", BY_SIZE),
@@ -283,16 +296,17 @@ def test_a_binding_from_its_arrival_is_the_rom_s(name):
             db.held(row._replace(answered=True))
 
 
-ARRIVALS, CLASSES = 112, 19
+ARRIVALS, CLASSES = 112, 20
 
 
 def test_every_binding_has_a_case_at_an_arrival_of_its_own():
     """41 routines, each with a case at its own arrival — form_error's since a chain refuses a delete (the fix pass)
-    — and the bindings that ALSO have a labelled argument class, by name: 112 cases at arrivals, 19 classes."""
+    — and the bindings that ALSO have a labelled argument class, by name: 112 cases at arrivals, 20 classes."""
     at_its_own = {BY_LABEL[name].short for name in AT_ITS_OWN_ARRIVAL}
     assert at_its_own == set(db.SIGNATURES) and len(db.SIGNATURES) == 41
     assert {BY_LABEL[name].short for name in A_CLASS} == {
-        "APPL_EXIT", "EVNT_MULTI", "EVNT_BUTTON", "FORM_DIAL", "FORM_ERROR", "GRAF_MOUSE", "GRAF_RUBBOX", "MENU_TNORMAL", "MENU_ICHECK",
+        "APPL_EXIT", "EVNT_MULTI", "EVNT_BUTTON", "FORM_DIAL", "FORM_ERROR", "GRAF_MKSTATE", "GRAF_MOUSE", "GRAF_RUBBOX", "MENU_TNORMAL",
+        "MENU_ICHECK",
         "MENU_IENABLE", "SHEL_GET", "SHEL_PUT", "WAIT"}
     assert (len(AT_ITS_OWN_ARRIVAL), len(A_CLASS)) == (ARRIVALS, CLASSES)
 
@@ -327,7 +341,7 @@ def test_a_byte_move_into_d0_is_no_overwrite_of_the_answer_and_an_ext_w_behind_i
 
 
 # ---- D0 AT RETURN -----------------------------------------------------------------------------------------------------------------
-NOT_THE_ROM_S = {db.NO_WORD_IN_C: 19, db.NESTED_RELEASE: 3}
+NOT_THE_ROM_S = {db.NO_WORD_IN_C: 20, db.NESTED_RELEASE: 3}
 
 
 def _yielding(names):
@@ -399,15 +413,21 @@ def test_the_rom_s_binding_in_place_leaves_the_word_its_harness_run_does(name):
     assert back.registers["d0"] & aes.WORD_MASK == db.the_rom_s_run(row_of(name)).d0 & aes.WORD_MASK
 
 
-# ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------------
+# ---- FLIPPED (band 6 slice F1) ----------------------------------------------------------------------------------------------------
 CORES = frozenset(routines.core_symbol(name) for name in db.BINDINGS)
 
 
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_binding(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every binding's core linked;
-    and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core — wave
-    1b's routines call the bindings by design (form_do's desk_wait, desk_wait's graf_mouse among the bindings' own)."""
-    assert not db.bound_referrers(blob, db.BINDINGS)
+FLIPPED = frozenset(routines.core_symbol(name) for name in db.BINDINGS if name not in db.HELD_AT_F1)
+
+
+def test_each_flipped_binding_s_thunk_calls_its_core_and_nothing_outside_the_unbound_desk_refers_to_a_held_core(blob):
+    """THE FLIP: every flipped binding's core linked and CALLED BY ITS OWN THUNK of the table (`linef_to_<core>`) — and
+    the desk's one unbound pin (`aes_deskbind.bound_referrers`) holds for the cores still held, the one held binding's
+    among them (appl_exit: no thunk, no function outside the unbound desk refers to it)."""
+    graph = transcription.call_graph(blob.elf)
+    for core in FLIPPED:
+        assert core in graph[_linef_table().THUNK_PREFIX + core], f"{core}'s thunk does not call it"
+    assert not db.bound_referrers(blob, db.HELD_AT_F1)
 
 
 JUMP = re.compile(r"\tjmp (.*)$")
@@ -431,14 +451,631 @@ def test_a_binding_s_yield_is_a_call_and_never_a_jump(blob):
     assert all(target in CORES for _function, target in jumps), f"a binding leaves by a jump: {jumps}"
 
 
-def test_the_table_s_entries_for_the_bindings_stay_the_rom_s_and_no_registry_names_one():
-    """...the generator's verdict for each of the 41 is THE ROM'S (`linef_table.LINKED_AND_NOT_FLIPPED`: declared, as
-    sh_main's and sh_cmd's are kept), and no registered row is a binding's."""
+def _linef_table():
     sys.path.insert(0, str(BENCH))
     import linef_table                  # HERE, not at the module's top: the generator imports every battery's registry
+    return linef_table
+
+
+def test_the_table_s_entries_for_the_bindings_are_their_thunks_but_the_held_one_s():
+    """...the generator's verdict for each of the 38 flipped is OURS, THROUGH ITS THUNK; the three held bindings' THE ROM'S,
+    held by `LINKED_AND_NOT_FLIPPED` as `HELD_AT_F1` says."""
+    linef_table = _linef_table()
     ours = {getattr(addrs, name): name for name in db.BINDINGS}
-    verdicts = {ours[entry.target]: entry.verdict for entry in linef_table.entries() if entry.target in ours}
-    assert verdicts == {name: linef_table.THE_ROM_S for name in db.BINDINGS}
-    assert set(db.BINDINGS) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    registered = [name for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS) if name.split(",")[0] in CORES]
-    assert not registered
+    verdicts = {ours[entry.target]: (entry.verdict, entry.symbol) for entry in linef_table.entries() if entry.target in ours}
+    assert verdicts == {name: ((linef_table.THE_ROM_S, None) if name in db.HELD_AT_F1 else
+                               (linef_table.OURS_THROUGH_A_THUNK, linef_table.thunk_symbol(name))) for name in db.BINDINGS}
+    assert set(db.BINDINGS) & set(linef_table.LINKED_AND_NOT_FLIPPED) == set(db.HELD_AT_F1)
+
+
+# ---- band 6 slice F1: THE UNIT'S ROWS ----------------------------------------------------------------------------------------------
+# EVERY CASE AT AN ARRIVAL, REGISTERED (the orchestrator's provisional ruling R6: the ROM's arrival machine, taken over
+# at the arrival — Tier 3 lays the blob and maps the registry's code slots at the entry, the table and the door's among
+# them): a binding that yields is A ROW THAT SWITCHES (`aes_event.register_woken`: settled from the ROM's own runs, its
+# by-nature windows dropped with the companion a drop needs — the Tier 1 case above, its wake its own), the two that
+# never yield a plain row (`aes.register`). The machine is the arrival's (`aes_deskbind.machine_of`: whole but the
+# harness's window); the answer compared where the case holds it. The labelled argument classes stay Tier 1's.
+#   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`, a by-nature class held to one bit): where a binding's yield follows
+#     arithmetic of its own C — the answer's word made the binding's before `dsptch` — the X flag the dispatcher parks
+#     is GCC's on our shore and Alcyon's on the ROM's (measured `$00` / `$10` at `$8995`): THOSE ROWS DECLARE IT, and a
+#     declaration a row does not need is refused (Tier 3 flips the bit and compares the byte whole).
+#   * NO ROW, by name (`NOT_A_ROW`): the cases at an arrival no row can be made at — each said.
+X_FLAG_DIFFERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) in {
+    ("OBJC_FIND", SELECTED, 0), ("OBJC_FIND", OPENED, 0), ("OBJC_FIND", DRAGGED, 3), ("WIND_FIND", SELECTED, 0), ("WIND_FIND", OPENED, 0),
+    ("WIND_FIND", RUBBER, 0), ("RSRC_GADDR", BOOT, 0), ("RSRC_GADDR", "A: File > Open", 0), ("WIND_GET", OPENED, 1),
+    ("SHEL_WRITE", LAUNCHED, 0)})
+SCREEN_MANAGER_NO_HISTORY_REACHES = ("its takeover is refused by name (`aes_takeover`): the screen manager stands parked where no "
+                                     "history of our build is known to leave it")
+MASK_WORD_FOUND = ("its companion re-derives its first door call's delivery over the SETTLED machine — the Line-F mask word "
+                   "staged where the run leaves it, `$2000` — and the registry over the arrival's own, `$00f8`: the two "
+                   "deliveries differ in that one word (`test_tier3.test_every_dropped_row_has_a_differential_…`), a question "
+                   "of the switching registrar's (`aes_switching.register_row`), not of the row: Tier 1 holds the case")
+NO_WALK_SERVED = ("a row that switches with no door is modelled with no walked routine served (`aes_switch.modelled`), and "
+                  "this case's C walks the tree (just_draw, `$fe9a88`: form_dial's finish redraws the desktop) — its companion "
+                  "is refused there by name: a question of the switching registrar's. Tier 1 holds the case")
+NOT_A_ROW = {
+    **{name: SCREEN_MANAGER_NO_HISTORY_REACHES for name in AT_ITS_OWN_ARRIVAL
+       if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("MENU_IENABLE", BOOT, 0)},
+    **{name: NO_WALK_SERVED for name in AT_ITS_OWN_ARRIVAL
+       if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("FORM_DIAL", INFO, 1)},
+    **{name: MASK_WORD_FOUND for name in AT_ITS_OWN_ARRIVAL
+       if BY_LABEL[name].short == "GRAF_RUBBOX" and BY_LABEL[name].wake in (LET_GO_AT_ONCE, BOX_GROWN)},
+}
+HELD = frozenset(name for name in AT_ITS_OWN_ARRIVAL if db.PREFIX + BY_LABEL[name].short in db.HELD_AT_F1)
+# A DOOR USER'S ROW (`aes_switching.SwitchingRow.door`) is one whose run arrives at an entry of the event layer's door
+# — its call open across the switch, priced on two counts and pinned in `test_tier3.py`'s door users. MEASURED: the
+# eleven bindings below arrive there (their AES routine waits: a message, a button, a form, the screen's lock); the
+# other twenty-six yield by their own `dsptch` alone and are rows that switch with no door (`door` None), pinned and
+# held here three ways (`NO_DOOR_PRICED`, below).
+DOOR_USER_BINDINGS = frozenset(("APPL_WRITE", "EVNT_BUTTON", "FORM_ALERT", "FORM_DO", "FORM_ERROR", "GRAF_RUBBOX", "MENU_BAR",
+                                "WIND_CLOSE", "WIND_OPEN", "WIND_SET", "WIND_UPDATE"))
+
+
+def _row_registered(name):
+    """The case's row as registered: the X flag declared where `X_FLAG_DIFFERS` says, and no door where it has none."""
+    row = row_of(name)._replace(x_flag_differs=name in X_FLAG_DIFFERS)
+    return row if BY_LABEL[name].short in DOOR_USER_BINDINGS else row._replace(door=None)
+
+
+def _registered(name):
+    each, arrived = BY_LABEL[name], arrival_of(name)
+    if each.short in db.NEVER_YIELD:
+        return aes.register(name.split(" — ", 1)[1], db.PREFIX + each.short, arrived.arguments, db.machine_of(arrived))
+    return aes_event.register_woken(_row_registered(name))
+
+
+ROWS = {name: _registered(name) for name in AT_ITS_OWN_ARRIVAL if name not in NOT_A_ROW and name not in HELD}
+ROWS_MADE = ARRIVALS - 4 - 13           # the 112 cases at arrivals less NOT_A_ROW's four and the held bindings' thirteen
+
+
+def test_every_flipped_binding_has_a_row_at_an_arrival_and_every_other_case_at_an_arrival_is_one():
+    """EVERY FLIPPED BINDING HAS A ROW (each of its cases at an arrival but NOT_A_ROW's, by name); the held bindings
+    none (`aes_deskbind.HELD_AT_F1`); the X flag declared on exactly the rows above."""
+    rows = {name.split(", ", 1)[0] for name in (*(row[0] for row in aes.CASES), *aes_event.SWITCHING_ROWS)} & CORES
+    assert rows == FLIPPED and len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 4 and len(HELD) == 13
+    assert len(X_FLAG_DIFFERS) == 10 and X_FLAG_DIFFERS <= set(ROWS)
+
+
+# ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`: own, the
+# caller's own, the calls it is net of, the foreign windows) and by each blob's second differential
+# (`aes_switching.measured_on`: the whole run, the ROM's and ours), from the rows as registered; re-pinned from a recorded
+# run (`tools/repin.py`), never by hand. No row of these has a turn of ours or a foreign window inside.
+# THE DOOR USERS' (`DOOR_USER_BINDINGS`): `test_tier3.py` reads them, its door users that switch.
+DOOR_USERS_PRICED = {
+    "aes_desk_appl_write, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default)":
+        ((9376, 14922), (3790, 5368), 1, (0, 0, 0)),
+    'aes_desk_appl_write, arrival 0 of window: View > Show as Text':
+        ((8898, 14276), (3790, 5368), 1, (0, 0, 0)),
+    'aes_desk_evnt_button, arrival 0 of a rubber box on the desktop, round the trash':
+        ((8058, 12896), (3974, 5508), 1, (0, 0, 0)),
+    'aes_desk_evnt_button, arrival 0 of drive A: dragged to the trash, Return':
+        ((8058, 12896), (3974, 5508), 1, (0, 0, 0)),
+    'aes_desk_form_alert, arrival 0 of A: File > Format, Return (the warning answered); Return at the first idle':
+        ((185222, 275142), (164486, 241362), 7, (0, 0, 0)),
+    'aes_desk_form_alert, arrival 0 of Options > Save Desktop, Return; Return at the first idle':
+        ((146090, 227672), (125354, 193892), 7, (0, 0, 0)),
+    'aes_desk_form_alert, arrival 0 of file: File > Open (the Show / Print / Cancel alert); Return at the first idle':
+        ((187774, 279276), (167038, 245496), 7, (0, 0, 0)),
+    'aes_desk_form_do, arrival 0 of A: File > Show Info, Return; Return at the first idle':
+        ((42864, 69402), (22484, 36300), 5, (0, 0, 0)),
+    'aes_desk_form_do, arrival 0 of Desk > Desktop Info, Return; Return at the first idle':
+        ((43470, 70182), (23090, 37080), 5, (0, 0, 0)),
+    'aes_desk_form_do, arrival 0 of file: dragged to the trash, OK; Return at the first idle':
+        ((42258, 68622), (21878, 35520), 5, (0, 0, 0)),
+    'aes_desk_form_error, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle':
+        ((161242, 247162), (140506, 213382), 7, (0, 0, 0)),
+    'aes_desk_graf_rubbox, arrival 0 of a rubber box on the desktop, round the trash; the button let go at the second door call':
+        ((27148, 35248), (21850, 27952), 3, (0, 0, 0)),
+    'aes_desk_menu_bar, arrival 0 of file: shown, a key at its end':
+        ((5982, 10252), (4488, 6902), 1, (0, 0, 0)),
+    'aes_desk_menu_bar, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((45876, 62036), (44382, 58686), 1, (0, 0, 0)),
+    'aes_desk_wind_close, arrival 0 of window: File > Close Window':
+        ((67100, 91566), (65606, 88466), 3, (0, 0, 0)),
+    'aes_desk_wind_close, arrival 0 of window: its closer clicked':
+        ((66224, 90648), (64730, 87548), 3, (0, 0, 0)),
+    'aes_desk_wind_open, arrival 0 of A: opened':
+        ((273158, 376902), (266556, 364894), 4, (0, 0, 0)),
+    'aes_desk_wind_open, arrival 0 of window: A: opened again (two windows)':
+        ((491496, 657914), (484894, 645906), 4, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 0 of A: File > Open':
+        ((16284, 39458), (15928, 38780), 2, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((4622, 7916), (4266, 7238), 2, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 1 of A: File > Open':
+        ((16232, 39450), (15876, 38772), 2, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 2 of A: File > Open':
+        ((53214, 98224), (52858, 97546), 2, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 3 of A: File > Open':
+        ((53254, 98230), (52898, 97552), 2, (0, 0, 0)),
+    'aes_desk_wind_set, arrival 3 of window: View > Sort by Size':
+        ((53908, 99052), (53552, 98374), 2, (0, 0, 0)),
+    'aes_desk_wind_update, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((4140, 6196), (3914, 5812), 1, (0, 0, 0)),
+    'aes_desk_wind_update, arrival 1 of Desk > Desktop Info, Return':
+        ((4084, 6156), (3876, 5790), 1, (0, 0, 0)),
+    'aes_desk_wind_update, arrival 2 of A: opened':
+        ((4140, 6196), (3914, 5812), 1, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN = {
+    "aes_desk_appl_write, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default)":
+        {"bench": (21684, 17496), "bench_shipped": (21684, 16750)},
+    'aes_desk_appl_write, arrival 0 of window: View > Show as Text':
+        {"bench": (21038, 16966), "bench_shipped": (21038, 16144)},
+    'aes_desk_evnt_button, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (19658, 15630), "bench_shipped": (19658, 15196)},
+    'aes_desk_evnt_button, arrival 0 of drive A: dragged to the trash, Return':
+        {"bench": (19658, 15630), "bench_shipped": (19658, 15196)},
+    'aes_desk_form_alert, arrival 0 of A: File > Format, Return (the warning answered); Return at the first idle':
+        {"bench": (1706084, 1641494), "bench_shipped": (1706084, 1632620)},
+    'aes_desk_form_alert, arrival 0 of Options > Save Desktop, Return; Return at the first idle':
+        {"bench": (1275038, 1214050), "bench_shipped": (1275038, 1208076)},
+    'aes_desk_form_alert, arrival 0 of file: File > Open (the Show / Print / Cancel alert); Return at the first idle':
+        {"bench": (1731140, 1665570), "bench_shipped": (1731140, 1657550)},
+    'aes_desk_form_do, arrival 0 of A: File > Show Info, Return; Return at the first idle':
+        {"bench": (166206, 143018), "bench_shipped": (166206, 142416)},
+    'aes_desk_form_do, arrival 0 of Desk > Desktop Info, Return; Return at the first idle':
+        {"bench": (166026, 142664), "bench_shipped": (166026, 142062)},
+    'aes_desk_form_do, arrival 0 of file: dragged to the trash, OK; Return at the first idle':
+        {"bench": (165442, 142428), "bench_shipped": (165442, 141826)},
+    'aes_desk_form_error, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle':
+        {"bench": (1484962, 1425028), "bench_shipped": (1484962, 1412910)},
+    'aes_desk_graf_rubbox, arrival 0 of a rubber box on the desktop, round the trash; the button let go at the second door call':
+        {"bench": (151444, 146578), "bench_shipped": (151444, 146372)},
+    'aes_desk_menu_bar, arrival 0 of file: shown, a key at its end':
+        {"bench": (17014, 12928), "bench_shipped": (17014, 13112)},
+    'aes_desk_menu_bar, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (252980, 240076), "bench_shipped": (252980, 239856)},
+    'aes_desk_wind_close, arrival 0 of window: File > Close Window':
+        {"bench": (777932, 762376), "bench_shipped": (777932, 760294)},
+    'aes_desk_wind_close, arrival 0 of window: its closer clicked':
+        {"bench": (772238, 756674), "bench_shipped": (772238, 754550)},
+    'aes_desk_wind_open, arrival 0 of A: opened':
+        {"bench": (1717582, 1646078), "bench_shipped": (1717582, 1647150)},
+    'aes_desk_wind_open, arrival 0 of window: A: opened again (two windows)':
+        {"bench": (2743662, 2634848), "bench_shipped": (2743662, 2636392)},
+    'aes_desk_wind_set, arrival 0 of A: File > Open':
+        {"bench": (46220, 23254), "bench_shipped": (46220, 23506)},
+    'aes_desk_wind_set, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (14678, 11540), "bench_shipped": (14678, 11660)},
+    'aes_desk_wind_set, arrival 1 of A: File > Open':
+        {"bench": (46212, 23202), "bench_shipped": (46212, 23454)},
+    'aes_desk_wind_set, arrival 2 of A: File > Open':
+        {"bench": (227790, 186800), "bench_shipped": (227790, 187516)},
+    'aes_desk_wind_set, arrival 3 of A: File > Open':
+        {"bench": (227796, 186840), "bench_shipped": (227796, 187556)},
+    'aes_desk_wind_set, arrival 3 of window: View > Sort by Size':
+        {"bench": (324730, 283714), "bench_shipped": (324730, 284490)},
+    'aes_desk_wind_update, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (12958, 11058), "bench_shipped": (12958, 11178)},
+    'aes_desk_wind_update, arrival 1 of Desk > Desktop Info, Return':
+        {"bench": (12918, 11002), "bench_shipped": (12918, 11122)},
+    'aes_desk_wind_update, arrival 2 of A: opened':
+        {"bench": (12958, 11058), "bench_shipped": (12958, 11178)},
+}
+# ...AND THE ROWS WITH NO DOOR, each held here THREE WAYS (`test_aes_switching_rows_held.py`'s rule): its PREMISE on the
+# ROM's own run (the idles and polls its deliveries are taken at, its process, the processes entered, its answer), its
+# WHOLE RUN on each blob, and WHAT THE TABLE PRICES of it. A premise is `aes_switching.Premise`'s fields.
+NO_DOOR_PREMISES = {
+    'aes_desk_evnt_dclick, arrival 0 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e,), 3, ()),
+    'aes_desk_evnt_dclick, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), 3, ()),
+    'aes_desk_form_center, arrival 0 of A: File > Show Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_form_center, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_form_center, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_form_dial, arrival 0 of A: Options > Install Disk Drive, Return':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_form_dial, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_graf_growbox, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_growbox, arrival 0 of window: its fuller clicked':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mkstate, arrival 0 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mkstate, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mkstate, arrival 0 of file: selected':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mouse, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mouse, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mouse, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_mouse, arrival 1 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_shrinkbox, arrival 0 of folder: File > Close':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_shrinkbox, arrival 0 of window: File > Close Window':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_graf_shrinkbox, arrival 0 of window: its closer clicked':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_menu_icheck, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_icheck, arrival 0 of window: View > Show as Text':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_icheck, arrival 1 of window: View > Show as Text':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_ienable, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_ienable, arrival 23 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_tnormal, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_menu_tnormal, arrival 0 of window: View > Sort by Size':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_objc_add, arrival 0 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_add, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_add, arrival 0 of window: View > Sort by Size':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_change, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_change, arrival 1 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_find, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 8, ()),
+    'aes_desk_objc_find, arrival 0 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_objc_find, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), 8, ()),
+    'aes_desk_objc_find, arrival 3 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e,), 6, ()),
+    'aes_desk_objc_offset, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e,), 65535, ()),
+    'aes_desk_objc_offset, arrival 0 of folder: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e,), 65535, ()),
+    'aes_desk_objc_order, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_order, arrival 0 of window: File > Close Window':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_rsrc_gaddr, arrival 0 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_rsrc_gaddr, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_get, arrival 0 of Options > Save Desktop, Return':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_get, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_put, arrival 0 of Options > Save Desktop, Return':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_put, arrival 0 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_write, arrival 0 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_shel_write, arrival 0 of files: the program double-clicked — launched':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_wait, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_wait, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_wind_calc, arrival 0 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e,), 157, ()),
+    'aes_desk_wind_calc, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((), 0, 0xae5e, (0xae5e,), 157, ()),
+    'aes_desk_wind_create, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_wind_create, arrival 0 of window: A: opened again (two windows)':
+        ((), 0, 0xae5e, (0xae5e,), 2, ()),
+    'aes_desk_wind_delete, arrival 0 of window: File > Close Window':
+        ((), 0, 0xae5e, (0xae5e,), 40080, ()),
+    'aes_desk_wind_delete, arrival 0 of window: its closer clicked':
+        ((), 0, 0xae5e, (0xae5e,), 40080, ()),
+    'aes_desk_wind_find, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_wind_find, arrival 0 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_wind_find, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_wind_find, arrival 2 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_wind_get, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 50374, ()),
+    'aes_desk_wind_get, arrival 1 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_desk_wind_get, arrival 2 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    'aes_desk_wind_get, arrival 7 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 44, ()),
+    'aes_desk_wind_get, arrival 8 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 48, ()),
+}
+NO_DOOR_PRICED = {
+    'aes_desk_evnt_dclick, arrival 0 of file: shown, a key at its end':
+        ((4118, 5786), None, None, (0, 0, 0)),
+    'aes_desk_evnt_dclick, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((4118, 5786), None, None, (0, 0, 0)),
+    'aes_desk_form_center, arrival 0 of A: File > Show Info, Return':
+        ((4850, 6980), None, None, (0, 0, 0)),
+    'aes_desk_form_center, arrival 0 of Desk > Desktop Info, Return':
+        ((4850, 6980), None, None, (0, 0, 0)),
+    'aes_desk_form_center, arrival 0 of file: dragged to the trash, OK':
+        ((4854, 6980), None, None, (0, 0, 0)),
+    'aes_desk_form_dial, arrival 0 of A: Options > Install Disk Drive, Return':
+        ((5182, 6938), None, None, (0, 0, 0)),
+    'aes_desk_form_dial, arrival 0 of Desk > Desktop Info, Return':
+        ((5182, 6938), None, None, (0, 0, 0)),
+    'aes_desk_graf_growbox, arrival 0 of A: opened':
+        ((289300, 344778), None, None, (0, 0, 0)),
+    'aes_desk_graf_growbox, arrival 0 of window: its fuller clicked':
+        ((208894, 248258), None, None, (0, 0, 0)),
+    'aes_desk_graf_mkstate, arrival 0 of a rubber box on the desktop, round the trash':
+        ((3998, 5652), None, None, (0, 0, 0)),
+    'aes_desk_graf_mkstate, arrival 0 of drive A: selected':
+        ((3998, 5652), None, None, (0, 0, 0)),
+    'aes_desk_graf_mkstate, arrival 0 of file: selected':
+        ((3998, 5652), None, None, (0, 0, 0)),
+    'aes_desk_graf_mouse, arrival 0 of A: opened':
+        ((4258, 5978), None, None, (0, 0, 0)),
+    'aes_desk_graf_mouse, arrival 0 of Desk > Desktop Info, Return':
+        ((6780, 9954), None, None, (0, 0, 0)),
+    'aes_desk_graf_mouse, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((6780, 9958), None, None, (0, 0, 0)),
+    'aes_desk_graf_mouse, arrival 1 of A: opened':
+        ((4186, 5850), None, None, (0, 0, 0)),
+    'aes_desk_graf_shrinkbox, arrival 0 of folder: File > Close':
+        ((187374, 219384), None, None, (0, 0, 0)),
+    'aes_desk_graf_shrinkbox, arrival 0 of window: File > Close Window':
+        ((266060, 317318), None, None, (0, 0, 0)),
+    'aes_desk_graf_shrinkbox, arrival 0 of window: its closer clicked':
+        ((266060, 317318), None, None, (0, 0, 0)),
+    'aes_desk_menu_icheck, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((5384, 7768), None, None, (0, 0, 0)),
+    'aes_desk_menu_icheck, arrival 0 of window: View > Show as Text':
+        ((5392, 7768), None, None, (0, 0, 0)),
+    'aes_desk_menu_icheck, arrival 1 of window: View > Show as Text':
+        ((5384, 7768), None, None, (0, 0, 0)),
+    'aes_desk_menu_ienable, arrival 0 of drive A: selected':
+        ((5502, 7856), None, None, (0, 0, 0)),
+    'aes_desk_menu_ienable, arrival 23 of drive A: selected':
+        ((5496, 7846), None, None, (0, 0, 0)),
+    'aes_desk_menu_tnormal, arrival 0 of Desk > Desktop Info, Return':
+        ((11082, 17324), None, None, (0, 0, 0)),
+    'aes_desk_menu_tnormal, arrival 0 of window: View > Sort by Size':
+        ((11638, 17968), None, None, (0, 0, 0)),
+    'aes_desk_objc_add, arrival 0 of A: File > Open':
+        ((4070, 6000), None, None, (0, 0, 0)),
+    'aes_desk_objc_add, arrival 0 of A: opened':
+        ((4070, 6000), None, None, (0, 0, 0)),
+    'aes_desk_objc_add, arrival 0 of window: View > Sort by Size':
+        ((4070, 6000), None, None, (0, 0, 0)),
+    'aes_desk_objc_change, arrival 0 of drive A: selected':
+        ((6032, 8236), None, None, (0, 0, 0)),
+    'aes_desk_objc_change, arrival 1 of A: opened':
+        ((6032, 8236), None, None, (0, 0, 0)),
+    'aes_desk_objc_find, arrival 0 of A: opened':
+        ((7374, 12378), None, None, (0, 0, 0)),
+    'aes_desk_objc_find, arrival 0 of a rubber box on the desktop, round the trash':
+        ((9862, 17354), None, None, (0, 0, 0)),
+    'aes_desk_objc_find, arrival 0 of drive A: selected':
+        ((7374, 12378), None, None, (0, 0, 0)),
+    'aes_desk_objc_find, arrival 3 of drive A: dragged to the trash, Return':
+        ((9656, 16876), None, None, (0, 0, 0)),
+    'aes_desk_objc_offset, arrival 0 of file: dragged to the trash, OK':
+        ((4610, 7726), None, None, (0, 0, 0)),
+    'aes_desk_objc_offset, arrival 0 of folder: dragged to the trash, OK':
+        ((4716, 7880), None, None, (0, 0, 0)),
+    'aes_desk_objc_order, arrival 0 of A: opened':
+        ((6172, 10154), None, None, (0, 0, 0)),
+    'aes_desk_objc_order, arrival 0 of window: File > Close Window':
+        ((5676, 9450), None, None, (0, 0, 0)),
+    'aes_desk_rsrc_gaddr, arrival 0 of A: File > Open':
+        ((4448, 7268), None, None, (0, 0, 0)),
+    'aes_desk_rsrc_gaddr, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((4448, 6862), None, None, (0, 0, 0)),
+    'aes_desk_shel_get, arrival 0 of Options > Save Desktop, Return':
+        ((7578, 9414), None, None, (0, 0, 0)),
+    'aes_desk_shel_get, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((61338, 63174), None, None, (0, 0, 0)),
+    'aes_desk_shel_put, arrival 0 of Options > Save Desktop, Return':
+        ((57224, 59060), None, None, (0, 0, 0)),
+    'aes_desk_shel_put, arrival 0 of file: shown, a key at its end':
+        ((57224, 59060), None, None, (0, 0, 0)),
+    'aes_desk_shel_write, arrival 0 of file: shown, a key at its end':
+        ((11110, 12950), None, None, (0, 0, 0)),
+    'aes_desk_shel_write, arrival 0 of files: the program double-clicked — launched':
+        ((11112, 12942), None, None, (0, 0, 0)),
+    'aes_desk_wait, arrival 0 of Desk > Desktop Info, Return':
+        ((6694, 10324), None, None, (0, 0, 0)),
+    'aes_desk_wait, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((6696, 10334), None, None, (0, 0, 0)),
+    'aes_desk_wind_calc, arrival 0 of file: shown, a key at its end':
+        ((4486, 6198), None, None, (0, 0, 0)),
+    'aes_desk_wind_calc, arrival 0 of the boot of the DESKTOP.INF machine':
+        ((4486, 6198), None, None, (0, 0, 0)),
+    'aes_desk_wind_create, arrival 0 of A: opened':
+        ((5516, 10328), None, None, (0, 0, 0)),
+    'aes_desk_wind_create, arrival 0 of window: A: opened again (two windows)':
+        ((5570, 10442), None, None, (0, 0, 0)),
+    'aes_desk_wind_delete, arrival 0 of window: File > Close Window':
+        ((3860, 5568), None, None, (0, 0, 0)),
+    'aes_desk_wind_delete, arrival 0 of window: its closer clicked':
+        ((3860, 5568), None, None, (0, 0, 0)),
+    'aes_desk_wind_find, arrival 0 of A: opened':
+        ((5280, 8044), None, None, (0, 0, 0)),
+    'aes_desk_wind_find, arrival 0 of a rubber box on the desktop, round the trash':
+        ((5280, 8044), None, None, (0, 0, 0)),
+    'aes_desk_wind_find, arrival 0 of drive A: selected':
+        ((5280, 8044), None, None, (0, 0, 0)),
+    'aes_desk_wind_find, arrival 2 of file: dragged to the trash, OK':
+        ((6400, 10220), None, None, (0, 0, 0)),
+    'aes_desk_wind_get, arrival 0 of A: opened':
+        ((4780, 7368), None, None, (0, 0, 0)),
+    'aes_desk_wind_get, arrival 1 of A: opened':
+        ((5812, 9024), None, None, (0, 0, 0)),
+    'aes_desk_wind_get, arrival 2 of A: opened':
+        ((5226, 8074), None, None, (0, 0, 0)),
+    'aes_desk_wind_get, arrival 7 of A: opened':
+        ((4416, 6046), None, None, (0, 0, 0)),
+    'aes_desk_wind_get, arrival 8 of A: opened':
+        ((4348, 6046), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    'aes_desk_evnt_dclick, arrival 0 of file: shown, a key at its end':
+        {"bench": (12548, 11036), "bench_shipped": (12548, 11156)},
+    'aes_desk_evnt_dclick, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (12548, 11036), "bench_shipped": (12548, 11156)},
+    'aes_desk_form_center, arrival 0 of A: File > Show Info, Return':
+        {"bench": (13742, 11830), "bench_shipped": (13742, 12056)},
+    'aes_desk_form_center, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (13742, 11830), "bench_shipped": (13742, 12056)},
+    'aes_desk_form_center, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (13742, 11834), "bench_shipped": (13742, 12060)},
+    'aes_desk_form_dial, arrival 0 of A: Options > Install Disk Drive, Return':
+        {"bench": (16358, 14808), "bench_shipped": (16358, 14970)},
+    'aes_desk_form_dial, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (16358, 14808), "bench_shipped": (16358, 14970)},
+    'aes_desk_graf_growbox, arrival 0 of A: opened':
+        {"bench": (1976578, 1968092), "bench_shipped": (1976578, 1963120)},
+    'aes_desk_graf_growbox, arrival 0 of window: its fuller clicked':
+        {"bench": (1549680, 1543544), "bench_shipped": (1549680, 1540096)},
+    'aes_desk_graf_mkstate, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (12414, 10916), "bench_shipped": (12414, 11036)},
+    'aes_desk_graf_mkstate, arrival 0 of drive A: selected':
+        {"bench": (12414, 10916), "bench_shipped": (12414, 11036)},
+    'aes_desk_graf_mkstate, arrival 0 of file: selected':
+        {"bench": (12414, 10916), "bench_shipped": (12414, 11036)},
+    'aes_desk_graf_mouse, arrival 0 of A: opened':
+        {"bench": (16852, 15336), "bench_shipped": (16852, 15500)},
+    'aes_desk_graf_mouse, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (38792, 36108), "bench_shipped": (38792, 36118)},
+    'aes_desk_graf_mouse, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (40054, 37366), "bench_shipped": (40054, 37376)},
+    'aes_desk_graf_mouse, arrival 1 of A: opened':
+        {"bench": (28356, 27084), "bench_shipped": (28356, 27008)},
+    'aes_desk_graf_shrinkbox, arrival 0 of folder: File > Close':
+        {"bench": (1232986, 1229012), "bench_shipped": (1232986, 1226628)},
+    'aes_desk_graf_shrinkbox, arrival 0 of window: File > Close Window':
+        {"bench": (1820194, 1812334), "bench_shipped": (1820194, 1807620)},
+    'aes_desk_graf_shrinkbox, arrival 0 of window: its closer clicked':
+        {"bench": (1818190, 1810330), "bench_shipped": (1818190, 1805616)},
+    'aes_desk_menu_icheck, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (14530, 12302), "bench_shipped": (14530, 12422)},
+    'aes_desk_menu_icheck, arrival 0 of window: View > Show as Text':
+        {"bench": (14530, 12310), "bench_shipped": (14530, 12430)},
+    'aes_desk_menu_icheck, arrival 1 of window: View > Show as Text':
+        {"bench": (14530, 12302), "bench_shipped": (14530, 12422)},
+    'aes_desk_menu_ienable, arrival 0 of drive A: selected':
+        {"bench": (14618, 12420), "bench_shipped": (14618, 12540)},
+    'aes_desk_menu_ienable, arrival 23 of drive A: selected':
+        {"bench": (14608, 12414), "bench_shipped": (14608, 12534)},
+    'aes_desk_menu_tnormal, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (57510, 52034), "bench_shipped": (57510, 52060)},
+    'aes_desk_menu_tnormal, arrival 0 of window: View > Sort by Size':
+        {"bench": (62876, 57544), "bench_shipped": (62876, 57490)},
+    'aes_desk_objc_add, arrival 0 of A: File > Open':
+        {"bench": (12762, 10988), "bench_shipped": (12762, 11108)},
+    'aes_desk_objc_add, arrival 0 of A: opened':
+        {"bench": (12762, 10988), "bench_shipped": (12762, 11108)},
+    'aes_desk_objc_add, arrival 0 of window: View > Sort by Size':
+        {"bench": (12762, 10988), "bench_shipped": (12762, 11108)},
+    'aes_desk_objc_change, arrival 0 of drive A: selected':
+        {"bench": (17656, 15658), "bench_shipped": (17656, 15820)},
+    'aes_desk_objc_change, arrival 1 of A: opened':
+        {"bench": (17656, 15658), "bench_shipped": (17656, 15820)},
+    'aes_desk_objc_find, arrival 0 of A: opened':
+        {"bench": (19140, 14774), "bench_shipped": (19140, 14628)},
+    'aes_desk_objc_find, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (24116, 17740), "bench_shipped": (24116, 17332)},
+    'aes_desk_objc_find, arrival 0 of drive A: selected':
+        {"bench": (19140, 14774), "bench_shipped": (19140, 14628)},
+    'aes_desk_objc_find, arrival 3 of drive A: dragged to the trash, Return':
+        {"bench": (23638, 17536), "bench_shipped": (23638, 17126)},
+    'aes_desk_objc_offset, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (14488, 11528), "bench_shipped": (14488, 11648)},
+    'aes_desk_objc_offset, arrival 0 of folder: dragged to the trash, OK':
+        {"bench": (14642, 11634), "bench_shipped": (14642, 11754)},
+    'aes_desk_objc_order, arrival 0 of A: opened':
+        {"bench": (16916, 13088), "bench_shipped": (16916, 13210)},
+    'aes_desk_objc_order, arrival 0 of window: File > Close Window':
+        {"bench": (16212, 12592), "bench_shipped": (16212, 12714)},
+    'aes_desk_rsrc_gaddr, arrival 0 of A: File > Open':
+        {"bench": (14030, 11364), "bench_shipped": (14030, 11486)},
+    'aes_desk_rsrc_gaddr, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (13624, 11364), "bench_shipped": (13624, 11486)},
+    'aes_desk_shel_get, arrival 0 of Options > Save Desktop, Return':
+        {"bench": (16176, 17906), "bench_shipped": (16176, 14724)},
+    'aes_desk_shel_get, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (69936, 121586), "bench_shipped": (69936, 68484)},
+    'aes_desk_shel_put, arrival 0 of Options > Save Desktop, Return':
+        {"bench": (65822, 129798), "bench_shipped": (65822, 64370)},
+    'aes_desk_shel_put, arrival 0 of file: shown, a key at its end':
+        {"bench": (65822, 129798), "bench_shipped": (65822, 64370)},
+    'aes_desk_shel_write, arrival 0 of file: shown, a key at its end':
+        {"bench": (19712, 26460), "bench_shipped": (19712, 18364)},
+    'aes_desk_shel_write, arrival 0 of files: the program double-clicked — launched':
+        {"bench": (19704, 26462), "bench_shipped": (19704, 18366)},
+    'aes_desk_wait, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (39162, 36022), "bench_shipped": (39162, 36032)},
+    'aes_desk_wait, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (40430, 37282), "bench_shipped": (40430, 37292)},
+    'aes_desk_wind_calc, arrival 0 of file: shown, a key at its end':
+        {"bench": (12960, 11404), "bench_shipped": (12960, 11524)},
+    'aes_desk_wind_calc, arrival 0 of the boot of the DESKTOP.INF machine':
+        {"bench": (12960, 11404), "bench_shipped": (12960, 11524)},
+    'aes_desk_wind_create, arrival 0 of A: opened':
+        {"bench": (17090, 12528), "bench_shipped": (17090, 12830)},
+    'aes_desk_wind_create, arrival 0 of window: A: opened again (two windows)':
+        {"bench": (17204, 12582), "bench_shipped": (17204, 12884)},
+    'aes_desk_wind_delete, arrival 0 of window: File > Close Window':
+        {"bench": (12330, 10778), "bench_shipped": (12330, 10898)},
+    'aes_desk_wind_delete, arrival 0 of window: its closer clicked':
+        {"bench": (12330, 10778), "bench_shipped": (12330, 10898)},
+    'aes_desk_wind_find, arrival 0 of A: opened':
+        {"bench": (14806, 12502), "bench_shipped": (14806, 12594)},
+    'aes_desk_wind_find, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (14806, 12502), "bench_shipped": (14806, 12594)},
+    'aes_desk_wind_find, arrival 0 of drive A: selected':
+        {"bench": (14806, 12502), "bench_shipped": (14806, 12594)},
+    'aes_desk_wind_find, arrival 2 of file: dragged to the trash, OK':
+        {"bench": (16982, 13862), "bench_shipped": (16982, 13822)},
+    'aes_desk_wind_get, arrival 0 of A: opened':
+        {"bench": (14130, 11730), "bench_shipped": (14130, 11910)},
+    'aes_desk_wind_get, arrival 1 of A: opened':
+        {"bench": (15786, 12792), "bench_shipped": (15786, 13034)},
+    'aes_desk_wind_get, arrival 2 of A: opened':
+        {"bench": (14836, 12174), "bench_shipped": (14836, 12356)},
+    'aes_desk_wind_get, arrival 7 of A: opened':
+        {"bench": (12808, 11334), "bench_shipped": (12808, 11454)},
+    'aes_desk_wind_get, arrival 8 of A: opened':
+        {"bench": (12808, 11266), "bench_shipped": (12808, 11386)},
+}
+
+
+def _registered_row(name):
+    """The registered switching row of that name."""
+    return aes_event.SWITCHING_ROWS[name].row
+
+
+def test_the_pinned_rows_are_the_registered_ones_and_split_by_their_door():
+    """EVERY ROW OF THE UNIT THAT SWITCHES IS PINNED ONCE: a door user's in `DOOR_USERS_*`, any other here."""
+    import aes_switching
+    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door")}
+    assert set(DOOR_USERS_PRICED) | set(NO_DOOR_PRICED) == switching and not set(DOOR_USERS_PRICED) & set(NO_DOOR_PRICED)
+    assert set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == set(NO_DOOR_PREMISES)
+    assert all((_registered_row(name).door is not None) == (name in DOOR_USERS_PRICED) for name in switching)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    import aes_switching
+    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*NO_DOOR_PREMISES[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    import aes_switching
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES[name])
+    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, NO_DOOR_PRICED[name][3], NO_DOOR_WHOLE_RUN[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    import aes_switching
+    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*NO_DOOR_PRICED[name]))

@@ -3,10 +3,8 @@
  * ported over the ROM's own order. (THE DOOR SHIPS AS ITS SIXTEEN ROM BYTES, `src/desk/trp13.S`: its C here is the
  * twin Tier 1 proves, as `src/aes/trp14.c` is trp14's.)
  *
- * THE GLUE'S OWN STEPS ARE SPELT HERE A SECOND TIME — FOUR STATICS (`dos_verdict`, `dos_answered`,
- * `park_both_returns`, `dos_through_with_a_long`), and dos_rawcio is `dos_through_with_a_word` again:
- * `src/aes/gemdosif.c` keeps them `static`, and that file is band 5's — its object is held byte-identical while these
- * entries are linked and not bound. One home for both is owed when the entries are bound.
+ * THE GLUE'S OWN STEPS have ONE HOME since the unit flipped (band 6 slice F1, N13): `aes/dosglue.h`, shared with band 5's
+ * `src/aes/gemdosif.c` (the verdict, the two parked returns, the call through $fe3c28 over a longword).
  */
 #include <stdint.h>
 
@@ -15,7 +13,9 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "recreate.h"
+#include "transcribed.h"
 #include "aes/aes.h"
+#include "aes/dosglue.h"
 #include "aes/gemgraf.h"
 #include "aes/gsxif.h"
 #include "bios/bcon.h"
@@ -25,39 +25,12 @@
 #include "vdi/escape.h"
 #include "vdi/vdi.h"
 
-/* ---- `__DOS` ($fe3c3e) as an entry of this file reaches it ------------------------------------------------------------ */
-
-/* Its tail ($fe3c46): the answer's word in AES_DOS_AX, its LONG's sign in AES_DOS_ERR — which is also what it leaves
- * in D1, and dos_mkdir answers from. */
-static int16_t dos_verdict(uint8_t *image, uint32_t answer)
-{
-    int16_t failed = (int32_t)answer < 0;
-
-    wr16(image + AES_DOS_AX, (uint16_t)answer);
-    wr16(image + AES_DOS_ERR, (uint16_t)failed);
-    return failed;
-}
-
-/* ...and what every entry but dos_mkdir and dos_label answers once the trap is back: the verdict taken, the trap's
- * whole D0. */
-static inline uint32_t dos_answered(uint8_t *image, uint32_t answer)
-{
-    (void)dos_verdict(image, answer);
-    return answer;
-}
+/* ---- `__DOS` ($fe3c3e) as an entry of this file reaches it (the verdict, both parked returns: `aes/dosglue.h`) -------- */
 
 /* An entry that reaches `__DOS` by its own `bsr`: the site inside the glue that `bsr` returns to, parked. */
 static inline void park_the_glue_s_return(uint8_t *image, uint32_t glue_site)
 {
     wr32(image + AES_TRAP1_RETURN, glue_site);
-}
-
-/* ...and one that first pops ITS CALLER's return address into AES_DOS_RETURN ($fe3c28, $fe3ba0): both parked, before
- * the trap. */
-static inline void park_both_returns(uint8_t *image, uint32_t return_site, uint32_t glue_site)
-{
-    wr32(image + AES_DOS_RETURN, return_site);
-    park_the_glue_s_return(image, glue_site);
 }
 
 /* THE ONE `trap #1` SHAPE `gemdos/gemdos.h` DOES NOT HAVE: the function over a longword and two words — Fattrib's
@@ -308,14 +281,7 @@ uint32_t aes_dos_chmod(uint8_t *image, uint32_t return_site, uint32_t name, int1
     return dos_answered(image, trap_fattrib(image, name, set, attributes));
 }
 
-/* A call through $fe3c28 over the ONE LONGWORD its caller pushed: a name, a path. */
-static inline uint32_t dos_through_with_a_long(uint8_t *image, uint32_t return_site, uint16_t function, uint32_t argument)
-{
-    park_both_returns(image, return_site, AES_DOS_TRAP_RETURN);
-    return dos_answered(image, gemdos_trap_word_long(image, function, argument));
-}
-
-/* $fe3c1a — dos_delete: Fdelete through $fe3c28. */
+/* $fe3c1a — dos_delete: Fdelete through $fe3c28, over the ONE LONGWORD its caller pushed (`dos_through_with_a_long`). */
 uint32_t aes_dos_delete(uint8_t *image, uint32_t return_site, uint32_t name)
 {
     return dos_through_with_a_long(image, return_site, GEMDOS_FDELETE_FN, name);
@@ -417,7 +383,9 @@ void aes_gsx_hardcopy(uint8_t *image)
  * answers). Its target arm is kept and run on both blobs (`test/test_desk_leaves.py`), as trp14's twin's is.
  *
  * OFF TARGET the trap is the BIOS routine the function names, for the four the desk asks: Drvmap and Bconout the
- * routines' own C cores, Getbpb and Rwabs the disk vectors' door a case binds (`gemdos/fs.h`). Any other halts by name. */
+ * routines' own C cores, Getbpb and Rwabs the disk vectors' door a case binds (`gemdos/fs.h`). Any other halts by name.
+ * A ROW OF THE TRANSCRIBED TABLE since its flip (band 6 slice F1): the shipped build's C callers reach the `.S` through glue. */
+TRANSCRIBED_CORE
 uint32_t aes_trp13(uint8_t *image, uint32_t return_site, int16_t function, int16_t first, int16_t second,
                    int16_t third, int16_t fourth, int16_t fifth, int16_t sixth)
 {

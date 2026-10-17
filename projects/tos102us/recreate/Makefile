@@ -210,7 +210,8 @@ $(PREINIT_INF): $(PREINIT_TOOL) $(PREINIT_INPUTS) $(ROM_IMAGE) $(INF_DISK)
 # With the files disk in the drive from power-on (tools/accessory_disk.py --files: the ROM's default DESKTOP.INF, a text
 # longer than the viewer's page, a program and the folder AUTO with a file in it; no accessory): what the desk's own
 # acts — a file shown, a folder opened, a copy, a delete — are continued over (test/aes_desk.py). Its own disk, its
-# own scratch directory, four more seconds of Hatari, once. NOT among REGISTRY_READS: no registered row is made of it.
+# own scratch directory, four more seconds of Hatari, once. AMONG REGISTRY_READS since band 6 slice F1: the flipped desk
+# routines' rows are made at arrivals over it.
 PREINIT_FILES := build/preinit_files.bin
 FILES_DISK := build/acc/FILESDISK.ST
 
@@ -277,7 +278,9 @@ test guarded gates: $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF)
 # (`test/test_makefile.py` holds that no importer of the registry is without them).
 # ...AND THE FOURTH SINCE BAND 5 WAVE 4's SLICE B: the build's own start-up is priced over the DESKTOP.INF machine too
 # (`test/aes_ourboot.py`: the reader's file arm), so the registry's import reads that capture.
-REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF)
+# ...AND THE FIFTH SINCE BAND 6 SLICE F1: units O's and D's rows are cases at the hands' arrivals, some over the files
+# machine (`test/test_desk_leaves.py`, `test_desk_bind.py`), so the registry's import reads that capture too.
+REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF) $(PREINIT_FILES)
 
 # TIER 3's table: every verified function's `recreate / original` cycle ratio. It runs the ORIGINAL
 # too, so it needs the snapshot exactly as the suites do; `bench/tier3.py` exits non-zero on a row

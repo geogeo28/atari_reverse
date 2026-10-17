@@ -104,6 +104,32 @@ SIGNATURES = {
     "WAIT": (None, (WORD,)),
 }
 BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
+# ---- band 6 slice F1 ---- THE THREE BINDINGS HELD WHEN THE UNIT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`), each because
+# its flip needs what the cut does not have (the slice's brief: such a routine stays held, reported):
+#   * appl_exit — at both its arrivals (the viewer's `file: shown`, a launch) the screen manager stands parked where no
+#     history of our build is known to leave it, so a row's takeover there is refused by name (`aes_takeover`): no row
+#     of it can be priced;
+#   * evnt_multi — the desk parks in it, and its flip breaks TWO things, in this order (the F1 fix pass; both owed):
+#     (1) THE LIVE-FRAME STAGING REFUSES FIRST: ctlmgr's rows lay the desk's live frames as the ROM's binding leaves
+#     them (`aes_ctlmgr.lay_the_desk_s_live_frames`), and our C binding has no `link a6` — the desk's frame chain on
+#     our machine is not the ROM's at `$a288` / `$a2bc` (measured: all eleven ctlmgr rows refused there). Owed: that
+#     staging taught a flipped binding standing below deskmain's frame;
+#     (2) BEHIND IT, THE ANSWER WORDS' RESIDUE: it copies ALL SIX answer words out to deskmain's frame after the yield,
+#     the words of events that did not occur being each shore's frame residue (`$a34e` clicks_out, `$a350` key_out
+#     under a menu wake — residue on both shores, no byte our C writes otherwise than the ROM's binding does; measured
+#     `$a34f` `$01` / `$00` once (1) was taught). Owed: a by-nature class for those words, held two ways as the
+#     unread D0/A0 class is — by reading (deskmain reads them under MU_BUTTON / MU_KEYBD alone) and by a run;
+#   * objc_draw — it yields by its own `dsptch` alone (no door entry: no door user), and a row that switches with no
+#     door is modelled with no walked routine served (`aes_switch.modelled`): its C walks the tree through just_draw
+#     (`$fe9a88`), which that fork does not stage — every one of its four rows' companions is refused there by name.
+#     THE FIX PASS SERVED THAT FORK THE WALK (the event layer's binding with `aes.walkers()` beside its handed
+#     routines, ~10 lines: every companion then passes, the table prices the four rows 0.81-0.84 and form_dial's INFO-1
+#     0.84, nothing else moves) and found the flip needs ONE THING MORE: each of those five rows' second differential
+#     on both blobs (`aes_switching.measured_on`, the battery's whole-run pin) is refused — our run leaves 27 (bench) /
+#     33 (shipped) bytes on the dispatcher's stack BELOW the registered drop (`$8b34..` / `$8b2a..`; by its words a
+#     BIOS trap's frame, PC `$fca7d4`), which the registrar derives only where the ROM's run stores. Both owed; Tier 1
+#     holds each case (the door child serves the walk).
+HELD_AT_F1 = (PREFIX + "APPL_EXIT", PREFIX + "EVNT_MULTI", PREFIX + "OBJC_DRAW")
 for _short, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(PREFIX + _short, _restype, (IMAGE, *_frame))
 
@@ -229,8 +255,9 @@ def returned_in_place(arrived):
 
 # ---- A CASE: the binding from its arrival, both shores ---------------------------------------------------------------------------
 def machine_of(arrived):
-    """The arrival's megabyte as a case's pokes."""
-    return {0: arrived.boot.ram}
+    """The arrival's megabyte as a case's pokes — whole but the harness's window, which it holds as the snapshot does
+    (`aes_desk.arrival_s_machine`: since band 6 slice F1 a case is a row too, and a row may poke no byte of a blob's span)."""
+    return aes_desk.arrival_s_machine(arrived.boot.ram)
 
 
 def label_of(arrived):

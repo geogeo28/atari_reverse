@@ -310,7 +310,9 @@ import test_aes_ctlmgr                                      # noqa: E402,F401  (
 import test_aes_loader                                      # noqa: E402,F401  (the accessory loader's blob rows: GEMDOS replayed)
 import test_aes_gemstart                                    # noqa: E402,F401  (gem_gemdos_call's `.S` rows: wave 4, slice B)
 import test_aes_ourboot                                     # noqa: E402,F401  (the build's own start-up: the our-boot's stretches)
-import test_aes_gemsuper                                    # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
+import test_desk_leaves                                     # noqa: E402,F401  (band 6 unit O, flipped: its rows, trp13's `.S` rows)
+import test_desk_bind                                       # noqa: E402,F401  (band 6 unit D, flipped: its rows at the hands' arrivals)
+import test_aes_gemsuper                                   # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

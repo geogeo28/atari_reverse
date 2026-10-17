@@ -9,10 +9,9 @@
  * the rule the door ships as the ROM's own instructions. `test/test_desk_leaves.py` pins its sixteen bytes on both
  * blobs and holds it to the ROM over the frames the hands' chains' callers push.
  *
- * LINKED AND NOT ENTERED (band 6 wave 1a; ruling W6-R1 is the user's): no word of a build names `aes_rom_trp13`, the
- * Line-F table's two entries for `$fee478` stay THE ROM'S (`bench/linef_table.py`: LINKED_AND_NOT_FLIPPED), and the
- * door has NO ROW of `include/transcribed.h` yet — a row would make the table's entries OURS, NATIVE. A kind of its
- * own until its flip (`atari/target.mk`: DESKDOOR_SOURCES); then it is a row as trp14 is.
+ * A ROW OF `include/transcribed.h` SINCE ITS FLIP (band 6 slice F1; band 6 wave 1a held it linked and not entered, a
+ * kind of its own): the Line-F table's two entries for `$fee478` are this entry, OURS, NATIVE (`bench/linef_table.py`),
+ * and a C caller of `aes_trp13` reaches it through the shipped build's glue, as trp14's do.
  *
  * REGISTERS: D0, the BIOS's answer, and whatever the function called does not keep (the BIOS's dispatcher keeps
  * D3-D7/A3-A7 and no more: a C caller's glue owes D2 and A2, as trp14's row says of it).

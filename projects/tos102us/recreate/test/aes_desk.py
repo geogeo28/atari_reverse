@@ -42,7 +42,7 @@ from collections import namedtuple
 from pathlib import Path
 
 import derived
-from harness import addrs, emu
+from harness import addrs, emu, project
 
 import aes
 import aes_boot
@@ -1231,19 +1231,17 @@ OUR_MACHINES = {
 # THE ROM'S TEXT OF BANDS 0-5 THAT A ROUTINE STILL THE ROM'S REACHES OTHERWISE THAN THROUGH THE TABLE — so the ROM's,
 # on our machine too, under that caller (measured over the campaign: each ran on our shore; each goes when its last
 # such caller flips). `{its start: who reaches it, and how}`.
-GEMGRAF_HELPER, DOS_CALL, DOS_CALL_BODY = 0xfdae38, 0xfe39b6, 0xfe3c3e
-DOS_FREE, DOS_SFIRST_S_ONE, LMUL = 0xfe3c26, 0xfe3a08, 0xfe3db4
-ROM_TEXT_UNDER_ROM_CALLERS = {
-    GEMGRAF_HELPER: "gemgraf's helper: `bsr` from unit O's leaf $fda8a8",
-    DOS_CALL: "__DOS: `bsr` from unit O's DOS-glue leaves",
-    DOS_CALL_BODY: "__DOS's body: `jmp` from __DOS",
-    DOS_FREE: "dos_free's body, ours through the table: unit O's stubs $fe3c16..$fe3c22 (`moveq #n,d1; bra`) branch into it",
-    DOS_SFIRST_S_ONE: "dos_sfirst's `moveq #1 / rts`: unit O's leaf $fe3b02 branches into it",
-    LMUL: "Alcyon's lmul: `jsr` from deskapp's $fdb220"}
+# (UNIT O's FIVE WENT WITH ITS FLIP, band 6 slice F1 — measured: none ran in any of the 113 chains on our shore since:
+# gemgraf's helper `$fdae38` under gsx_pline `$fda8a8`; __DOS `$fe39b6` and its body `$fe3c3e` under the glue's leaves;
+# dos_free's body `$fe3c28..`, which the glue's stubs `$fe3c16..$fe3c22` branched into, entered past its own start —
+# its own entry `$fe3c26` ours through the table, the one span `ENTERED_PAST_ITS_START` named; and dos_sfirst's
+# `moveq #1 / rts` `$fe3a08`, which dos_label branched into.)
+LMUL = 0xfe3db4
+ROM_TEXT_UNDER_ROM_CALLERS = {LMUL: "Alcyon's lmul: `jsr` from deskapp's $fdb220"}
 # ...a span ENTERED PAST ITS START by the callers that reach it (reviewer B's F5): the routine's own entry is ours
-# through the table, so not a cycle of the ROM's text before `past` may run on our shore. `{its start: past}`.
-DOS_FREE_BODY = 0xfe3c28                # where unit O's stubs `bra` to: dos_free's own entry, `$fe3c26`, is our table's
-ENTERED_PAST_ITS_START = {DOS_FREE: DOS_FREE_BODY}
+# through the table, so not a cycle of the ROM's text before `past` may run on our shore. `{its start: past}`. (Empty
+# since unit O's flip: its one span, dos_free's body, has no ROM caller left on our shore.)
+ENTERED_PAST_ITS_START = {}
 
 
 def charged(text):
@@ -1271,6 +1269,13 @@ def flipped(blob=None):
     return frozenset(rom for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), bound) if ours != rom) & frozenset(routines())
 
 
+def our_entries(blob=None):
+    """`{a flipped routine's start: the longword `blob`'s bound table holds for it}` — its thunk, or its native entry."""
+    blob = blob or our_blob()
+    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
+    return {rom: ours for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), bound) if rom in flipped(blob)}
+
+
 def still_the_rom_s(blob=None):
     """BAND 6'S ROUTINES STILL THE ROM'S on a machine of `blob` (W6-R5's declared spans, by their starts): not
     `flipped` — their entry the ROM's, or no entry at all (reached by `bsr` or by value: the ROM's here until the slice
@@ -1281,9 +1286,17 @@ def still_the_rom_s(blob=None):
 # ---- a step of ours, its named stops ----
 OUR_STOPS = {RUBBER_BOX_POLL: "aes_gr_stilldn"}     # N4: band 3's C gr_stilldn — its entry is the poll's
 PROFILE_HELD_BY_OUR_STEP = "a profiled step of the hands' campaign on our shore (`aes_desk.stepped_ours`)"
-OurStepped = namedtuple("OurStepped", "boot profile blob")
-OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s) and `blob`, the cycles the
-blob's own span ran."""
+OurStepped = namedtuple("OurStepped", "boot profile blob entered")
+OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s), `blob`, the cycles the
+blob's own span ran, and `entered` — `((an entry of our bound table that lies in the blob, the cycles at its first
+instruction), ...)` for each such entry the step ran (band 6 slice F1: a flipped routine's thunk, entered by the ROM's
+desk's own call word)."""
+
+
+def _our_table_s_entries(blob):
+    """The distinct longwords of `blob`'s bound table that are addresses of the blob: our entries, thunks and native."""
+    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
+    return tuple(sorted({entry for entry in bound if blob.base <= entry < blob.end}))
 
 
 def our_stop(name, blob=None):
@@ -1305,9 +1318,12 @@ def stepped_ours(boot, received, until=None, at=None, budget=STEP_INSNS):
         with aes_event.profile_held(PROFILE_HELD_BY_OUR_STEP):
             after = aes_boot.continued.derive(boot, tuple(received), budget, until, at)
         profile, blob = _profile_read(), emu.prof_cycles(ours.base, ours.end)
+        assert (ours.base, ours.end) == (our_blob().base, our_blob().end), "a step of ours is of the shipped blob's machine"
+        entered = tuple((at, cycles) for at in _our_table_s_entries(our_blob())
+                        if (cycles := emu.prof_cycles(at, at + WORD_BYTES)))
     finally:
         emu.prof_enable(False)
-    return OurStepped(after, profile, blob)
+    return OurStepped(after, profile, blob, entered)
 
 
 @functools.cache
@@ -1344,3 +1360,47 @@ def our_desk_block(machine):
     import aes_ourboot                  # (here: the comparison alone needs its registry, a heavy import)
     return desk_block(aes_ourboot.mapped_back(machine.ram, our_blob()))
 # ---- end of band 6 slice H's ----
+
+
+# ---- band 6 slice F1: A FLIPPED DESK ROUTINE'S ROW — its machine ---------------------------------------------------------------
+# A ROW AT AN ARRIVAL (units O and D, flipped: `test_desk_leaves.py`, `test_desk_bind.py`) runs over THE ARRIVAL'S MEGABYTE
+# WHOLE BUT THE HARNESS'S WINDOW — `aes_gemctrl`'s machines' cut: from `bench_base` (the blobs, the staging band) to the top
+# of the run's stack band, where the frame is staged — refused by name where the arrival holds anything there but the
+# snapshot's bytes (then the cut machine IS the arrival's). Whole, so that no byte the capture does not reproduce is left to
+# the base a sweep scrambles.
+HARNESS_WINDOW = (project.current().bench_base, case.STACK_BAND[-1] + 1)
+
+
+def arrival_s_machine(ram):
+    """`ram` (an arrival's megabyte) as a row's pokes: all of it but `HARNESS_WINDOW`, which must hold the snapshot's."""
+    lo, hi = HARNESS_WINDOW
+    if bytes(ram[lo:hi]) != bytes(BASE_IMAGE[lo:hi]):
+        raise Refused(f"the arrival's megabyte is not the snapshot's inside the harness's window [{lo:#x}, {hi:#x}): a row "
+                      f"over it would lay the blob, the staging and the run's stack over the machine's own bytes")
+    return {0: bytes(ram[:lo]), hi: bytes(ram[hi:])}
+
+
+# WHAT OF THE DESK'S ROM TEXT IS STILL THE ROM'S on a machine of ours: the flipped routines' spans (each from its start to
+# the next start the AES map's inventory lists) taken out — the text a desk's turn runs alike on both shores
+# (`bench/tier3.py`'s DESK_TEXT_SPANS).
+def flipped_spans(blob=None):
+    """`[(start, end)]`, in address order, of every flipped routine's ROM text (`flipped`)."""
+    starts = inventoried()
+    return sorted((start, starts[bisect.bisect_right(starts, start)]) for start in flipped(blob))
+
+
+def less_the_flipped(spans, blob=None):
+    """`spans` (`(lo, hi)` each) less every flipped routine's ROM text, as `(lo, hi)` pieces in address order."""
+    pieces = []
+    for lo, hi in spans:
+        at = lo
+        for start, end in flipped_spans(blob):
+            if end <= at or start >= hi:
+                continue
+            if start > at:
+                pieces.append((at, start))
+            at = max(at, end)
+        if at < hi:
+            pieces.append((at, hi))
+    return tuple(pieces)
+# ---- end of slice F1's ----

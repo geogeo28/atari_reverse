@@ -3166,10 +3166,12 @@ TALLY_WHOLE, TALLY_AES, TALLY_BLOB, TALLY_GLUE = range(4)   # a window's tally: 
 # ...and, for THE DESK'S TURN (band 6 slice B0, ruling W6-R7), OUR shore's Line-F handler copy's cycles
 # (`TALLY_OUR_LINE_F`: the desk's own Line-F calls and returns — our AES makes none) and on BOTH shores the cycles in
 # the desk's own ROM text (`aes_desk.DESK_TEXT` and `UTILITY_TEXT`: `TALLY_OUR_DESK` on ours, `THE_ROM_S_TALLY_DESK`
-# on the ROM's, whose tally is (whole, the AES's spans, the handler's copy, the desk's text)).
+# on the ROM's, whose tally is (whole, the AES's spans, the handler's copy, the desk's text)). SINCE BAND 6 SLICE F1 THE
+# DESK'S TEXT IS WHAT OF IT IS STILL THE ROM'S (`aes_desk.less_the_flipped`): a flipped routine runs in our blob on our
+# shore and in the ROM's AES spans on the ROM's — inside the turn's price on both, out of the text both run alike.
 TALLY_OUR_LINE_F, TALLY_OUR_DESK = 4, 5
 OUR_TALLY_LENGTH = 6                    # (a test that counts more appends its own after these)
-DESK_TEXT_SPANS = (aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT)
+DESK_TEXT_SPANS = aes_desk.less_the_flipped((aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT))
 # What a measurement keeps of its windows AS THE ROM'S RUN MADE THEM: how many, their whole cycles, their cycles in
 # the AES's own spans — of BOTH kinds (a turn of our screen manager is the ROM's ctlmgr's turn on that shore).
 Foreign = namedtuple("Foreign", "windows whole in_the_aes")
@@ -5444,7 +5446,12 @@ def table(bench, jobs=SERIAL):
         f"ROM's AES-span cycles less what our shore ran there, the desk's own text and Line-F handler among them, both "
         f"held alike), and the desk parks through our dispatcher (its context and frames, GEMDOS's stack and save "
         f"area where its last trap left our build's: differences by nature) — its LIVE FRAMES the ROM's where a row's "
-        f"runs end, entered laid with the ROM's dead bytes (a labelled staging). THE FIRST DISPATCH of a row from an "
+        f"runs end, entered laid with the ROM's dead bytes (a labelled staging). A ROW AT A HANDS' ARRIVAL — a case "
+        f"named `arrival N of <a hands' chain>`, the desk's own routines (band 6 slice F1, ruling R6) — runs over THE "
+        f"ROM'S ARRIVAL MACHINE TAKEN OVER AT THE ARRIVAL (A LABELLED STAGING): the arrival's own megabyte, whole but "
+        f"the harness's window (refused by name unless the arrival holds the snapshot's bytes there), our blob laid and the "
+        f"registry's longwords mapped at the entry, the frame on the harness's stack — each routine priced on its own "
+        f"cycles against the ROM's. THE FIRST DISPATCH of a row from an "
         f"idle — the ROM's dispatcher's loop, its Line-F callees our table's on our side — is printed below the row "
         f"(`the first dispatch: ours N / ROM M = r`), in neither own column, held <= {TIER3_FUNCTION_BAR:.2f} BY ITSELF.",
         "A row whose image compare leaves a span out prints it below itself, with the case's reason: a difference "

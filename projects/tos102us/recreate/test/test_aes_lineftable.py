@@ -72,10 +72,11 @@ TABLE, HANDLER = linef_table.TABLE_SYMBOL, "aes_rom_linef_handler"
 ENTRIES = aes.AES_LINEF_TABLE_ENTRIES
 BLOBS = switch.BLOBS
 OURS_NATIVE, OURS_THROUGH_A_THUNK, THE_ROM_S = linef_table.OURS_NATIVE, linef_table.OURS_THROUGH_A_THUNK, linef_table.THE_ROM_S
-# THE TABLE AS IT STANDS (band 6 wave 0: bands 0-5 ours, band 6 the ROM's). Each flip of a routine moves these — that
-# is their use: a verdict that changes with no flip reds here, by count, before any run.
-VERDICTS = {OURS_NATIVE: 82, OURS_THROUGH_A_THUNK: 337, THE_ROM_S: 239}
-THUNKS = 299
+# THE TABLE AS IT STANDS (band 6 slice F1: bands 0-5 ours, and band 6's units O and D flipped — unit O's seventeen
+# thunked cores and trp13's `.S` (native, its two entries)). Each flip of a routine moves these — that is their use: a
+# verdict that changes with no flip reds here, by count, before any run. (Wave 0: 82 / 337 / 239, 299 thunks.)
+VERDICTS = {OURS_NATIVE: 84, OURS_THROUGH_A_THUNK: 393, THE_ROM_S: 181}
+THUNKS = 354
 # The operand of the handler's RAM copy (`$cc24`): the table kind's one slot (`aes_event.LINEF_TABLE_SLOT`).
 TABLE_OPERAND_IN_RAM = aes.AES_LINEF_COPY + aes.LINEF_TABLE_OPERAND
 
@@ -224,18 +225,23 @@ def test_the_thunks_are_one_a_core_each_named_by_an_entry_and_lie_end_to_end_beh
     switch.vet_laid_end_to_end(blob, (TABLE, *named))
 
 
-FALLEN_INTO = 0xFE3B6A                  # a GEMDOS glue entry the routine before it falls into: no exit ahead of it
+# THE ONE ENTRY LEFT THE ROM'S THAT WAS NO ROUTINE'S FIRST WORD AFTER AN EXIT — `$fe3b6a`, dos_space, a GEMDOS glue entry the
+# routine before it FALLS INTO — is OURS since band 6 slice F1 (unit O flipped): every entry left the ROM's is a routine's.
+FALLEN_INTO = 0xFE3B6A
+FALLEN_INTO_SINCE_THE_FLIP = frozenset()
 
 
 def test_the_source_s_rom_addresses_are_exactly_the_entries_left_the_rom_s_each_a_routine_s_entry():
     """THE CENSUS OF THE GENERATED FILE (`test_aes_rom_data.ROM_ADDRESSES_OF_GENERATED_SOURCES` lists what the file
     holds; this holds what it MAY hold): the ROM addresses `lineftable.S` uses are the targets of the entries whose
     verdict is the ROM's, no other — and each is a routine's entry in the ROM's text (the instruction after an
-    exit), but ONE: `$fe3b6a`, a GEMDOS glue entry the routine before it FALLS INTO (no exit ahead of it)."""
+    exit). (Until band 6 slice F1 one was not: `$fe3b6a`, dos_space, a GEMDOS glue entry the routine before it FALLS
+    INTO — unit O's, ours since: held by its census kind, still not CODE, and no longer left the ROM's.)"""
     left = {entry.target for entry in linef_table.entries() if entry.verdict == THE_ROM_S}
     assert rom_data.census(rom_census.AES)[linef_table.SOURCE.name] == {f"{target:#x}" for target in left}
     assert all(rom_census.TEXT_LO <= target < rom_census.TEXT_HI for target in left)
-    assert {target for target in left if rom_census.kind_in_the_text(target) != rom_data.CODE} == {FALLEN_INTO}
+    assert {target for target in left if rom_census.kind_in_the_text(target) != rom_data.CODE} == FALLEN_INTO_SINCE_THE_FLIP
+    assert rom_census.kind_in_the_text(FALLEN_INTO) != rom_data.CODE and FALLEN_INTO not in left
 
 
 # ---- BOUND (slice B0): the operand is ours, and it is the one word of a blob that names the table -----------------------
@@ -598,8 +604,19 @@ UNENTERED = {
     "AES_ROM_ALL_RUN": [INTERRUPTED], "AES_ROM_AP_TPLAY": [INTERRUPTED], "AES_ROM_AP_TRECD": [INTERRUPTED],
     "AES_ROM_DESK_FREE": [INTERRUPTED], "AES_ROM_DESK_RSRC_FREE": [INTERRUPTED], "AES_ROM_EV_TIMER": [INTERRUPTED],
     "AES_ROM_GEM_READ_INF": [NO_CASE],      # priced as a stretch of the build's own boot, between two checkpoints
+    # ---- band 6 slice F1, unit D ---- THE THIRTY-SIX BINDINGS FLIPPED THAT YIELD: every case of each is a row that switches,
+    # taken through its dispatcher (its wake) — no kit call through the caller can lay its deliveries. Each thunk is
+    # ENTERED ON OUR SHORE instead, by the ROM's desk's own call words over the hands' chains: held there, binding by
+    # binding (`test_aes_desk_ours.py`, `test_every_flipped_routine_s_rom_span_ran_no_cycle_and_its_entry_of_ours_ran`).
+    **{f"AES_ROM_DESK_{binding}": [INTERRUPTED] for binding in (
+        "APPL_WRITE", "EVNT_BUTTON", "EVNT_DCLICK", "FORM_ALERT", "FORM_CENTER", "FORM_DIAL", "FORM_DO",
+        "FORM_ERROR", "GRAF_GROWBOX", "GRAF_MKSTATE", "GRAF_MOUSE", "GRAF_RUBBOX", "GRAF_SHRINKBOX", "MENU_BAR", "MENU_ICHECK",
+        "MENU_IENABLE", "MENU_TNORMAL", "OBJC_ADD", "OBJC_CHANGE", "OBJC_FIND", "OBJC_OFFSET", "OBJC_ORDER",
+        "RSRC_GADDR", "SHEL_GET", "SHEL_PUT", "SHEL_WRITE", "WAIT", "WIND_CALC", "WIND_CLOSE", "WIND_CREATE", "WIND_DELETE",
+        "WIND_FIND", "WIND_GET", "WIND_OPEN", "WIND_SET", "WIND_UPDATE")},
+    # ---- end of unit D's ----
 }
-ENTERED_THUNKS = 292                    # of the 299: THUNKS less the seven above
+ENTERED_THUNKS = 311                    # of the 354: THUNKS less the 43 above (band 6 slice F1: unit O's 17, unit D's appl_init / appl_bvset)
 
 
 def test_the_thunks_no_case_enters_are_listed_by_name():
@@ -613,7 +630,7 @@ def test_the_thunks_no_case_enters_are_listed_by_name():
 
 
 # ---- THE NATIVE ENTRIES, ENTERED THE SAME WAY ------------------------------------------------------------------------------
-# 82 entries of the table are OURS NATIVELY — a byte-pinned `.S` entry or an Alcyon entry, 64 routines — and need no
+# 84 entries of the table are OURS NATIVELY — a byte-pinned `.S` entry or an Alcyon entry, 65 routines — and need no
 # thunk: the table's longword IS the entry. Each that HAS A DECLARED ALCYON SIGNATURE AND A REGISTERED CASE AT ITS
 # ENTRY is entered as a thunk is — the ROM's call word, the ROM's handler, our table — on the shipped blob (what ships:
 # a `.S` entry is the routine there), against the ROM's own run: who-ran the same, the entry's first instruction run.
@@ -623,7 +640,7 @@ NO_ROW_AT_ITS_ENTRY = "no registered case is entered at the entry"
 A_CODE_ADDRESS_BY_VALUE = ("RED when forced (reviewer A): the two machines differ in a code address stored by value — the ROM's "
                            "$fe39ce, the blob's own — at two longwords; its row maps it, a run entered at the caller does not")
 NATIVES_NOT_ENTERED_BY_NAME = {"AES_ROM_PGMLD": A_CODE_ADDRESS_BY_VALUE}
-NATIVE_ROUTINES, NATIVES_ENTERED = 64, 51
+NATIVE_ROUTINES, NATIVES_ENTERED = 65, 52     # (band 6 slice F1: trp13, entered by its C twin's verified case)
 
 
 @functools.cache
@@ -694,23 +711,22 @@ HOSTED = sorted(routine for routine in THUNKED if vdi.ALCYON[routine].host_argum
 LINE_F_RETURN_SITE = aes.LINE_F_CALLER_AT + len(DROP_STACK_LONG) + WORD_BYTES
 
 
-def test_the_cores_that_take_a_return_site_are_the_seven_glue_entries_and_each_is_entered():
-    """Ten cores declare a host argument; seven are thunked — GEMDOS glue entries, each parking its caller's return
-    site —, two ship as their `.S` (dos_exec, trp14: native entries, the ROM's own pop) and one is the VDI's, no
-    Line-F target. Every one of the seven has a case that enters it (above): none is unentered."""
+def test_the_cores_that_take_a_return_site_are_the_thirteen_glue_entries_and_each_is_entered():
+    """Seventeen cores declare a host argument; thirteen are thunked — GEMDOS glue entries, each parking its caller's
+    return site: band 5's seven, and SINCE BAND 6 SLICE F1 (N15) unit O's six (the desk's glue entries through
+    `$fe3c28`, and dos_rename) —, three ship as their `.S` (dos_exec, trp14 and, since F1, trp13: native entries, the
+    ROM's own pop) and one is the VDI's, no Line-F target. Every one of the thirteen has a case that enters it through
+    the table (above; unit O's six by their verified rows at the hands' arrivals, NOTHING STAGED HERE): none is
+    unentered."""
     declared = {name for name, signature in vdi.ALCYON.items() if signature.host_arguments}
-    # ---- band 6 wave 1a, unit O ---- seven more cores take a return site (the desk's glue entries through `$fe3c28`,
-    # dos_rename and the BIOS door trp13): WRITTEN, LINKED AND NOT FLIPPED — no thunk is made for one until its flip.
-    not_flipped = {name for name in declared if name in linef_table.LINKED_AND_NOT_FLIPPED}
-    assert not_flipped == {"AES_ROM_DOS_RENAME", "AES_ROM_DOS_RAWCIO", "AES_ROM_DOS_CHMOD", "AES_ROM_DOS_DELETE", "AES_ROM_DOS_RMDIR",
-                           "AES_ROM_DOS_CREATE", "AES_ROM_TRP13"}
-    declared -= not_flipped
-    # ---- end of unit O's ----
     natives = {entry.target for entry in linef_table.entries() if entry.verdict == OURS_NATIVE}
-    assert len(declared) == 10 and len(HOSTED) == 7
-    assert {name for name in declared - set(HOSTED) if getattr(addrs, name) in natives} == {"AES_ROM_DOS_EXEC", "AES_ROM_TRP14"}
-    assert declared - set(HOSTED) - {"AES_ROM_DOS_EXEC", "AES_ROM_TRP14"} == {"VDI_ROM_GEMDOS_CALL"}
+    unit_o = {"AES_ROM_DOS_RENAME", "AES_ROM_DOS_RAWCIO", "AES_ROM_DOS_CHMOD", "AES_ROM_DOS_DELETE", "AES_ROM_DOS_RMDIR", "AES_ROM_DOS_CREATE"}
+    assert len(declared) == 17 and len(HOSTED) == 13 and unit_o <= set(HOSTED)
+    shipped_as_their_s = {"AES_ROM_DOS_EXEC", "AES_ROM_TRP14", "AES_ROM_TRP13"}
+    assert {name for name in declared - set(HOSTED) if getattr(addrs, name) in natives} == shipped_as_their_s
+    assert declared - set(HOSTED) - shipped_as_their_s == {"VDI_ROM_GEMDOS_CALL"}
     assert set(HOSTED) <= set(ENTERED)
+    assert not {routine for routine in unit_o if entered_cases()[0][routine].name.endswith(STAGED_HERE)}
 
 
 HOSTED_ON = [(routine, name) for routine, name in ENTERED_ON if routine in HOSTED]
@@ -793,8 +809,8 @@ def test_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_the_rom_s_sc
 # EACH UNIT'S OWN LIST AND ITS COUNT: `{(the unit's test module, its list's name): routines}` — a group of band 6 wave
 # 1b adds one line per unit inside its own block, so no two authors edit one line; the pin is their sum.
 LINKED_AND_NOT_FLIPPED_UNITS = {
-    ("aes_deskbind", "BINDINGS"): 41,    # unit D: the forty bindings and desk_wait
-    ("aes_deskleaves", "UNIT_O"): 18,    # unit O
+    # (unit D's forty bindings and desk_wait, unit O's eighteen: FLIPPED at band 6 slice F1 — but three bindings held)
+    ("aes_deskbind", "HELD_AT_F1"): 3,   # unit D: appl_exit, evnt_multi, objc_draw, held (`aes_deskbind.HELD_AT_F1` says why)
     # ---- band 6 wave 1b, group G1 (units I, L) ----
     ("aes_deskwin", "UNIT_I"): 16,       # unit I: the window objects, the program leaves, the window leaves
     ("aes_deskview", "UNIT_L"): 17,      # unit L: the view, the window list, the layout leaves

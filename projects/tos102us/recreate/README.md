@@ -495,7 +495,8 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
 
 ### W6-R4 ON THE FLIPPED STATE — `tools/flipped_depths.py` (band 6 slice D)
 
-The suite's `DEPTHS` are the shipped blob's AS IT IS (nothing of band 6 flipped). The hard gate binds every flip that
+The suite's `DEPTHS` are the shipped blob's AS IT IS (since band 6 slice F1: units O and D flipped, three bindings
+held — `test_aes_desk_ours.py` re-derives them on that partial flip). The hard gate binds every flip that
 deepens a path (the user's R1), so each flip slice is measured BEFORE it lands on the state it is heading for: a private
 build with EVERY linked routine of band 6 flipped.
 
@@ -525,7 +526,12 @@ file `deskutil.c`; G3 I, J, K, L; G4 A, B) and wave 4's twenty in two (G1 unit M
 its eight `bsr`-only parts static C with no table entry and no signature — ruling R-W4-5 —, held through its two
 built-ins' cases; G2 unit N, Format, the disk copy and their helpers, in the NEW `src/desk/deskdisk.c` /
 `include/desk/deskdisk.h`, cases `test/aes_deskdisk.py` / `test_desk_disk.py`) are LINKED INTO BOTH BLOBS AND HELD AT
-TIER 1, NOTHING BOUND (STATUS: `## Linked, unbound — desk (215)`). A case of any is taken WHERE THE ROM'S OWN
+TIER 1 (STATUS: `## Linked, unbound — desk`). SINCE BAND 6 SLICE F1 UNITS O AND D ARE FLIPPED — the Line-F table's entry
+of each is ours (a generated thunk; trp13's two its `.S`, a row of the transcribed table), and each case at a hands'
+arrival is a Tier 3 row (STATUS: `## Verified — desk`) over THE ROM'S ARRIVAL MACHINE TAKEN OVER AT THE ARRIVAL (ruling
+R6, a labelled staging the table's legend names) — BUT THREE BINDINGS HELD (`aes_deskbind.HELD_AT_F1`: appl_exit,
+evnt_multi, objc_draw, each with what its flip still owes). Unit O's GEMDOS glue and gemdosif's share their four
+statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with
 `aes_deskfpd.py`), `aes_deskarrive.py` (G4) — each an arrival of the kind below, a row that switches where the routine
@@ -3359,16 +3365,19 @@ entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by
 the ledger's `## Linked, unbound` section
 (`test_status.py`); a routine leaves the list at its flip, and the generated file's diff is that flip's record.
 
-**THE DESK'S BIOS DOOR is a seventh kind: a TRANSCRIPTION IN WAITING, linked and NOT ENTERED** (`atari/target.mk`:
-`DESKDOOR_SOURCES`; `src/desk/trp13.S`, band 6 wave 1a's fix pass). trp13 `$fee478` is trp14's sibling — four hand
-instructions over whatever frame its caller pushed — and its C twin (`aes_trp13`, `src/desk/deskleaf.c`) measured over
-the bar (+214 cycles a call: 1.355 / 1.253 / 1.053 at its three arrivals), so by the rule it ships as the ROM's sixteen
-bytes. It is NOT a row of `include/transcribed.h` yet: a row there is a native entry of the Line-F table, and the
-table's two entries for `$fee478` stay the ROM's until the binding (ruling W6-R1). So it is listed apart, in
-`src/desk/` (outside the transcriptions' two directories), pinned on both blobs and held through the transcription
-relation to the ROM's door at the hands' three arrivals over the machine's own BIOS — the same cycles on both shores
-(`test_desk_leaves.py`); `test_tier3.py`'s census of `.S` kinds reads `src/desk/` too. At its flip it becomes a row,
-as `src/aes/trp14.S` is.
+**THE DESK'S BIOS DOOR — A ROW OF THE TRANSCRIBED TABLE since band 6 slice F1** (`src/desk/trp13.S`; band 6 wave 1a's
+fix pass wrote it as a seventh kind, `DESKDOOR_SOURCES`, a transcription in waiting — retired at the flip). trp13
+`$fee478` is trp14's sibling — four hand instructions over whatever frame its caller pushed — and its C twin
+(`aes_trp13`, `src/desk/deskleaf.c`) measured over the bar (+214 cycles a call: 1.355 / 1.253 / 1.053 at its three
+arrivals), so it ships as the ROM's sixteen bytes: `include/transcribed.h`'s `ENTRY(aes_rom_trp13, "d2 a2")` (the BIOS's
+contract), listed in `atari/target.mk`'s TRANSCRIBED_SOURCES from `src/desk/` (the file not moved: a move reorders the
+link), the table's two entries for `$fee478` NATIVE. Its `.S` is held through the transcription relation to the ROM's
+door at the hands' three arrivals over the machine's own BIOS — the same cycles on both shores, its three rows at 1.00
+(`test_desk_leaves.py`); the twin stays verified and unpriced. On the shipped blob the C callers (drive_check, Format,
+the copy) reach the `.S` through the generated `aes_trp13` glue thunk, whose `jsr` makes the `.S` park THE GLUE'S
+return in AES_BIOS_RETURN `$95ae` — trp14's class, declared (R9's kind) and pinned: only trp13's own two instructions
+name that longword; the thunk itself is held against the ROM's door by a shipped-blob differential at the same three
+arrivals (`test_the_shipped_glue_into_the_door_is_held_to_the_rom_s_door`).
 
 **THE DESK DOOR — how the shell calls what is still the ROM's** (`include/aes/deskdoor.h`; `src/aes/shell.c`: sh_main,
 sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskmain and the desk's four built-ins
@@ -3851,8 +3860,9 @@ recreate/
 │                       `include/aes/trapdoor.h`: the trap door, the fourth `.S` kind; `src/aes/loader.c`: the
 │                       accessory loader; `src/aes/gemstart.S` with `include/aes/gemstart.h`: GEM's start-up, the
 │                       fifth; `src/aes/shell.c` with `include/aes/deskdoor.h`: the shell's loop and the desk door;
-│                       `src/desk/`: the desk's units written and linked, NOT BOUND — `deskleaf.c` and `deskbind.c`
-│                       with `include/desk/`, and `trp13.S`, the BIOS door, the seventh kind)
+│                       `src/desk/`: the desk's units written and linked — units O and D (`deskleaf.c`,
+│                       `deskbind.c`) FLIPPED since band 6 slice F1, the rest NOT BOUND — with `include/desk/`, and
+│                       `trp13.S`, the BIOS door, a row of the transcribed table since F1)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs

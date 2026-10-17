@@ -73,6 +73,7 @@ import test_aes_fmdo                                       # noqa: E402
 import test_aes_gemsuper                                   # noqa: E402  (its door users that switch, pinned there)
 import test_aes_all_run                                    # noqa: E402  (all_run's rows: door users that switch, pinned there)
 import test_aes_gemctrl                                    # noqa: E402  (the screen manager's handlers' rows, pinned there)
+import test_desk_bind                                      # noqa: E402  (band 6 unit D's bindings' rows, pinned there)
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -2222,13 +2223,12 @@ def test_the_switch_is_its_own_kind_of_the_build_contract(make_lists):
     # expansion by `test_aes_gemstart.py`.)
     # (slice T, band 6 wave 0: the generated Line-F table is a sixth, linked and not bound — LINEFTABLE_SOURCES, held to
     # make's own expansion by `test_aes_lineftable.py`.)
-    # (band 6 wave 1a's fix pass: the desk's BIOS door is a seventh, a transcription in waiting, linked and not
-    # entered — DESKDOOR_SOURCES, in `src/desk/`, which this sweep reads since then; held to make's own expansion by
-    # `test_desk_leaves.py`.)
+    # (band 6 wave 1a's fix pass: the desk's BIOS door was a seventh, a transcription in waiting, in `src/desk/`, which
+    # this sweep reads since then; band 6 slice F1 made it a transcription — TRANSCRIBED_SOURCES names it by name.)
     assert every_s == (set(make_lists["TRANSCRIBED_SOURCES"]) | set(make_lists["ALCYON_ENTRY_SOURCES"]) | set(switch)
                        | set(transcription.trapdoor_sources()) | set(transcription.gemstart_sources())
-                       | set(transcription.lineftable_sources()) | set(transcription.deskdoor_sources())), (
-        "a `.S` of the table's components that is of none of the seven kinds")
+                       | set(transcription.lineftable_sources())), (
+        "a `.S` of the table's components that is of none of the six kinds")
 
 
 JMP_OPERAND_BYTES = aes.LONG_BYTES      # dsptch's last instruction is `jmp <disp>.l`: its operand, the last four bytes
@@ -3461,13 +3461,13 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (257418, 220594), SHIPPED_BLOB: (257418, 217614)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
         BENCH_BLOB: (144852, 124532), SHIPPED_BLOB: (144852, 123758)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 566498), SHIPPED_BLOB: (639424, 565930)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 553450), SHIPPED_BLOB: (639424, 552882)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
         BENCH_BLOB: (1102608, 1030164), SHIPPED_BLOB: (1102608, 1019284)},
-    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1148108), SHIPPED_BLOB: (1237428, 1134346)},
-    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1228836), SHIPPED_BLOB: (1331494, 1214128)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1147468), SHIPPED_BLOB: (1237428, 1133706)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1227556), SHIPPED_BLOB: (1331494, 1212848)},
     "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203296), SHIPPED_BLOB: (212120, 201634)},
     "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 277612), SHIPPED_BLOB: (297138, 275082)},
     "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256388), SHIPPED_BLOB: (275878, 253996)},
@@ -3497,6 +3497,10 @@ DOOR_USERS_WHOLE_RUN.update(test_aes_all_run.DOOR_USERS_WHOLE_RUN)
 # its callers on both blobs: no arrival of its own).
 DOOR_USERS_PRICED.update(test_aes_gemctrl.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_aes_gemctrl.DOOR_USERS_WHOLE_RUN)
+# ...and the desk's bindings' (`test_desk_bind.py`, band 6 slice F1): unit D flipped, each case at a hands' arrival a row
+# that switches — the desk's own process parked through our dispatcher and woken, its binding's call open across it.
+DOOR_USERS_PRICED.update(test_desk_bind.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_bind.DOOR_USERS_WHOLE_RUN)
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
@@ -3810,6 +3814,21 @@ UNPRICED_AT_A_ROM_ENTRY = {
     "aes_trp14, Getrez, medium resolution (the C twin: a host argument, and the `.S` ships)":
         "the C twin of the XBIOS door, which ships as `trp14.S` (its five rows are the table's): it takes its "
         "caller's return site as a host argument and serves one frame, Getrez's",
+    # ---- band 6 slice F1: unit O flipped (`test_desk_leaves.py`'s rows) ---- the six glue entries that park their
+    # caller's return site, at the hands' arrivals (the cases their thunks are entered by through the table: N15)
+    **{f"aes_dos_{row} [GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers]":
+       A_HOST_ARGUMENT + " (the desk's, band 6: at a hands' arrival)"
+       for row in ("create, Save Desktop creates DESKTOP.INF", "create, a file copied into a folder", "delete, a file dragged to the trash",
+                   "rmdir, a folder dragged to the trash", "rawcio, the viewer's carriage return", "rawcio, the viewer's line feed",
+                   "rename, Show Info renames the file", "chmod, Show Info makes the file read-only",
+                   "delete, a read-only file dragged to the trash — GEMDOS answers EACCDN")},
+    "aes_trp13, Drvmap: a drive opened, its letter checked against the map (the C twin: a host argument, and the `.S` ships)":
+        "the C twin of the BIOS door, which ships as `trp13.S` (its three rows are the table's): it takes its caller's "
+        "return site as a host argument — trp14's arrangement — and is the case the table's native entry is entered by",
+    "aes_gsx_hardcopy, ARGUMENT CLASS (no arrival: Scrdmp's staged routine, no dump pending)":
+        "no chain of the hands reaches it (Print Screen's alert answered is its arrival, and the printer's Scrdmp a device "
+        "the model declares at the alert alone): held at Tier 1 over this class, the case its thunk is entered by — priced nowhere",
+    # ---- end of slice F1's ----
 }
 # OWED, the same class, registered nowhere yet: dos_sdta, dos_close and dos_cconout (host arguments of the same
 # `$fe3c28` tail; their batteries are bands 3's — STATUS.md's rows say "verified, unpriced").

@@ -57,6 +57,8 @@ UNOBSERVED = {
                                           "(`test_vdi_helpers_gemdos.py`); GEMDOS itself keeps only D3-D7/A3-A6"),
     "aes_rom_trp14": ({"d2", "a2"}, "the door serves ANY XBIOS function and its cases reach Getrez or a recording "
                                     "`trap #14` (`test_aes_trp14.py`); the XBIOS's dispatcher keeps only D3-D7/A3-A7"),
+    "aes_rom_trp13": ({"d2", "a2"}, "the door serves ANY BIOS function and its cases reach Drvmap, the floppy driver's "
+                                    "media change and Bconout (`test_desk_leaves.py`); the BIOS's dispatcher keeps only D3-D7/A3-A7"),
 }
 def _core(entry):
     return transcription.transcribed_core(entry)

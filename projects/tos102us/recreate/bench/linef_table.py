@@ -129,23 +129,25 @@ ENTERED_BY_OURS_ALONE = {
 
 # ---- band 6 wave 1a ----
 # THE ROUTINES OF BAND 6 THAT ARE WRITTEN, LINKED AND NOT YET FLIPPED: each has a C core and a declared signature — a
-# thunk could be made — and its entry STAYS THE ROM'S BY DECLARATION until the band's opening is ruled (W6-R1: the
-# table bound first, or the desk ported against the ROM's AES and the table last). Held at Tier 1 meanwhile; a
-# routine leaves this list at its flip, and the generated file's diff is that flip's record. `{routine: why}`.
+# thunk could be made — and its entry STAYS THE ROM'S BY DECLARATION until its flip slice (W6-R1, the user's: the table
+# bound first, then the desk's routines flip, bottom-up). Held at Tier 1 meanwhile; a routine leaves this list at its
+# flip, and the generated file's diff is that flip's record. `{routine: why}`. (Wave 1a's two units, O and D, flipped
+# at band 6 slice F1.)
 LINKED_AND_NOT_FLIPPED = {}
-# ---- unit D: the desk's AES bindings and desk_wait (`src/desk/deskbind.c`, `test/aes_deskbind.py`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{binding}": "unit D: a binding of the desk's, held at Tier 1 at its arrivals" for binding in (
-    "APPL_INIT", "APPL_BVSET", "APPL_EXIT", "APPL_WRITE", "EVNT_MULTI", "EVNT_BUTTON", "EVNT_DCLICK", "FORM_DO", "FORM_DIAL",
-    "FORM_ALERT", "FORM_ERROR", "FORM_CENTER", "GRAF_MOUSE", "GRAF_RUBBOX", "GRAF_MKSTATE", "GRAF_GROWBOX", "GRAF_SHRINKBOX",
-    "MENU_TNORMAL", "MENU_BAR", "MENU_ICHECK", "MENU_IENABLE", "OBJC_OFFSET", "OBJC_ORDER", "OBJC_FIND", "OBJC_ADD", "OBJC_DRAW",
-    "OBJC_CHANGE", "RSRC_GADDR", "SHEL_WRITE", "SHEL_GET", "SHEL_PUT", "WIND_CLOSE", "WIND_DELETE", "WIND_FIND", "WIND_UPDATE",
-    "WIND_CREATE", "WIND_OPEN", "WIND_GET", "WIND_SET", "WIND_CALC", "WAIT")})
-# ---- end of unit D's ----
-# ---- unit O: the desk's leaves filed in AES modules (`src/desk/deskleaf.c`, `test/aes_deskleaves.py`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{leaf}": "unit O: a desk-only leaf filed in an AES module, held at Tier 1 at its arrivals" for leaf in (
-    "GSX_PLINE", "APP_ALLOC", "APP_FREE", "DOS_WRITE", "DOS_GDIR", "DOS_MKDIR", "DOS_SETDT", "DOS_LABEL", "DOS_SPACE", "DOS_RENAME",
-    "DOS_AVAIL", "DOS_RAWCIO", "DOS_CHMOD", "DOS_DELETE", "DOS_RMDIR", "DOS_CREATE", "GSX_HARDCOPY", "TRP13")})
-# ---- end of unit O's ----
+# ---- unit D: FLIPPED at band 6 slice F1 — the desk's forty bindings and desk_wait, each thunked, BUT THREE HELD (the slice's
+# brief holds back a routine whose flip needs what the cut does not have; `aes_deskbind.HELD_AT_F1` says each) ----
+LINKED_AND_NOT_FLIPPED.update({
+    "AES_ROM_DESK_APPL_EXIT": "unit D: appl_exit, held at band 6 slice F1 — no row of it can be priced: its arrivals' screen "
+                              "manager stands where no history of ours reaches",
+    "AES_ROM_DESK_EVNT_MULTI": "unit D: evnt_multi, held at band 6 slice F1 — flipped, ctlmgr's live-frame staging refuses "
+                               "first (our C binding has no `link a6`: the desk's frame chain differs at $a288 / $a2bc), "
+                               "and behind it the answer words it copies out for events that did not occur ($a34e "
+                               "clicks_out, $a350 key_out) are each shore's residue: a by-nature class no row has",
+    "AES_ROM_DESK_OBJC_DRAW": "unit D: objc_draw, held at band 6 slice F1 — no row of it can be made: a row that switches "
+                              "with no door is modelled with no walked routine served, and its C walks the tree (just_draw); "
+                              "served it (the fix pass's probe), each row's blob differential is refused on the dispatcher's "
+                              "stack below the registered drop"})
+# ---- unit O: FLIPPED at band 6 slice F1 — its seventeen C cores thunked, trp13 a row of the transcribed table (native) ----
 # ---- end of band 6 wave 1a's ----
 # ---- band 6 wave 1b: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
 # ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----

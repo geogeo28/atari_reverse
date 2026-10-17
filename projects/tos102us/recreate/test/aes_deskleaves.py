@@ -1,5 +1,6 @@
 r"""THE DESK'S LEAVES FILED IN AES MODULES — band 6 wave 1a, unit O (`src/desk/deskleaf.c`, `test_desk_leaves.py`):
-how eighteen routines only the ROM's desk calls are held AT TIER 1, LINKED AND NOT BOUND.
+how eighteen routines only the ROM's desk calls are held AT TIER 1 (flipped since band 6 slice F1: their rows at the
+same arrivals, `row_pokes`).
 
 A CASE IS TAKEN AT AN ARRIVAL wherever a hand's chain reaches the routine (`aes_desk.reach`: seventeen of the
 eighteen — all but gsx_hardcopy, whose printer the model has not):
@@ -423,6 +424,11 @@ def blob_pokes(bench, name, arguments, ram=None, layers=(), answers=None, settle
     `last_call_trap`, or the probe's `bare_trap`) answers the last of them. `settles_the_mask`: an Alcyon routine's
     Line-F mask word staged at the value its own return leaves (a C core stores none: the one-sided kind Tier 3 names)."""
     machine = aes.leaf_machine() if ram is None else less_the_blob(ram, bench)
+    return _staged_over(machine, name, arguments, layers, answers, settles_the_mask, trap)
+
+
+def _staged_over(machine, name, arguments, layers, answers, settles_the_mask, trap):
+    """`blob_pokes`' and `row_pokes`' common part: over `machine`, the trap, the layers, the frame and the mask word."""
     staged_trap = None
     if answers:
         staged_trap = bare_trap(answers[-1]) if trap is bare_trap else trap(LAST_FUNCTION[name], answers[-1])
@@ -432,6 +438,31 @@ def blob_pokes(bench, name, arguments, ram=None, layers=(), answers=None, settle
     if settles_the_mask:
         pokes = merge_pokes(pokes, {aes.AES_LINEF_MASK_WORD: struct.pack(">H", aes.settled_mask_word(name, signed, machine))})
     return pokes
+
+
+# ---- band 6 slice F1: A ROW'S MACHINE — one for both blobs -------------------------------------------------------------------
+# A FLIPPED ROUTINE'S ROW (the unit's rows, `test_desk_leaves.py`) is ITS BLOB CASE REGISTERED: the same frame and mask word
+# over the same arrival, priced by Tier 3's own relation on whichever blob the table prices it on — GEMDOS answered by
+# THE UNIT'S OWN RECORDING TRAP (`GEMDOS`, the one its Tier 1 cases take), scripted with the ROM's run in place's
+# answers, in place of the blob cases' trap that keeps its last call: the price of a glue entry turns on the trap it is
+# taken over (the bare-trap question, the user's), and this is the convention the unit is held at Tier 1 by. Its
+# machine is THE ARRIVAL'S MEGABYTE WHOLE BUT THE HARNESS'S WINDOW (`aes_desk.arrival_s_machine`, units O's and D's).
+arrival_s_machine = aes_desk.arrival_s_machine
+
+
+# What the recording trap answers a trap of the routine the row's answers do not name (dos_label's Fsetdta, when a case
+# gives its Fsfirst's alone): read by no instruction of the glue (Fsetdta's answer is dropped).
+UNREAD_ANSWER = 0xFD0001
+
+
+def row_pokes(name, arguments, ram=None, layers=(), answers=None, settles_the_mask=False):
+    """The pokes of ONE ROW of `name` (above): over `arrival_s_machine(ram)` (None: the leaf machine), every `trap #1`
+    answered by the recording trap, the LAST of its traps by the last of `answers`; `layers`, the frame, the mask word."""
+    machine = aes.leaf_machine() if ram is None else arrival_s_machine(ram)
+    if answers:
+        traps = len(TRAP_RETURNS[name])
+        layers = (GEMDOS.pokes([UNREAD_ANSWER] * (traps - len(answers)) + list(answers)), *layers)
+    return _staged_over(machine, name, arguments, layers, None, settles_the_mask, last_call_trap)
 
 
 def on_a_blob(bench, name, arguments, dropped=(), **machine_s):

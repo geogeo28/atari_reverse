@@ -140,16 +140,19 @@ def test_what_the_registry_s_import_reads_is_what_registry_reads_names():
     """DERIVED: the captures this process read while the registry was imported are the Makefile's REGISTRY_READS, with
     the snapshot — no fewer and no more: the two pre-init machines the screen manager's rows are registered from, AND
     THE DESKTOP.INF ONE since band 5 wave 4's slice B registered rows made of it (the build's own start-up: the
-    reader's file arm). RED, on the list a registered row of the seven-accessory machine would make: that capture is
-    named as lacking; and each of the three, dropped from the rule, is named too."""
-    assert READ_BY_THE_REGISTRY_S_IMPORT == ("build/preinit.bin", "build/preinit_acc.bin", "build/preinit_inf.bin")
+    reader's file arm), AND THE FILES ONE since band 6 slice F1 (the flipped desk routines' rows at its arrivals). RED,
+    on the list a registered row of the seven-accessory machine would make: that capture is named as lacking; and each
+    of the four, dropped from the rule, is named too."""
+    assert READ_BY_THE_REGISTRY_S_IMPORT == ("build/preinit.bin", "build/preinit_acc.bin", "build/preinit_files.bin",
+                                             "build/preinit_inf.bin")
     assert not_among_the_registry_s_reads(CAPTURES, _texts()) == []
     seven = str(preinit_snapshot.seven_accessory_path().relative_to(RECREATE))
     assert not_among_the_registry_s_reads((*CAPTURES, seven), _texts()) == [seven]
     makefile, kit = _texts()
-    rule = "REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF)"
+    rule = "REGISTRY_READS := $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_INF) $(PREINIT_FILES)"
     assert makefile.count(rule) == 1
-    for dropped, lacking in ((" $(PREINIT_ACC)", "build/preinit_acc.bin"), (" $(PREINIT_INF)", "build/preinit_inf.bin")):
+    for dropped, lacking in ((" $(PREINIT_ACC)", "build/preinit_acc.bin"), (" $(PREINIT_INF)", "build/preinit_inf.bin"),
+                             (" $(PREINIT_FILES)", "build/preinit_files.bin")):
         assert not_among_the_registry_s_reads(CAPTURES, [makefile.replace(rule, rule.replace(dropped, "")), kit]) == [lacking]
 
 
