@@ -1,5 +1,6 @@
 """THE DESK'S WINDOWS — THE VIEW, THE WINDOW LIST, THE LAYOUT LEAVES (`src/desk/deskview.c`; band 6 wave 1b, group G1,
-unit L), HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+unit L), HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but three (win_icalc,
+win_bldview, win_shwall: `aes_deskview.HELD_AT_F2`), each case at an arrival of a flipped routine a Tier 3 row (`ROWS`).
 
 How a case is taken, run and held is the group's (`aes_deskwin.py`; `test_desk_win.py` says it whole): an arrival of
 a chain of the hands, the routine's arguments read off its caller's frame; a row that switches where the routine
@@ -19,8 +20,10 @@ from harness import addrs
 
 import aes
 import aes_deskbind as db
+import aes_event
 import aes_deskview as v
 import aes_deskwin as w
+import aes_switching
 import case
 import layouts
 
@@ -196,16 +199,138 @@ def test_the_answers_that_are_not_the_rom_s_are_counted_by_name():
     assert Counter(BY_LABEL[name].name in VOID_IN_C for name in BY_LABEL)[True] == 33
 
 
-# ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------------
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_one(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every core of the unit
-    linked; and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core."""
-    assert not db.bound_referrers(blob, v.UNIT_L)
+# ---- FLIPPED (band 6 slice F2, group G1) -----------------------------------------------------------------------------------------
+FLIPPED = tuple(name for name in v.UNIT_L if name not in v.HELD_AT_F2)
 
 
-def test_the_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
-    """...the generator's verdict for each of unit L's is THE ROM'S, and no registered row is one of theirs."""
-    assert w.verdicts_not_the_rom_s(v.UNIT_L) == (set(), [])
+def test_each_flipped_routine_s_thunk_calls_its_core_and_nothing_outside_the_unbound_desk_refers_to_a_held_core(blob):
+    """THE FLIP: every flipped routine's core CALLED BY ITS OWN THUNK of the table — and the desk's one unbound pin holds
+    for the cores still held, the unit's three among them."""
+    assert not w.thunks_not_calling_their_core(blob, FLIPPED)
+    assert not db.bound_referrers(blob, v.HELD_AT_F2)
+
+
+def test_the_table_s_entries_are_the_flipped_routines_thunks_and_the_held_ones_the_rom_s():
+    """...the generator's verdict for each of the fourteen flipped is OURS, THROUGH ITS THUNK; the three held THE ROM'S."""
+    assert w.table_verdicts(v.UNIT_L) == w.flipped_verdicts(v.UNIT_L, v.HELD_AT_F2)
+    assert set(v.UNIT_L) & set(w._linef_table().LINKED_AND_NOT_FLIPPED) == set(v.HELD_AT_F2)
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS (`test_desk_win.py` says how: `aes_deskwin.register_row`) -------------------------------------
+# win_top's two traps (and win_ontop's at its text arrival) answered by band 5's recording trap (`aes_deskwin.ROW_SCRIPTED`).
+# MEASURED: no row of the unit's makes a call of the event layer's door (none of its bindings' AES routines waits):
+# every one a row that switches with no door. The X flag (each row's blob differential at `$8995`): win_sinfo's two
+# (the wind_set binding's yield after the C's own arithmetic, unit D's kind).
+DOOR_USERS = frozenset()
+X_FLAG_DIFFERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name == "AES_ROM_WIN_SINFO")
+ROWS = {name: w.register_row(BY_LABEL[name], BY_LABEL[name].name in v.YIELDS_L, door_user=name in DOOR_USERS,
+                             x_flag_differs=name in X_FLAG_DIFFERS)
+        for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name in FLIPPED}
+
+# ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by each
+# blob's second differential (`aes_switching.measured_on`), from the rows as registered; re-pinned from a recorded run
+# (`tools/repin.py`), never by hand.
+DOOR_USERS_PRICED = {}
+DOOR_USERS_WHOLE_RUN = {}
+NO_DOOR_PREMISES = {
+    'aes_win_alloc, arrival 1 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e,), 36938, ()),
+    'aes_win_alloc, arrival 1 of window: A: opened again (two windows)':
+        ((), 0, 0xae5e, (0xae5e,), 37168, ()),
+    'aes_win_free, arrival 1 of window: File > Close Window':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_win_free, arrival 1 of window: its closer clicked':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_win_sinfo, arrival 1 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_win_sinfo, arrival 1 of file: File > Show Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_win_start, arrival 1 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_win_start, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_win_top, arrival 1 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_win_top, arrival 1 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+}
+NO_DOOR_PRICED = {
+    'aes_win_alloc, arrival 1 of A: File > Open':
+        ((7424, 12686), None, None, (0, 0, 0)),
+    'aes_win_alloc, arrival 1 of window: A: opened again (two windows)':
+        ((7544, 12986), None, None, (0, 0, 0)),
+    'aes_win_free, arrival 1 of window: File > Close Window':
+        ((10748, 17170), None, None, (0, 0, 0)),
+    'aes_win_free, arrival 1 of window: its closer clicked':
+        ((10748, 17170), None, None, (0, 0, 0)),
+    'aes_win_sinfo, arrival 1 of A: File > Open':
+        ((11654, 14998), None, None, (0, 0, 0)),
+    'aes_win_sinfo, arrival 1 of file: File > Show Info, Return':
+        ((11654, 14998), None, None, (0, 0, 0)),
+    'aes_win_start, arrival 1 of file: shown, a key at its end':
+        ((36306, 71660), None, None, (0, 0, 0)),
+    "aes_win_start, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        ((36306, 71660), None, None, (0, 0, 0)),
+    "aes_win_top, arrival 1 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((7938, 12858), None, None, (0, 0, 0)),
+    "aes_win_top, arrival 1 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((7938, 12858), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    'aes_win_alloc, arrival 1 of A: File > Open':
+        {"bench": (19448, 14498), "bench_shipped": (19448, 14906)},
+    'aes_win_alloc, arrival 1 of window: A: opened again (two windows)':
+        {"bench": (19748, 14618), "bench_shipped": (19748, 15026)},
+    'aes_win_free, arrival 1 of window: File > Close Window':
+        {"bench": (30694, 24644), "bench_shipped": (30694, 24992)},
+    'aes_win_free, arrival 1 of window: its closer clicked':
+        {"bench": (30694, 24644), "bench_shipped": (30694, 24992)},
+    'aes_win_sinfo, arrival 1 of A: File > Open':
+        {"bench": (21760, 17704), "bench_shipped": (21760, 18936)},
+    'aes_win_sinfo, arrival 1 of file: File > Show Info, Return':
+        {"bench": (21760, 17704), "bench_shipped": (21760, 18936)},
+    'aes_win_start, arrival 1 of file: shown, a key at its end':
+        {"bench": (105470, 75648), "bench_shipped": (105470, 72312)},
+    "aes_win_start, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        {"bench": (105470, 75648), "bench_shipped": (105470, 72312)},
+    "aes_win_top, arrival 1 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (20196, 15604), "bench_shipped": (20196, 15736)},
+    "aes_win_top, arrival 1 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (20196, 15604), "bench_shipped": (20196, 15736)},
+}
+
+
+def _registered_row(name):
+    """The registered switching row of that name."""
+    return aes_event.SWITCHING_ROWS[name].row
+
+
+def test_the_rows_are_the_cases_at_arrivals_of_the_flipped_routines_and_split_by_their_door():
+    """EVERY FLIPPED ROUTINE HAS A ROW; EVERY ROW THAT SWITCHES PINNED ONCE — a door user's in
+    `DOOR_USERS_*` (read by `test_tier3.py`), any other here; the X flag declared on exactly the rows above."""
+    assert {BY_LABEL[name].name for name in ROWS} == set(FLIPPED)
+    switching = {aes_switching.row_name(row): name for name, row in ROWS.items() if hasattr(row, "door")}
+    assert set(DOOR_USERS_PRICED) | set(NO_DOOR_PRICED) == set(switching) and not set(DOOR_USERS_PRICED) & set(NO_DOOR_PRICED)
+    assert set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == set(NO_DOOR_PREMISES)
+    assert {switching[row] for row in DOOR_USERS_PRICED} == set(DOOR_USERS)
+    assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS)
+    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (37, 10, 2)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*NO_DOOR_PREMISES[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES[name])
+    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, NO_DOOR_PRICED[name][3], NO_DOOR_WHOLE_RUN[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*NO_DOOR_PRICED[name]))
 
 
 # ==== BAND 6 WAVE 2 (group G3): THE UNIT'S LAST FIVE — the scrolls and the windows' rebuilds ===========================

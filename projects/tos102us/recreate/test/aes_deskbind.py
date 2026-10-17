@@ -105,10 +105,11 @@ SIGNATURES = {
 }
 BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
 # ---- band 6 slice F1 ---- THE THREE BINDINGS HELD WHEN THE UNIT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`), each because
-# its flip needs what the cut does not have (the slice's brief: such a routine stays held, reported):
-#   * appl_exit — at both its arrivals (the viewer's `file: shown`, a launch) the screen manager stands parked where no
+# its flip needs what the cut does not have (the slice's brief: such a routine stays held, reported) — TWO SINCE SLICE F2:
+#   * (appl_exit — at both its arrivals (the viewer's `file: shown`, a launch) the screen manager stands parked where no
 #     history of our build is known to leave it, so a row's takeover there is refused by name (`aes_takeover`): no row
-#     of it can be priced;
+#     of it can be priced. FLIPPED AT SLICE F2 AS ⚠️ VERIFIED-BUT-UNPRICED, the user's ruling of 2026-10-17:
+#     `VERIFIED_UNPRICED_AT_F2`, below);
 #   * evnt_multi — the desk parks in it, and its flip breaks TWO things, in this order (the F1 fix pass; both owed):
 #     (1) THE LIVE-FRAME STAGING REFUSES FIRST: ctlmgr's rows lay the desk's live frames as the ROM's binding leaves
 #     them (`aes_ctlmgr.lay_the_desk_s_live_frames`), and our C binding has no `link a6` — the desk's frame chain on
@@ -129,7 +130,14 @@ BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
 #     33 (shipped) bytes on the dispatcher's stack BELOW the registered drop (`$8b34..` / `$8b2a..`; by its words a
 #     BIOS trap's frame, PC `$fca7d4`), which the registrar derives only where the ROM's run stores. Both owed; Tier 1
 #     holds each case (the door child serves the walk).
-HELD_AT_F1 = (PREFIX + "APPL_EXIT", PREFIX + "EVNT_MULTI", PREFIX + "OBJC_DRAW")
+HELD_AT_F1 = (PREFIX + "EVNT_MULTI", PREFIX + "OBJC_DRAW")
+# ---- band 6 slice F2 (group G4) ---- A BINDING FLIPPED WITH NO ROW: ⚠️ VERIFIED-BUT-UNPRICED (the user's ruling of
+# 2026-10-17: a routine faithful at Tier 1 whose arrivals no row kind reaches — as crit_err's and gem_entry's), each with
+# why; Tier 1 holds its cases and the our-shore walk its flip (who-ran, the converse invariant).
+VERIFIED_UNPRICED_AT_F2 = {
+    PREFIX + "APPL_EXIT": "no row kind reaches its arrivals: at both (the viewer's `file: shown`, a launch) the screen manager "
+                          "stands parked where no history of our build is known to leave it — every row's takeover there is "
+                          "refused by name (`aes_takeover`)"}
 for _short, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(PREFIX + _short, _restype, (IMAGE, *_frame))
 
@@ -471,7 +479,10 @@ def unbound_closure(graph):
 # THE ONE CALL OF A HELD CORE FROM OUTSIDE THE UNBOUND DESK, DECLARED (band 6 slice B0, N1; the orchestrator's ruling
 # R4): rom_ram's desk arm calls ini_tree as the ROM's does — the ROM's desk reaches it on a bound machine, and a halt
 # there was a band-5 stand-in. GCC inlines the arm into `resource_part`: `{the referring function: the held cores}`.
-REFERRED_BY_BAND_5 = {"resource_part": ("aes_ini_tree",)}
+# EMPTY SINCE BAND 6 SLICE F2: ini_tree flipped (unit I, group G1) — no core the arm calls is held, so nothing is
+# exempted; `test_aes_rom_ram.py` holds the arm's call there, and the pin naming it were ini_tree held again.
+REFERRED_BY_BAND_5 = {}
+DESK_S_ARM, ITS_DESK_CALLEE = "resource_part", "aes_ini_tree"      # rom_ram's desk arm, and the desk core it calls
 
 
 def bound_referrers(blob, names):

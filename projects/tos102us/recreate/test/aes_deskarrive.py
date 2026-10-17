@@ -105,11 +105,11 @@ def label_of(arrived):
     return f"arrival {arrived.nth} of {arrived.chain!r} at {arrived.name}"
 
 
-def row_of(arrived, label, answered, at_idle=None, at_calls=None):
+def row_of(arrived, label, answered, at_idle=None, at_calls=None, pokes=None):
     """THE ROW THAT SWITCHES a case of a routine that yields is (`aes_event.woken_row`, its door bound, its C's tree
-    walks served), over the arrival's machine — its wait ended by `at_idle` / `at_calls` — its answer compared where
-    `answered`."""
-    pokes = machine_of(arrived)
+    walks served), over the arrival's machine (or `pokes`) — its wait ended by `at_idle` / `at_calls` — its answer
+    compared where `answered`."""
+    pokes = machine_of(arrived) if pokes is None else pokes
     return aes_event.woken_row(label, arrived.name, arrived.arguments, lambda: pokes, at_idle or {}, at_calls, objects=True,
                                answered=answered)
 
@@ -200,6 +200,68 @@ def tier_1(each, answered=True, **plain_kwargs):
     assert bool(the_rom_s.idles) == (each.wake is not None), f"{label(each)}: the ROM's run idles {the_rom_s.idles} time(s)"
     assert ran.entered and ran.entered[-1] == aes.SHELL_PD, f"{label(each)}: the run does not end in the desk's own process"
     return ran
+
+
+# ---- band 6 slice F2 (group G4): A FLIPPED ROUTINE'S ROWS ------------------------------------------------------------------
+# EVERY CASE AT AN ARRIVAL OF A FLIPPED ROUTINE, REGISTERED (the orchestrator's provisional ruling R6, unit D's at slice F1:
+# the ROM's arrival machine, taken over at the arrival — Tier 3 lays the blob and maps the registry's code slots at the
+# entry): a case that yields is A ROW THAT SWITCHES (`aes_event.register_woken`), its wake its own; one that does not, a
+# plain row (`aes.register`). Its machine is the arrival's megabyte whole but the harness's window
+# (`aes_desk.arrival_s_machine`: a row may poke no byte of a blob's span) — the Tier 1 case runs over the whole megabyte,
+# which the window check holds equal to it there. A LABELLED ARGUMENT CLASS (a `why`) stays Tier 1's.
+def row_machine_of(arrived):
+    """The arrival's megabyte as a ROW's pokes: whole but the harness's window, refused by name where it holds other bytes."""
+    return aes_desk.arrival_s_machine(arrived.boot.ram)
+
+
+def at_arrivals(cases):
+    """`{the case's name: the case}` of `cases`' cases at an arrival of their own (no argument class)."""
+    return {name: each for name, each in by_label(cases).items() if not each.why}
+
+
+def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=None, label_said=None):
+    """THE CASE `each` (at an arrival) REGISTERED: a plain row, or a row that switches — through its door where
+    `door` (a door user: its run arrives at an entry of the event layer's door), with no door else; the X flag
+    declared where `x_flag_differs`. `pokes`: the row's machine where the case lays a staging over the arrival's (a
+    scripted trap); `label_said`: the row's label where it says more than the case's (the staging). The row."""
+    arrived = arrival_of(each)
+    machine = pokes if pokes is not None else row_machine_of(arrived)
+    said = label_said or label(each)
+    answered = answered and vdi.ALCYON[each.name].restype is not None
+    if not each.yields:
+        return aes.register(said, each.name, arrived.arguments, machine, answer_compared=answered)
+    row = row_of(arrived, said, answered, pokes=machine, **WAKES.get(each.wake, {}))._replace(x_flag_differs=x_flag_differs)
+    return aes_event.register_woken(row if door else row._replace(door=None))
+
+
+# ---- FLIPPED (band 6 slice F2): the generator's verdict for each routine of a unit is ITS THUNK, its thunk calls its core ----
+def flipped(blob, names):
+    """THE FLIP PIN of the routines `names`, on `blob`: each core LINKED and CALLED BY ITS OWN THUNK of the table
+    (`linef_to_<core>`); each one's Line-F table entries OURS, THROUGH THAT THUNK (`linef_table`'s verdict); none held;
+    and the desk's one unbound pin (`aes_deskbind.bound_referrers`) holding for every core still held — no function
+    outside the unbound desk refers to one."""
+    import routines
+    import transcription
+    linef_table = _linef_table()
+    graph = transcription.call_graph(blob.elf)
+    for name in names:
+        core = routines.core_symbol(name)
+        assert core in graph.get(linef_table.THUNK_PREFIX + core, ()), f"{core}: no thunk of the table calls it"
+    ours = {entry_of(name): name for name in names}
+    verdicts = {ours[entry.target]: (entry.verdict, entry.symbol) for entry in linef_table.entries() if entry.target in ours}
+    assert verdicts == {name: (linef_table.OURS_THROUGH_A_THUNK, linef_table.thunk_symbol(name)) for name in names}
+    assert not set(names) & set(linef_table.LINKED_AND_NOT_FLIPPED)
+    assert not db.bound_referrers(blob, ()), "a function outside the unbound desk refers to a core still held"
+
+
+def rom_callers(name):
+    """`{the start of each routine (the AES map's inventory) holding a Line-F call word of `name`}` over the ROM's GEM text:
+    who calls it through the table on the ROM's shore — read off the image."""
+    import bisect
+    from harness import BASE_IMAGE
+    word, starts = aes.line_f_call_word(name), aes_desk.inventoried()
+    return {starts[bisect.bisect_right(starts, at) - 1] for at in range(*aes.AES_TEXT, aes.WORD_BYTES)
+            if case.word_in(BASE_IMAGE, at) == word}
 
 
 # ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------

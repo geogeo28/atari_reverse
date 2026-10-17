@@ -1,5 +1,6 @@
 """THE DESK'S ALERT AND ITS MESSAGE TO ITSELF (`src/desk/deskfun.c`; band 6 wave 1b, group G4, unit H): fun_alert
-`$fdfd58` and fun_msg `$fdfda6`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+`$fdfd58` and fun_msg `$fdfda6`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED: the
+Line-F table's entry for each is its thunk, and every case at an arrival is a Tier 3 row (`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskarrive.arrival`): a chain of the hands stopped at the routine's first
     instruction, the arguments read off the frame the desk's caller pushed. Where no chain makes the machine an arm
@@ -8,8 +9,9 @@
   * BOTH YIELD (each ends on a binding of unit D): every case is a row that switches, held through the companion,
     fun_alert's through its wake (the alert answered by Return).
   * D0 AT RETURN: both answer their binding's word — held to the ROM's D0.w on every case, no divergence.
-  * UNBOUND: no function of a blob but a routine held at Tier 1 refers to its cores; the Line-F table's entries stay
-    the ROM's; no registry names one.
+  * FLIPPED (band 6 slice F2): each core called by its own thunk of the table; no function outside the unbound desk
+    refers to a core still held. EVERY CASE AT AN ARRIVAL IS A ROW THAT SWITCHES THROUGH ITS DOOR (both end on a binding
+    whose AES routine waits: form_alert's, appl_write's), pinned for `test_tier3.py`'s door users.
 """
 import pytest
 
@@ -68,10 +70,45 @@ def test_both_answer_their_binding_s_word_which_five_instructions_read_of_fun_al
     assert {name: len(db.answer_readers(da.entry_of(name))) for name in fun.UNIT_H} == {fun.FUN_ALERT: 5, fun.FUN_MSG: 0}
 
 
-def test_the_unit_is_linked_and_unbound(blob):
-    """UNBOUND (`aes_deskarrive.unbound`): both cores linked, nothing of the blob but a routine held at Tier 1 refers to
-    them, their table entries are the ROM's, no registry names one."""
-    da.unbound(blob, fun.UNIT_H)
+def test_the_unit_is_flipped(blob):
+    da.flipped(blob, fun.UNIT_H)
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival a row that switches, a DOOR USER'S (MEASURED: fun_alert's
+# run arrives at form_alert's door calls, fun_msg's at appl_write's); the class stays Tier 1's. Their pins — DATA, measured
+# by the table's own measurement and by each blob's second differential from the rows as registered (`tools/repin.py`
+# re-pins them from a recorded run, never by hand) — are read by `test_tier3.py`'s door users.
+ROWS = {name: da.register_row(each) for name, each in da.at_arrivals(CASES).items()}
+DOOR_USERS_PRICED = {
+    "aes_desk_fun_alert, arrival 0 of A: File > Format, Return (the warning answered); Return at the first idle":
+        ((199694, 292828), (178958, 259048), 7, (0, 0, 0)),
+    "aes_desk_fun_alert, arrival 0 of file: File > Open (the Show / Print / Cancel alert); Return at the first idle":
+        ((192650, 287304), (171914, 253524), 7, (0, 0, 0)),
+    "aes_desk_fun_msg, arrival 0 of file: File > Show Info, Return":
+        ((9168, 14772), (4110, 5914), 1, (0, 0, 0)),
+    "aes_desk_fun_msg, arrival 0 of files: the program selected, File > Show Info, Return":
+        ((9168, 14772), (4110, 5914), 1, (0, 0, 0)),
+    "aes_desk_fun_msg, arrival 0 of window: View > Show as Text":
+        ((9168, 14772), (4110, 5914), 1, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN = {
+    "aes_desk_fun_alert, arrival 0 of A: File > Format, Return (the warning answered); Return at the first idle":
+        {"bench": (1730532, 1666256), "bench_shipped": (1730532, 1654282)},
+    "aes_desk_fun_alert, arrival 0 of file: File > Open (the Show / Print / Cancel alert); Return at the first idle":
+        {"bench": (1745930, 1677362), "bench_shipped": (1745930, 1669464)},
+    "aes_desk_fun_msg, arrival 0 of file: File > Show Info, Return":
+        {"bench": (21534, 17370), "bench_shipped": (21534, 16414)},
+    "aes_desk_fun_msg, arrival 0 of files: the program selected, File > Show Info, Return":
+        {"bench": (21534, 17370), "bench_shipped": (21534, 16414)},
+    "aes_desk_fun_msg, arrival 0 of window: View > Show as Text":
+        {"bench": (21534, 17370), "bench_shipped": (21534, 16414)},
+}
+
+
+def test_every_routine_of_the_unit_has_a_row_at_an_arrival_and_its_pins_are_the_rows():
+    import aes_switching
+    assert {row.name for row in ROWS.values()} == set(fun.UNIT_H) and len(ROWS) == ARRIVALS
+    assert {aes_switching.row_name(row) for row in ROWS.values()} == set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN)
 
 
 

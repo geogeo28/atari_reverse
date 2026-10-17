@@ -83,7 +83,7 @@ THUNKS_AT_F1 = 354
 # move from the ROM's to a thunk, none to native.)
 FLIPPED_AT_F2 = {
     # ---- band 6 slice F2, group G1 (units I, L) ----
-    "G1": (0, 0, 0),
+    "G1": (29, 29, 15),     # the 33 but do_wredraw, win_icalc, win_bldview, win_shwall (held); one entry and one thunk each
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     "G2": (0, 0, 0),
@@ -92,7 +92,7 @@ FLIPPED_AT_F2 = {
     "G3": (0, 0, 0),
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
-    "G4": (0, 0, 0),
+    "G4": (19, 19, 15),                 # unit C's ten, units H / E / F's eight, appl_exit; all entered but UNENTERED's four
     # ---- end of group G4's ----
 }
 ENTRIES_FLIPPED_AT_F2 = sum(entries for entries, _thunks, _entered in FLIPPED_AT_F2.values())
@@ -637,13 +637,21 @@ UNENTERED = {
         "RSRC_GADDR", "SHEL_GET", "SHEL_PUT", "SHEL_WRITE", "WAIT", "WIND_CALC", "WIND_CLOSE", "WIND_CREATE", "WIND_DELETE",
         "WIND_FIND", "WIND_GET", "WIND_OPEN", "WIND_SET", "WIND_UPDATE")},
     # ---- end of unit D's ----
-    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- band 6 slice F2, group G1 (units I, L) ---- THE FOURTEEN FLIPPED THAT YIELD (every case of each a row that
+    # switches: unit D's kind, entered on our shore instead — `test_aes_desk_ours.py`)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
+        "OBJ_INIT", "OBJ_IALLOC", "PRO_EXEC", "DESK_RSRC_LOAD", "INI_TREE", "INI_STR", "DO_XYFIX", "ZOOM_CLOSED", "DO_WFULL",
+        "WIN_START", "WIN_ALLOC", "WIN_FREE", "WIN_TOP", "WIN_SINFO")},
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
     # ---- end of group G3's ----
-    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- the three that yield on every case (rows that switch: hide_dial,
+    # fun_alert, fun_msg), entered on our shore instead (`test_aes_desk_ours.py`); and appl_exit, flipped with NO ROW
+    # (⚠️ verified-but-unpriced: `aes_deskbind.VERIFIED_UNPRICED_AT_F2`), its Tier 1 cases a scheduled run's
+    **{f"AES_ROM_DESK_{routine}": [INTERRUPTED] for routine in ("HIDE_DIAL", "FUN_ALERT", "FUN_MSG")},
+    "AES_ROM_DESK_APPL_EXIT": [NO_CASE],
     # ---- end of group G4's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
@@ -842,10 +850,11 @@ def test_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_the_rom_s_sc
 # 1b adds one line per unit inside its own block, so no two authors edit one line; the pin is their sum.
 LINKED_AND_NOT_FLIPPED_UNITS = {
     # (unit D's forty bindings and desk_wait, unit O's eighteen: FLIPPED at band 6 slice F1 — but three bindings held)
-    ("aes_deskbind", "HELD_AT_F1"): 3,   # unit D: appl_exit, evnt_multi, objc_draw, held (`aes_deskbind.HELD_AT_F1` says why)
+    ("aes_deskbind", "HELD_AT_F1"): 2,   # unit D: evnt_multi, objc_draw, held (`aes_deskbind.HELD_AT_F1` says why; appl_exit flipped at F2)
     # ---- band 6 wave 1b, group G1 (units I, L) ----
-    ("aes_deskwin", "UNIT_I"): 16,       # unit I: the window objects, the program leaves, the window leaves
-    ("aes_deskview", "UNIT_L"): 17,      # unit L: the view, the window list, the layout leaves
+    # (units I and L FLIPPED at band 6 slice F2 — but four held, each until its C callees are: `HELD_AT_F2` says why)
+    ("aes_deskwin", "HELD_AT_F2"): 1,    # unit I: do_wredraw (the objc_draw binding)
+    ("aes_deskview", "HELD_AT_F2"): 3,   # unit L: win_icalc (app_afind), win_bldview (win_icalc), win_shwall (fun_msg)
     # ---- end of group G1's ----
     # ---- band 6 wave 1b, group G2 (units A, K, J) ----
     ("aes_deskapp", "UNIT_A"): 11,       # unit A
@@ -857,10 +866,7 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     ("aes_deskfpd", "UNIT_G"): 16,       # unit G: the path and file nodes
     # ---- end of group G3's ----
     # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
-    ("aes_deskdir", "UNIT_C"): 14,
-    ("aes_deskfun", "UNIT_H"): 2,
-    ("aes_deskusr", "UNIT_E"): 4,
-    ("aes_deskinf", "UNIT_F"): 2,
+    ("aes_deskdir", "UNIT_C_HELD_AT_F2"): 4,     # unit C's dialog drawers (objc_draw's callers); units H, E, F and ten of C flipped at F2
     # ---- end of group G4's ----
     # ---- band 6 wave 2: each unit's WAVE-2 list (`UNIT_<X>_WAVE_2`, its own block of the unit's module) and count,
     # one line per unit inside its group's block — wave 1b's lines above stay as they are ----

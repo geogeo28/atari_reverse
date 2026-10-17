@@ -167,7 +167,7 @@ RAN_IN = {desk.LMUL: "file: shown, a key at its end"}      # (unit O's five span
 # F2, each group's own count on a line inside its own block (no two authors edit one line; the pin is the sum)
 BAND_6_FLIPPED_AT_F2 = {
     # ---- band 6 slice F2, group G1 (units I, L) ----
-    "G1": 0,
+    "G1": 29,               # the 33 but do_wredraw, win_icalc, win_bldview, win_shwall
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     "G2": 0,
@@ -176,7 +176,7 @@ BAND_6_FLIPPED_AT_F2 = {
     "G3": 0,
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
-    "G4": 0,
+    "G4": 19,                           # unit C's ten, units H, E, F (eight), and unit D's appl_exit (⚠️ unpriced)
     # ---- end of group G4's ----
 }
 BAND_6_FLIPPED = 56 + sum(BAND_6_FLIPPED_AT_F2.values())
@@ -202,13 +202,30 @@ def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text
 NOT_ENTERED_ON_OUR_SHORE = {
     "AES_ROM_GSX_HARDCOPY": "unit O's: no chain answers Print Screen's alert (its chain raises it and stops), so nothing calls "
                             "the hardcopy — Tier 1 holds it over an argument class (`test_desk_leaves.py`)",
-    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- band 6 slice F2, group G1 (units I, L) ---- EVERY ROM CALLER OF EACH FLIPPED (read off the GEM text:
+    # `aes_deskbind.calls_of`), so on our shore it is called by our C alone, never through the table — three of the
+    # group's own and seven of unit D's bindings, whose last ROM callers were the group's
+    **{name: f"its every ROM caller flipped at band 6 slice F2 (group G1: {callers}): called by our C alone on our shore" for name, callers in {
+        "AES_ROM_OBJ_INIT": "win_start", "AES_ROM_OBJ_WALLOC": "win_alloc", "AES_ROM_WIN_CNT": "win_ith",
+        "AES_ROM_DESK_GRAF_SHRINKBOX": "zoom_closed, do_wfull", "AES_ROM_DESK_OBJC_ADD": "obj_init, obj_ialloc",
+        "AES_ROM_DESK_OBJC_ORDER": "win_free, win_top", "AES_ROM_DESK_SHEL_WRITE": "pro_exec",
+        "AES_ROM_DESK_WIND_CLOSE": "zoom_closed", "AES_ROM_DESK_WIND_CREATE": "win_alloc",
+        "AES_ROM_DESK_WIND_DELETE": "win_free"}.items()},
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ...CALLED BY OUR C ALONE: every Line-F call word of the routine in the ROM's GEM text lies in a routine G4 flipped at
+    # slice F2 (read off the image), and a C caller calls the core, not the table's thunk. Tier 1 and the rows hold each.
+    **{f"AES_ROM_{routine}": f"its every call word in the ROM's text lies in {callers}, flipped at slice F2 (group G4): only "
+                             f"our C calls it" for routine, callers in (
+        ("DESK_MY_ITOA", "fmt_time and fmt_date"), ("DESK_FMT_TIME", "ob_sfcb and inf_dttmsz"),
+        ("DESK_FMT_DATE", "ob_sfcb and inf_dttmsz"), ("DESK_PATH_PART", "par_chk"),
+        ("DESK_APPL_WRITE", "fun_msg (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
+        ("DESK_FORM_ERROR", "d_errmsg (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
+        ("DOS_DELETE", "d_dofdel (unit O's glue entry: its verified rows enter its thunk through the table, N15)"))},
     # ---- end of group G4's ----
 }
 
@@ -255,9 +272,8 @@ INI_TREE = 0xfe0b6e
 ROM_RAM_S_ARM_RETURN = 0xfee74a         # rom_ram's desk arm, past its Line-F call of ini_tree: `addq.l #4,sp` (8 cycles)
 ADDQ_L_AN_CYCLES = 8
 RUN_UNDER_BANDS_0_TO_5 = {
-    # ---- band 6 slice F2, group G1 (units I, L): ini_tree is unit I's — this entry leaves at its flip ----
-    INI_TREE: Under("rom_ram's desk arm (the desktop sized, deskmain's second pass): ini_tree, the desk's tree 0", 158,
-                    ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES),
+    # ---- band 6 slice F2, group G1 (units I, L): ini_tree `$fe0b6e` LEFT THE CLASS AT ITS FLIP (rom_ram's desk arm called it
+    # on the ROM's shore alone, 158 a pass; ours now through the table on both: held by who-ran) ----
     # ---- end of group G1's ----
 }
 # TWO LEFT THE CLASS AT THEIR FLIP (band 6 slice F1): dos_write `$fe3a7c`, unit O's — band 5's dos_read `$fe3a78` entered
@@ -461,7 +477,16 @@ def converse_broken(ours, rom):
     return broken
 
 
-def test_the_converse_reader_holds_a_differing_routine_and_the_class_one_pass_a_caller_s_run_exactly():
+# THE READER'S OWN PROBE: the class's last entry, ini_tree's under rom_ram's desk arm (it LEFT the class at its flip,
+# band 6 slice F2) — laid back into the class, and ini_tree made still the ROM's, for the reader's test alone.
+INI_TREE_UNDER_ROM_RAM = Under("rom_ram's desk arm (the desktop sized, deskmain's second pass): ini_tree, the desk's tree 0",
+                               158, ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)
+
+
+def test_the_converse_reader_holds_a_differing_routine_and_the_class_one_pass_a_caller_s_run_exactly(monkeypatch):
+    monkeypatch.setitem(RUN_UNDER_BANDS_0_TO_5, INI_TREE, INI_TREE_UNDER_ROM_RAM)
+    still = desk.still_the_rom_s() | {INI_TREE}
+    monkeypatch.setattr(desk, "still_the_rom_s", lambda blob=None: still)
     one, two = desk.Profile(((0xfdb014, 10),), 0, 0), desk.Profile(((0xfdb014, 12),), 0, 0)
     assert converse_broken(one, one) == [] and converse_broken(one, two) == [("0xfdb014", 10, 12)]
     caller = (ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)
@@ -557,32 +582,32 @@ DEPTHS = {
     'A: Options > Install Disk Drive, Remove pressed': (1206, 668, 254, 0),
     "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1206, 668, 254, 0),
     'A: File > Open': (1532, 668, 254, 0),
-    'A: File > Format, Return (the warning answered)': (1072, 668, 254, 0),
+    'A: File > Format, Return (the warning answered)': (1054, 668, 254, 0),
     'drive A: dragged to the trash, Return': (1216, 0, 254, 0),
     'a rubber box on the desktop, round the trash': (1110, 0, 254, 0),
     'A: opened': (1518, 0, 254, 0),
     'window: View > Show as Text': (1064, 750, 254, 458),
     'window: View > Sort by Size': (1064, 750, 254, 0),
-    'window: File > Close Window': (1378, 668, 254, 0),
-    'window: its closer clicked': (1346, 520, 260, 0),
-    'window: its fuller clicked': (1152, 520, 260, 0),
+    'window: File > Close Window': (1414, 668, 254, 0),
+    'window: its closer clicked': (1382, 520, 260, 0),
+    'window: its fuller clicked': (1180, 520, 260, 0),
     'window: A: opened again (two windows)': (1518, 0, 260, 0),
     'file: selected': (1072, 0, 254, 0),
     'file: File > Show Info, Return': (1318, 668, 254, 0),
     "file: File > Show Info, Backspace, 'A', Return (renamed)": (1318, 668, 254, 0),
     'file: File > Show Info, Read-Only pressed, Return': (1318, 668, 254, 0),
-    'file: read-only, dragged to the trash, OK — access denied, Return': (1256, 0, 254, 0),
-    'file: File > Open (the Show / Print / Cancel alert)': (1292, 668, 254, 0),
+    'file: read-only, dragged to the trash, OK — access denied, Return': (1280, 0, 254, 0),
+    'file: File > Open (the Show / Print / Cancel alert)': (1274, 668, 254, 0),
     'file: shown, a key at its end': (1442, 308, 240, 0),
-    'file: double-clicked (the alert)': (1278, 0, 254, 0),
-    "file: dragged to the trash, Return (Cancel, the dialog's default)": (1256, 0, 254, 0),
-    'file: dragged to the trash, OK': (1256, 0, 254, 0),
+    'file: double-clicked (the alert)': (1260, 0, 254, 0),
+    "file: dragged to the trash, Return (Cancel, the dialog's default)": (1280, 0, 254, 0),
+    'file: dragged to the trash, OK': (1280, 0, 254, 0),
     "folder: File > New Folder, 'A', Return": (1228, 668, 254, 0),
-    'folder: the file dragged onto it, Return': (1280, 0, 254, 0),
+    'folder: the file dragged onto it, Return': (1304, 0, 254, 0),
     'folder: opened': (1414, 0, 254, 0),
     'folder: File > Close': (1458, 668, 254, 0),
     'folder: selected, File > Show Info, Return': (1354, 668, 254, 0),
-    'folder: dragged to the trash, OK': (1256, 0, 254, 0),
+    'folder: dragged to the trash, OK': (1280, 0, 254, 0),
     'text view: A: opened': (1518, 0, 254, 458),
     'text view: Options > Save Desktop, Return': (1210, 668, 254, 458),
     'files: A: opened': (1518, 0, 254, 0),
@@ -590,14 +615,14 @@ DEPTHS = {
     "files: the window's vertical bar clicked under its slider (a page)": (570, 706, 260, 0),
     "files: the window's right arrow clicked": (1102, 404, 260, 0),
     "files: the long file shown, a blank at each page's end and at its end": (1442, 668, 254, 0),
-    'files: the long file dragged onto the folder, Return': (1280, 0, 254, 0),
-    'files: the folder (not empty) dragged to the trash, OK': (1256, 0, 254, 0),
-    'files: the window made full': (1152, 520, 260, 0),
+    'files: the long file dragged onto the folder, Return': (1304, 0, 254, 0),
+    'files: the folder (not empty) dragged to the trash, OK': (1280, 0, 254, 0),
+    'files: the window made full': (1180, 520, 260, 0),
     'files: the program selected, File > Show Info, Return': (1318, 668, 254, 0),
     'files: the program selected, Options > Install Application, Return': (1294, 668, 254, 0),
     'files: View > Show as Text': (1064, 750, 254, 458),
-    'window: its fuller clicked again (back to its size)': (1152, 520, 260, 0),
-    'files: the right arrow clicked, then the window made full': (1152, 520, 260, 0),
+    'window: its fuller clicked again (back to its size)': (1180, 520, 260, 0),
+    'files: the right arrow clicked, then the window made full': (1180, 520, 260, 0),
     'files: the right arrow clicked, then View > Sort by Size': (1064, 750, 254, 0),
     'window: View > Show as Icons (the view it has)': (1064, 750, 254, 0),
     'window: Options > Save Desktop, Return': (1210, 668, 254, 0),
@@ -608,25 +633,25 @@ DEPTHS = {
     'files: View > Sort by Size': (1064, 750, 254, 0),
     'files: View > Sort by Date': (1064, 750, 254, 0),
     'files: View > Sort by Type': (1064, 750, 254, 0),
-    'folder: the file dragged onto it again, Return — the name conflict, Return': (1280, 0, 254, 0),
-    "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1256, 0, 254, 0),
-    'folders: B dragged onto A, Return': (1280, 0, 254, 0),
-    'folders: A (holding B) dragged to the trash, OK': (1256, 0, 254, 0),
+    'folder: the file dragged onto it again, Return — the name conflict, Return': (1304, 0, 254, 0),
+    "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1280, 0, 254, 0),
+    'folders: B dragged onto A, Return': (1304, 0, 254, 0),
+    'folders: A (holding B) dragged to the trash, OK': (1280, 0, 254, 0),
     'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1174, 668, 254, 0),
-    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1280, 0, 254, 0),
+    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1304, 0, 254, 0),
     "files: View > Show as Text, the long file's line clicked": (924, 0, 254, 458),
     'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1174, 668, 254, 0),
     'folder: deletes unconfirmed — the file dragged to the trash': (1216, 0, 254, 0),
     'folder: deletes unconfirmed — the folder dragged to the trash': (1216, 0, 254, 0),
-    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1256, 0, 254, 0),
+    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1280, 0, 254, 0),
     'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1342, 668, 260, 0),
-    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1280, 668, 254, 0),
+    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1304, 668, 254, 0),
     'A: opened, drive A: dragged into its window, Return': (1168, 0, 260, 0),
     'A: opened, the trash dragged into its window, Return': (1072, 0, 260, 0),
     'drive A: dragged onto drive B:, Return': (1216, 0, 254, 0),
     'the trash dragged onto drive A:, Return': (1216, 0, 254, 0),
-    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1256, 0, 254, 0),
-    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1194, 668, 254, 0),
+    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1280, 0, 254, 0),
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1218, 668, 254, 0),
     'file: dragged to the trash, OK — then drive A: dragged into its window': (1184, 0, 260, 0),
     'files: the right arrow clicked, then the left arrow clicked': (1102, 404, 260, 0),
     "files: the window's sizer pulled up and left (smaller)": (1074, 650, 260, 0),
@@ -636,15 +661,15 @@ DEPTHS = {
     "files: the window's up arrow gadget clicked (a row)": (570, 404, 260, 0),
     "files: the window's horizontal slider dragged right": (1110, 706, 260, 0),
     'window: Esc typed (the top window read again)': (1048, 0, 240, 0),
-    'two windows: File > Close Window (one left on top)': (1382, 668, 254, 0),
+    'two windows: File > Close Window (one left on top)': (1418, 668, 254, 0),
     'files: the window sized smaller, then its right arrow clicked': (1102, 404, 260, 0),
     'files: the right arrow clicked, then the long file shown': (1442, 668, 254, 0),
     'files: View > Sort by Size, then the long file shown': (1442, 668, 254, 0),
-    "files: View > Show as Text, then the long file's line shown": (1292, 668, 254, 458),
+    "files: View > Show as Text, then the long file's line shown": (1290, 668, 254, 458),
     "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1228, 668, 254, 0),
     'two windows: View > Show as Text': (1064, 750, 254, 458),
     'files: a fifth entry, then the down arrow gadget clicked (a row)': (570, 404, 260, 0),
-    "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1256, 0, 254, 458),
+    "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1280, 0, 254, 458),
     'text view: drive A: dragged to a bare spot of the desktop': (1080, 0, 254, 0),
     "A: File > Format, the warning's OK (the FORMAT dialog)": (1222, 668, 254, 0),
     'A: File > Format, OK, EXIT clicked': (890, 308, 254, 0),

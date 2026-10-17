@@ -135,10 +135,11 @@ ENTERED_BY_OURS_ALONE = {
 # at band 6 slice F1.)
 LINKED_AND_NOT_FLIPPED = {}
 # ---- unit D: FLIPPED at band 6 slice F1 — the desk's forty bindings and desk_wait, each thunked, BUT THREE HELD (the slice's
-# brief holds back a routine whose flip needs what the cut does not have; `aes_deskbind.HELD_AT_F1` says each) ----
+# brief holds back a routine whose flip needs what the cut does not have; `aes_deskbind.HELD_AT_F1` says each) — TWO since
+# band 6 slice F2 ----
+# (appl_exit, held at F1 for its price alone, FLIPPED at band 6 slice F2 as ⚠️ VERIFIED-BUT-UNPRICED — the user's ruling of
+# 2026-10-17: no row kind reaches its arrivals, whose screen manager stands where no history of ours reaches.)
 LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_DESK_APPL_EXIT": "unit D: appl_exit, held at band 6 slice F1 — no row of it can be priced: its arrivals' screen "
-                              "manager stands where no history of ours reaches",
     "AES_ROM_DESK_EVNT_MULTI": "unit D: evnt_multi, held at band 6 slice F1 — flipped, ctlmgr's live-frame staging refuses "
                                "first (our C binding has no `link a6`: the desk's frame chain differs at $a288 / $a2bc), "
                                "and behind it the answer words it copies out for events that did not occur ($a34e "
@@ -154,14 +155,16 @@ LINKED_AND_NOT_FLIPPED.update({
 # ones it holds there with the reason it holds them — no group edits another's block; `src/aes/lineftable.S` is then
 # made again by this generator, never merged by hand.)
 # ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit I: the desk's window objects and program leaves, held at Tier 1 at its arrivals"
-                               for routine in ("OBJ_INIT", "OBJ_WALLOC", "OBJ_WFREE", "OBJ_IALLOC", "PRO_CHDIR", "PRO_CMD", "PRO_EXEC",
-                                               "DESK_RSRC_LOAD", "INI_TREE", "INI_STR", "DO_WREDRAW", "GET_XYWH", "GET_SPEC", "DO_XYFIX",
-                                               "ZOOM_CLOSED", "DO_WFULL")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit L: the desk's view and its layout leaves, held at Tier 1 at its arrivals"
-                               for routine in ("WIN_VIEW", "WIN_START", "WIN_ALLOC", "WIN_FREE", "WIN_FIND", "WIN_TOP", "WIN_ONTOP",
-                                               "WIN_CNT", "WIN_ITH", "WIN_OCALC", "WIN_ICALC", "WIN_BLDVIEW", "WIN_SHWALL", "WIN_ISEL",
-                                               "WIN_INAME", "WIN_SINFO", "WIN_SNAME")})
+# FLIPPED at band 6 slice F2 (stage 1) but four: a routine flips once every C callee of it is flipped (the cut's rule —
+# flipped alone, a caller of a held core breaks the converse invariant and the unbound pin), so each of these waits for
+# its callee's slice (`aes_deskwin.HELD_AT_F2`, `aes_deskview.HELD_AT_F2` say the same).
+LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WREDRAW": "unit I: do_wredraw, held at band 6 slice F2 — its C calls the objc_draw "
+                                                     "binding, held at slice F1 (F2c, after H2)"})
+LINKED_AND_NOT_FLIPPED.update({
+    "AES_ROM_WIN_ICALC": "unit L: win_icalc, held at band 6 slice F2 — its C calls app_afind, group G3's (F2b)",
+    "AES_ROM_WIN_BLDVIEW": "unit L: win_bldview, held at band 6 slice F2 — its C calls win_icalc, held (F2b)",
+    "AES_ROM_WIN_SHWALL": "unit L: win_shwall, held at band 6 slice F2 only because the groups flipped in parallel — its C "
+                          "callees (win_ith, the wind_get binding, fun_msg) are all flipped since stage 1 (F2b flips it)"})
 # ---- end of group G1's ----
 # ---- band 6 wave 1b, group G2 (units A `src/desk/deskapp.c`, K `src/desk/desktop.c`, J `src/desk/desksupp.c`) ----
 LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit A: the desk's application list, held at Tier 1 at its arrivals" for routine in (
@@ -180,15 +183,13 @@ LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit G: a path or file nod
     "PN_ALLOC", "PN_FREE", "PN_OPEN", "PN_FCOMP", "PN_COMP", "PN_SORT")})
 # ---- end of group G3's ----
 # ---- band 6 wave 1b, group G4 (units C `src/desk/deskdir.c`, H `deskfun.c`, E `deskusr.c`, F `deskinf.c`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit C: the copy engine's helpers, held at Tier 1 at their arrivals" for routine in (
-    "DRAW_DIAL", "DO_NAMECON", "HIDE_DIAL", "SHOW_DIAL", "DRAW_FLD", "ADD_PATH", "SUB_PATH", "ADD_FNAME", "DEL_FNAME", "GET_FNAME",
-    "D_ERRMSG", "D_DOFDEL", "PATH_PART", "PAR_CHK")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit H: the desk's alert and its message to itself, held at Tier 1 at their arrivals"
-                               for routine in ("FUN_ALERT", "FUN_MSG")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit E: the text view's line and its formatters, held at Tier 1 at their arrivals"
-                               for routine in ("MY_ITOA", "FMT_TIME", "FMT_DATE", "OB_SFCB")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit F: an info dialog's fields, held at Tier 1 at their arrivals"
-                               for routine in ("INF_FIELD", "INF_DTTMSZ")})
+# (FLIPPED at band 6 slice F2, stage 1: unit C's ten others, units H, E and F whole — eighteen. HELD, unit C's four
+# below: each calls unit D's objc_draw, still the ROM's (`aes_deskbind.HELD_AT_F1`), or a routine that does — a flipped
+# routine whose C calls a held core is a bound referrer of it (`aes_deskbind.bound_referrers`) and breaks the converse
+# invariant on our shore; F2c's, after the harness slice H2.)
+LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit C: a dialog's drawing, held at band 6 slice F2 — its C calls unit D's "
+                               "objc_draw (held) or a routine that does: flipped, it would be a bound referrer of a held core"
+                               for routine in ("DRAW_DIAL", "DO_NAMECON", "SHOW_DIAL", "DRAW_FLD")})
 # ---- end of group G4's ----
 # ---- end of band 6 wave 1b's ----
 # ---- band 6 wave 2: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----

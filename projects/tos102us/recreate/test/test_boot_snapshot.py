@@ -312,6 +312,14 @@ import test_aes_gemstart                                    # noqa: E402,F401  (
 import test_aes_ourboot                                     # noqa: E402,F401  (the build's own start-up: the our-boot's stretches)
 import test_desk_leaves                                     # noqa: E402,F401  (band 6 unit O, flipped: its rows, trp13's `.S` rows)
 import test_desk_bind                                       # noqa: E402,F401  (band 6 unit D, flipped: its rows at the hands' arrivals)
+import test_desk_win                                        # noqa: E402,F401  (band 6 unit I, flipped at slice F2: its rows at the hands' arrivals)
+import test_desk_view                                       # noqa: E402,F401  (band 6 unit L, flipped at slice F2: its rows at the hands' arrivals)
+# ---- band 6 slice F2, group G4 (units C, H, E, F, flipped: their rows at the hands' arrivals) ----
+import test_desk_dir                                        # noqa: E402,F401
+import test_desk_fun                                        # noqa: E402,F401
+import test_desk_usr                                        # noqa: E402,F401
+import test_desk_inf                                        # noqa: E402,F401
+# ---- end of group G4's ----
 import test_aes_gemsuper                                   # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 

@@ -75,12 +75,15 @@ import test_aes_all_run                                    # noqa: E402  (all_ru
 import test_aes_gemctrl                                    # noqa: E402  (the screen manager's handlers' rows, pinned there)
 import test_desk_bind                                      # noqa: E402  (band 6 unit D's bindings' rows, pinned there)
 # ---- band 6 slice F2, group G1 (units I, L): its batteries whose door users' rows are pinned there ----
+import test_desk_win                                       # noqa: E402  (unit I's rows: do_wfull's and zoom_closed's door users)
 # ---- end of group G1's ----
 # ---- band 6 slice F2, group G2 (units A, K, J): its batteries whose door users' rows are pinned there ----
 # ---- end of group G2's ----
 # ---- band 6 slice F2, group G3 (units B, G): its batteries whose door users' rows are pinned there ----
 # ---- end of group G3's ----
 # ---- band 6 slice F2, group G4 (units C, H, E, F): its batteries whose door users' rows are pinned there ----
+import test_desk_dir                                       # noqa: E402  (unit C: d_errmsg's alert through form_error's door)
+import test_desk_fun                                       # noqa: E402  (unit H: fun_alert's and fun_msg's rows)
 # ---- end of group G4's ----
 import test_boot_snapshot                                  # noqa: E402
 
@@ -3469,7 +3472,7 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (257418, 220594), SHIPPED_BLOB: (257418, 217614)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
         BENCH_BLOB: (144852, 124532), SHIPPED_BLOB: (144852, 123758)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 553450), SHIPPED_BLOB: (639424, 552882)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 552952), SHIPPED_BLOB: (639424, 552384)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
@@ -3511,13 +3514,18 @@ DOOR_USERS_PRICED.update(test_desk_bind.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_bind.DOOR_USERS_WHOLE_RUN)
 # ...and, since band 6 slice F2, each wave-1b group's (its batteries' `DOOR_USERS_PRICED` / `DOOR_USERS_WHOLE_RUN`, imported
 # at this module's top by the group), one block a group:
-# ---- band 6 slice F2, group G1 (units I, L) ----
+# ---- band 6 slice F2, group G1 (units I, L) ---- (unit L's rows make no door call: no door user of its own)
+DOOR_USERS_PRICED.update(test_desk_win.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_win.DOOR_USERS_WHOLE_RUN)
 # ---- end of group G1's ----
 # ---- band 6 slice F2, group G2 (units A, K, J) ----
 # ---- end of group G2's ----
 # ---- band 6 slice F2, group G3 (units B, G) ----
 # ---- end of group G3's ----
 # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+for _battery in (test_desk_dir, test_desk_fun):
+    DOOR_USERS_PRICED.update(_battery.DOOR_USERS_PRICED)
+    DOOR_USERS_WHOLE_RUN.update(_battery.DOOR_USERS_WHOLE_RUN)
 # ---- end of group G4's ----
 
 

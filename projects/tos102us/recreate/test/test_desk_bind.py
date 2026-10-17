@@ -1,7 +1,8 @@
 """THE DESK'S AES BINDINGS (`src/desk/deskbind.c`; band 6 wave 1a, unit D): the forty routines `$fddde6..$fde4ff` and
 desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F1, FLIPPED but one: the
-Line-F table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (appl_exit, evnt_multi and
-objc_draw held: `aes_deskbind.HELD_AT_F1`).
+Line-F table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (evnt_multi and objc_draw held:
+`aes_deskbind.HELD_AT_F1`; appl_exit, held at F1, flipped at slice F2 with no row — ⚠️ verified-but-unpriced,
+`aes_deskbind.VERIFIED_UNPRICED_AT_F2`).
 
     binding(arguments):  ret = the AES routine(the same, re-pushed);  dsptch();  return ret
 
@@ -422,8 +423,8 @@ FLIPPED = frozenset(routines.core_symbol(name) for name in db.BINDINGS if name n
 
 def test_each_flipped_binding_s_thunk_calls_its_core_and_nothing_outside_the_unbound_desk_refers_to_a_held_core(blob):
     """THE FLIP: every flipped binding's core linked and CALLED BY ITS OWN THUNK of the table (`linef_to_<core>`) — and
-    the desk's one unbound pin (`aes_deskbind.bound_referrers`) holds for the cores still held, the one held binding's
-    among them (appl_exit: no thunk, no function outside the unbound desk refers to it)."""
+    the desk's one unbound pin (`aes_deskbind.bound_referrers`) holds for the cores still held, the held bindings'
+    among them (no thunk, no function outside the unbound desk refers to one)."""
     graph = transcription.call_graph(blob.elf)
     for core in FLIPPED:
         assert core in graph[_linef_table().THUNK_PREFIX + core], f"{core}'s thunk does not call it"
@@ -502,6 +503,9 @@ NOT_A_ROW = {
        if BY_LABEL[name].short == "GRAF_RUBBOX" and BY_LABEL[name].wake in (LET_GO_AT_ONCE, BOX_GROWN)},
 }
 HELD = frozenset(name for name in AT_ITS_OWN_ARRIVAL if db.PREFIX + BY_LABEL[name].short in db.HELD_AT_F1)
+# ...and (band 6 slice F2) the cases at arrivals of a binding FLIPPED WITH NO ROW (`aes_deskbind.VERIFIED_UNPRICED_AT_F2`:
+# appl_exit's two, ⚠️ verified-but-unpriced by the user's ruling — its reason there).
+UNPRICED = frozenset(name for name in AT_ITS_OWN_ARRIVAL if db.PREFIX + BY_LABEL[name].short in db.VERIFIED_UNPRICED_AT_F2)
 # A DOOR USER'S ROW (`aes_switching.SwitchingRow.door`) is one whose run arrives at an entry of the event layer's door
 # — its call open across the switch, priced on two counts and pinned in `test_tier3.py`'s door users. MEASURED: the
 # eleven bindings below arrive there (their AES routine waits: a message, a button, a form, the screen's lock); the
@@ -524,15 +528,18 @@ def _registered(name):
     return aes_event.register_woken(_row_registered(name))
 
 
-ROWS = {name: _registered(name) for name in AT_ITS_OWN_ARRIVAL if name not in NOT_A_ROW and name not in HELD}
-ROWS_MADE = ARRIVALS - 4 - 13           # the 112 cases at arrivals less NOT_A_ROW's four and the held bindings' thirteen
+ROWS = {name: _registered(name) for name in AT_ITS_OWN_ARRIVAL if name not in NOT_A_ROW and name not in HELD | UNPRICED}
+ROWS_MADE = ARRIVALS - 4 - 11 - 2       # the 112 cases at arrivals less NOT_A_ROW's four, the held bindings' eleven, appl_exit's two
 
 
 def test_every_flipped_binding_has_a_row_at_an_arrival_and_every_other_case_at_an_arrival_is_one():
-    """EVERY FLIPPED BINDING HAS A ROW (each of its cases at an arrival but NOT_A_ROW's, by name); the held bindings
-    none (`aes_deskbind.HELD_AT_F1`); the X flag declared on exactly the rows above."""
-    rows = {name.split(", ", 1)[0] for name in (*(row[0] for row in aes.CASES), *aes_event.SWITCHING_ROWS)} & CORES
-    assert rows == FLIPPED and len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 4 and len(HELD) == 13
+    """EVERY FLIPPED BINDING HAS A ROW (each of its cases at an arrival but NOT_A_ROW's, by name) but the one flipped
+    with none (`aes_deskbind.VERIFIED_UNPRICED_AT_F2`: appl_exit, ⚠️ verified-but-unpriced); the held bindings none
+    (`aes_deskbind.HELD_AT_F1`); the X flag declared on exactly the rows above."""
+    rows = {name.split(", ", 1)[0] for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)} & CORES
+    unpriced = {routines.core_symbol(name) for name in db.VERIFIED_UNPRICED_AT_F2}
+    assert rows == FLIPPED - unpriced and unpriced <= FLIPPED
+    assert len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 4 and len(HELD) == 11 and len(UNPRICED) == 2
     assert len(X_FLAG_DIFFERS) == 10 and X_FLAG_DIFFERS <= set(ROWS)
 
 

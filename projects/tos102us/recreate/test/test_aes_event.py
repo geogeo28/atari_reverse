@@ -4712,12 +4712,17 @@ ROWS_THAT_SWITCH = {
     # band 6 slice F2: wave 1b's routines that yield through a binding of unit D — every row at an arrival of each,
     # one block a group
     # ---- band 6 slice F2, group G1 (units I, L) ----
+    # units I and L flipped (`test_desk_win.py`, `test_desk_view.py`): 32 rows that switch (3 door users', 29 with no door)
+    "aes_desk_rsrc_load": 2, "aes_do_wfull": 2, "aes_do_xyfix": 3, "aes_ini_str": 2, "aes_ini_tree": 3, "aes_obj_ialloc": 4,
+    "aes_obj_init": 2, "aes_pro_exec": 2, "aes_win_alloc": 2, "aes_win_free": 2, "aes_win_sinfo": 2, "aes_win_start": 2,
+    "aes_win_top": 2, "aes_zoom_closed": 2,
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
     # ---- end of group G3's ----
-    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- (`test_desk_dir.py`, `test_desk_fun.py`: 9, every one a door user's)
+    "aes_desk_d_errmsg": 1, "aes_desk_hide_dial": 3, "aes_desk_fun_alert": 2, "aes_desk_fun_msg": 3,
     # ---- end of group G4's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
@@ -4765,6 +4770,9 @@ BY_NATURE_CENSUS = {
                                                  "aes_desk_rsrc_gaddr": 2, "aes_desk_shel_write": 1, "aes_desk_wind_find": 3,
                                                  "aes_desk_wind_get": 1,
                                                  # ---- band 6 slice F2, group G1 (units I, L) ----
+                                                 # (`test_desk_win.X_FLAG_DIFFERS`, `test_desk_view.X_FLAG_DIFFERS`)
+                                                 "aes_desk_rsrc_load": 2, "aes_ini_str": 2, "aes_ini_tree": 3, "aes_pro_exec": 1,
+                                                 "aes_win_sinfo": 2,
                                                  # ---- end of group G1's ----
                                                  # ---- band 6 slice F2, group G2 (units A, K, J) ----
                                                  # ---- end of group G2's ----
@@ -5354,13 +5362,22 @@ SLOTS_HELD_WHERE_PARKED = {
     # ---- band 6 slice F2 (N14): wave 1b's routines that are door users, one block a group — what each holds where the
     # desk is parked (the group's frames held across a binding's wait: 1b's AES_DESK_WIN_FRAME, AES_DESK_VIEW_FRAME,
     # AES_APP_TRAN_BITBLK, G3's and G4's) ----
-    # ---- band 6 slice F2, group G1 (units I, L) ----
+    # ---- band 6 slice F2, group G1 (units I, L) ---- unit I's two door users (unit L has none): do_wfull's and zoom_closed's
+    # own frame (`AES_DESK_WIN_FRAME`) and the binding's they wait in (wind_set's, wind_close's: `AES_DESK_BIND_FRAME`)
+    "aes_do_wfull": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME"),
+    "aes_zoom_closed": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME"),
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
     # ---- end of group G3's ----
-    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
+    # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- d_errmsg and fun_alert under form_error's / form_alert's waits
+    # (the event layer's frames, as those bindings'), fun_msg its own message frame across appl_write's, and hide_dial
+    # its dialog's rectangle across form_dial's FINISH
+    "aes_desk_hide_dial": ("AES_DESK_DIR_RECT",),
+    "aes_desk_d_errmsg": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", "AES_FM_ERROR_CODE"),
+    "aes_desk_fun_alert": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_desk_fun_msg": ("AES_DESK_FUN_MSG",),
     # ---- end of group G4's ----
 }
 A_SLOT_PER_PROCESS = ", process "

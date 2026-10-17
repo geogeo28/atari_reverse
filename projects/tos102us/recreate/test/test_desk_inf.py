@@ -1,5 +1,6 @@
 """AN INFO DIALOG'S FIELDS (`src/desk/deskinf.c`; band 6 wave 1b, group G4, unit F): inf_field `$fdea5e` and inf_dttmsz
-`$fdea9a`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+`$fdea9a`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED: the Line-F table's entry
+for each is its thunk, and every case at an arrival is a Tier 3 row (`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskarrive.arrival`) of a Show Info — a drive's, a file's, a folder's, the
     program's: a name (fmt_str) and a number (merge_str's "%L") into fields, and a file's date, time and size. Never a
@@ -65,8 +66,17 @@ def test_the_answers_the_c_has_not_are_counted_and_read_by_no_caller():
     assert {name: db.answer_readers(da.entry_of(name)) for name in inf.UNIT_F} == {name: set() for name in inf.UNIT_F}
 
 
-def test_the_unit_is_linked_and_unbound(blob):
-    da.unbound(blob, inf.UNIT_F)
+def test_the_unit_is_flipped(blob):
+    da.flipped(blob, inf.UNIT_F)
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival a plain row (`aes_deskarrive.register_row`), no answer
+# compared (both `void` in C); the class stays Tier 1's.
+ROWS = {name: da.register_row(each, answered=False) for name, each in da.at_arrivals(CASES).items()}
+
+
+def test_every_routine_of_the_unit_has_a_row_at_an_arrival():
+    assert {row[1] for row in ROWS.values()} == {da.entry_of(name) for name in inf.UNIT_F} and len(ROWS) == ARRIVALS
 
 
 # ==== BAND 6 WAVE 2, group G1: inf_folder `$fde9ce` ==================================================================

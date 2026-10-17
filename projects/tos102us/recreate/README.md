@@ -529,8 +529,14 @@ built-ins' cases; G2 unit N, Format, the disk copy and their helpers, in the NEW
 TIER 1 (STATUS: `## Linked, unbound — desk`). SINCE BAND 6 SLICE F1 UNITS O AND D ARE FLIPPED — the Line-F table's entry
 of each is ours (a generated thunk; trp13's two its `.S`, a row of the transcribed table), and each case at a hands'
 arrival is a Tier 3 row (STATUS: `## Verified — desk`) over THE ROM'S ARRIVAL MACHINE TAKEN OVER AT THE ARRIVAL (ruling
-R6, a labelled staging the table's legend names) — BUT THREE BINDINGS HELD (`aes_deskbind.HELD_AT_F1`: appl_exit,
-evnt_multi, objc_draw, each with what its flip still owes). Unit O's GEMDOS glue and gemdosif's share their four
+R6, a labelled staging the table's legend names) — BUT THREE BINDINGS HELD at F1 (`aes_deskbind.HELD_AT_F1`, each with
+what its flip still owes: TWO since slice F2, evnt_multi and objc_draw — appl_exit flipped there ⚠️ VERIFIED-BUT-UNPRICED,
+`aes_deskbind.VERIFIED_UNPRICED_AT_F2`: no row kind reaches its arrivals). SINCE SLICE F2's STAGE 1 wave 1b's units I, L
+(group G1) and C, H, E, F (group G4) ARE FLIPPED TOO, their rows of the same kind — BUT EIGHT HELD until every C callee of
+each is flipped (`aes_deskwin.HELD_AT_F2`, `aes_deskview.HELD_AT_F2`: do_wredraw, win_icalc, win_bldview, win_shwall;
+`aes_deskdir.UNIT_C_HELD_AT_F2`: draw_dial, show_dial, draw_fld, do_namecon); the GEMDOS users' rows (pro_chdir, win_top,
+win_ontop's text arrival) go over BAND 5's recording trap (`aes_deskwin.ROW_SCRIPTED`, said in the row's name) while their
+Tier 1 cases keep unit O's. Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with

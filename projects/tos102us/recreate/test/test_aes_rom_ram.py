@@ -288,10 +288,10 @@ BLOB_NAMES = ("the shipped blob", "the bench blob")
 
 
 @pytest.mark.parametrize("blob_name", BLOB_NAMES)
-def test_the_desk_s_arm_is_the_one_call_of_a_held_core_from_outside_the_unbound_desk(blob_name):
+def test_the_desk_s_arm_calls_ini_tree_and_no_held_core(blob_name):
     """rom_ram's desk arm calls ini_tree (the ROM's own callee, through which the desk's rsrc_gaddr binding yields):
-    on both blobs the function GCC folds the arm into refers to that held core and to no other — exactly what
-    `aes_deskbind.REFERRED_BY_BAND_5` exempts from the unbound pin, so the exemption names a call that is there."""
+    on both blobs the function GCC folds the arm into refers to it — and, ini_tree FLIPPED since band 6 slice F2, to
+    NO held core: `aes_deskbind.REFERRED_BY_BAND_5` (which exempted the call while ini_tree was held) is empty."""
     from recreate_kit import rom_bench
     import aes_deskbind
     import aes_switch
@@ -299,24 +299,23 @@ def test_the_desk_s_arm_is_the_one_call_of_a_held_core_from_outside_the_unbound_
     assert set(aes_switch.BLOBS) == set(BLOB_NAMES)
     blob = rom_bench.RomBench(*([aes_switch.BLOBS[blob_name]] if aes_switch.BLOBS[blob_name] else []))
     graph = transcription.call_graph(blob.elf)
-    held = aes_deskbind.held_cores()
-    assert {function: tuple(sorted(graph[function] & held)) for function in aes_deskbind.REFERRED_BY_BAND_5} \
-        == aes_deskbind.REFERRED_BY_BAND_5
+    assert aes_deskbind.ITS_DESK_CALLEE in graph[aes_deskbind.DESK_S_ARM]
+    assert not graph[aes_deskbind.DESK_S_ARM] & aes_deskbind.held_cores() and aes_deskbind.REFERRED_BY_BAND_5 == {}
 
 
-def test_the_exemption_covers_the_cores_it_names_and_no_other(monkeypatch):
-    """THE EXEMPTION IS PER CORE (the fix pass, reviewer A's mutant R8): `REFERRED_BY_BAND_5`'s function declared over
-    NO core, the unbound pin names ini_tree again — by the call graph (`bound_referrers`) and by the longword of the
-    arm's `jsr` (`bound_longwords`) — so neither exempts a held core the declaration does not name."""
+def test_the_unbound_pin_would_name_the_arm_s_call_were_ini_tree_held(monkeypatch):
+    """THE PIN STILL SEES THE ARM (the fix pass, reviewer A's mutant R8, kept past the flip): ini_tree laid back into
+    LINKED_AND_NOT_FLIPPED, the unbound pin names the arm's call — by the call graph (`bound_referrers`) and by the
+    longword of the arm's `jsr` (`bound_longwords`): nothing exempts it now."""
     from recreate_kit import rom_bench
     import aes_deskbind
     import aes_switch
     blob = rom_bench.RomBench(*([aes_switch.BLOBS["the shipped blob"]] if aes_switch.BLOBS["the shipped blob"] else []))
-    (function, cores), = aes_deskbind.REFERRED_BY_BAND_5.items()
     assert not aes_deskbind.bound_longwords(blob)
-    monkeypatch.setitem(aes_deskbind.REFERRED_BY_BAND_5, function, ())
-    assert aes_deskbind.bound_referrers(blob, ()) == {function: list(cores)}
-    assert aes_deskbind.bound_longwords(blob) == list(cores)
+    monkeypatch.setitem(aes_deskbind._linef_table().LINKED_AND_NOT_FLIPPED, "AES_ROM_INI_TREE", "the probe")
+    referred = aes_deskbind.bound_referrers(blob, ())
+    assert referred[aes_deskbind.DESK_S_ARM] == [aes_deskbind.ITS_DESK_CALLEE]   # (its thunk of the table refers to it too)
+    assert aes_deskbind.bound_longwords(blob) == [aes_deskbind.ITS_DESK_CALLEE]
 
 
 def test_the_rom_s_guard_answers_a_return_inside_the_dispatcher_alone(capfd):

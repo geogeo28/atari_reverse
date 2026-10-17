@@ -1,6 +1,9 @@
 """THE COPY ENGINE'S HELPERS (`src/desk/deskdir.c`; band 6 wave 1b, group G4, unit C): fourteen routines of
 `$fdcf04..$fdd917` — the dialogs' drawing, the path editors, the DOS verdict and the delete, the check that a folder is
-not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, TEN OF THEM FLIPPED:
+the Line-F table's entry for each is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`, below).
+The four dialog drawers that call unit D's objc_draw, still held (draw_dial, show_dial, draw_fld and do_namecon, which
+calls two of them), stay LINKED AND NOT FLIPPED (`aes_deskdir.UNIT_C_HELD_AT_F2`).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskarrive.arrival`) — four of the routines only at the chains this wave added
     (`aes_desk`'s group G4 block: the name conflict, a folder copied into a folder, a folder holding a folder deleted)
@@ -15,7 +18,9 @@ not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED
     cannot be taken through the companion, and the refusal's alert yields. dos_delete's EACCDN is unit O's arrival case
     and d_errmsg's alert this battery's; d_dofdel's own failing arm is the class of an answer that shows no alert.
   * UNPINNED BY NAME: d_errmsg failing with an answer above -32 at its own entry (no run leaves one: the class above
-    reaches that arm inside d_dofdel), and par_chk's refusal by a run (a folder dragged into its own window: the second
+    reaches that arm inside d_dofdel); d_errmsg's alert BOUNDARY itself, an answer of exactly -32 alerted (no run
+    reaches -32..-35: EACCDN's -36 is the only answer alerted — the slice F2 review's R1, its MB3 survives; no poked
+    class, by the policy); and par_chk's refusal by a run (a folder dragged into its own window: the second
     window's folder opens over a forced media change, which the model refuses by name — tried, `aes_desk`'s block).
 """
 import functools
@@ -249,8 +254,95 @@ def test_the_strings_the_unit_names_are_the_rom_s():
                      "AES_DESK_PAR_CHK_END_SOURCE": b"*.*", "AES_DESK_PAR_CHK_END_DESTINATION": b"*.*"}
 
 
-def test_the_unit_is_linked_and_unbound(blob):
-    da.unbound(blob, cdir.UNIT_C)
+def test_the_unit_s_ten_are_flipped_and_its_four_dialog_drawers_held_unbound(blob):
+    da.flipped(blob, FLIPPED)
+    da.unbound(blob, cdir.UNIT_C_HELD_AT_F2)
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival of a flipped routine registered
+# (`aes_deskarrive.register_row`): a plain row, or a row that switches THROUGH ITS DOOR (a DOOR USER, measured: d_errmsg's
+# alert answered through form_error's waits; hide_dial's form_dial FINISH, whose desktop redraw reaches the event door —
+# registered with no door, its companion's fork is refused at `recreate_call_event_door`) — and d_dofdel's two over its
+# GEMDOS SCRIPTED (the recording trap answering the ROM's run in place, said in the row's name). The classes stay Tier
+# 1's; the held four have no row. Its door users' pins are read by `test_tier3.py`'s door users.
+FLIPPED = tuple(name for name in cdir.UNIT_C if name not in cdir.UNIT_C_HELD_AT_F2)
+DOOR_USERS = frozenset((D_ERRMSG, HIDE_DIAL))
+ROWS = {name: da.register_row(each, answered=each.name not in VOID, door=each.name in DOOR_USERS)
+        for name, each in da.at_arrivals(CASES).items() if each.name in FLIPPED}
+
+
+def _deletes_machine(what):
+    """d_dofdel's row's machine: the arrival's (`row_machine_of`), its `trap #1` answered as the run in place answered it."""
+    chain, nth = DELETES[what]
+    arrived = da.arrival(D_DOFDEL, chain, nth)
+    return arrived, case.merge_pokes(da.row_machine_of(arrived), dl.GEMDOS.pokes([_fdelete_answered(arrived)]))
+
+
+def _deletes_row(what):
+    chain, nth = DELETES[what]
+    return da.register_row(Plain(D_DOFDEL, chain, nth), pokes=_deletes_machine(what)[1],
+                           label_said=f"{da.label(Plain(D_DOFDEL, chain, nth))} [{SCRIPTED}]")
+
+
+ROWS.update({f"{D_DOFDEL} — {what}": _deletes_row(what) for what in DELETES})
+
+
+@pytest.mark.parametrize("what", DELETES)
+def test_d_dofdel_s_row_takes_the_arm_its_name_says_the_delete_done(what):
+    """THE ROW'S OWN MACHINE (not the Tier 1 case's) takes the arm the row is named for: over it both shores answer
+    d_errmsg's DONE — the script the run in place's own answer, which a row priced over another arm would not be."""
+    arrived, machine = _deletes_machine(what)
+    ran = aes.run_function(D_DOFDEL, arrived.arguments, machine, hook=dl.scripted_hook, poison=False)
+    assert ran.answer() == cdir.CONSTANTS["D_ERRMSG_DONE"]
+
+
+DOOR_USERS_PRICED = {
+    "aes_desk_d_errmsg, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle":
+        ((161430, 247578), (140694, 213798), 7, (0, 0, 0)),
+    "aes_desk_hide_dial, arrival 0 of file: dragged to the trash, OK":
+        ((321042, 423182), (315934, 414274), 1, (0, 0, 0)),
+    "aes_desk_hide_dial, arrival 0 of folder: File > New Folder, 'A', Return":
+        ((264628, 353536), (259052, 343992), 1, (0, 0, 0)),
+    "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
+        ((321042, 423182), (315934, 414274), 1, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN = {
+    "aes_desk_d_errmsg, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle":
+        {"bench": (1485378, 1425216), "bench_shipped": (1485378, 1413098)},
+    "aes_desk_hide_dial, arrival 0 of file: dragged to the trash, OK":
+        {"bench": (2096028, 2033426), "bench_shipped": (2096028, 2032396)},
+    "aes_desk_hide_dial, arrival 0 of folder: File > New Folder, 'A', Return":
+        {"bench": (1781540, 1724800), "bench_shipped": (1781540, 1724940)},
+    "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
+        {"bench": (2091866, 2029264), "bench_shipped": (2091866, 2028234)},
+}
+ROWS_MADE = 29                          # the 27 cases at arrivals of the ten flipped, and d_dofdel's two
+
+
+def test_every_flipped_routine_of_the_unit_has_a_row_at_an_arrival_and_its_pins_are_the_rows():
+    import aes_switching
+    entries = {da.entry_of(row.name) if hasattr(row, "door") else row[1] for row in ROWS.values()}      # (a plain row is a tuple)
+    assert entries == {da.entry_of(name) for name in FLIPPED} and len(ROWS) == ROWS_MADE
+    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door")}
+    assert set(DOOR_USERS_PRICED) == switching == set(DOOR_USERS_WHOLE_RUN)
+
+
+# THE THUNKS G4'S FLIP LEAVES ENTERED BY NO WALKED CHAIN (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`, group G4's block):
+# every Line-F call word of each in the ROM's GEM text lies in a routine G4 flipped — so on our shore only our C calls it.
+CALLED_BY_G4_ALONE = {"AES_ROM_DESK_MY_ITOA": {"AES_ROM_DESK_FMT_TIME", "AES_ROM_DESK_FMT_DATE"},
+                      "AES_ROM_DESK_FMT_TIME": {"AES_ROM_DESK_OB_SFCB", "AES_ROM_DESK_INF_DTTMSZ"},
+                      "AES_ROM_DESK_FMT_DATE": {"AES_ROM_DESK_OB_SFCB", "AES_ROM_DESK_INF_DTTMSZ"},
+                      PATH_PART: {PAR_CHK}, "AES_ROM_DESK_APPL_WRITE": {"AES_ROM_DESK_FUN_MSG"},
+                      "AES_ROM_DESK_FORM_ERROR": {D_ERRMSG}, "AES_ROM_DOS_DELETE": {D_DOFDEL}}
+
+
+def test_the_routines_g4_s_flip_leaves_entered_by_no_chain_are_called_by_g4_s_flipped_routines_alone():
+    import test_aes_desk_ours
+    held = da._linef_table().LINKED_AND_NOT_FLIPPED
+    for name, callers in CALLED_BY_G4_ALONE.items():
+        assert da.rom_callers(name) == {da.entry_of(caller) for caller in callers}, name
+        assert not callers & set(held), name
+    assert set(CALLED_BY_G4_ALONE) <= set(test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE)
 
 
 # ==== BAND 6 WAVE 2, group G1: THE COPY ENGINE — d_dofcopy, d_doop, dir_op ===========================================

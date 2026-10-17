@@ -1,6 +1,7 @@
 """THE TEXT VIEW'S LINE AND ITS FORMATTERS (`src/desk/deskusr.c`; band 6 wave 1b, group G4, unit E): my_itoa `$fde500`,
-fmt_time `$fde546`, fmt_date `$fde5ba` and ob_sfcb `$fde610`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND
-NOTHING BOUND.
+fmt_time `$fde546`, fmt_date `$fde5ba` and ob_sfcb `$fde610`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE
+BAND 6 SLICE F2, FLIPPED: the Line-F table's entry for each is its thunk, and every case at an arrival is a Tier 3 row
+(`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskarrive.arrival`) — the text view drawing its lines, Show Info's date and time —
     or A LABELLED ARGUMENT CLASS, said in its name, where no chain's file has the arm: an hour of the afternoon, noon,
@@ -94,8 +95,17 @@ def test_the_answers_the_c_has_not_are_counted_and_read_by_no_caller():
     assert {name: db.answer_readers(da.entry_of(name)) for name in usr.UNIT_E} == {name: set() for name in usr.UNIT_E}
 
 
-def test_the_unit_is_linked_and_unbound(blob):
-    da.unbound(blob, usr.UNIT_E)
+def test_the_unit_is_flipped(blob):
+    da.flipped(blob, usr.UNIT_E)
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival a plain row (`aes_deskarrive.register_row`); the classes
+# stay Tier 1's. Its answer compared where the C has one.
+ROWS = {name: da.register_row(each, answered=each.name not in VOID) for name, each in da.at_arrivals(CASES).items()}
+
+
+def test_every_routine_of_the_unit_has_a_row_at_an_arrival():
+    assert {row[1] for row in ROWS.values()} == {da.entry_of(name) for name in usr.UNIT_E} and len(ROWS) == ARRIVALS
 
 
 # ==== BAND 6 WAVE 2, group G1: dr_code `$fde7b4` and the userdef draw `$fde844` =======================================
