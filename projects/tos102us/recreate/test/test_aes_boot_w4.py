@@ -1330,6 +1330,18 @@ def the_bound_desk_s_draw(machine):
     return ((aes.AES_USERDEF_SP_SAVE, aes.AES_USERDEF_SP_SAVE + LONG_BYTES), dead_spans_a_code_address_is_left_in(machine)[USERDEF_STACK])
 
 
+# ---- band 6 slice F2 (group G2) ---- THE GLUE'S PARKED RETURN: drive_check, flipped, reaches trp13's `.S` through the shipped
+# blob's glue, whose `jsr` makes the `.S` park THE GLUE'S return in AES_BIOS_RETURN where the ROM's door parks its caller's
+# — F1's declared divergence (R9's kind; read by trp13's own two instructions alone:
+# `test_the_bios_door_s_parked_return_is_named_by_trp13_alone`). NAMED ONLY WHERE OUR MACHINE HOLDS THERE A RETURN INSIDE
+# THE SHIPPED BLOB'S GLUE (`tier3.glue_ranges`) and the ROM's machine another: on the shipped blob, after a drive_check.
+def the_glue_s_parked_return(rom_after, ours_after, blob):
+    """`((lo, hi),)` — AES_BIOS_RETURN where the shipped glue's return is parked there (above) — or `()`."""
+    at, parked = aes.AES_BIOS_RETURN, ours_after.long(aes.AES_BIOS_RETURN)
+    in_the_glue = blob == battery.THE_SHIPPED_BLOB and any(lo <= parked < hi for lo, hi in battery.harness.bench_tier3().glue_ranges())
+    return ((at, at + LONG_BYTES),) if in_the_glue and rom_after.long(at) != parked else ()
+
+
 def given_the_rom_s_names(machine, blob, in_the_dead_spans=True):
     """A continued door machine's megabyte AS IT IS COMPARED WITH THE ROM-BOOTED ONE'S: every code address of the
     registry given the ROM's name THROUGH THE REGISTRY ITSELF (`tier3.mapped_back`: the door's longwords, the fork
@@ -1389,12 +1401,25 @@ def test_behind_the_door_a_continuation_runs_our_glue_and_our_trampoline_and_lea
         assert rom_after.ram[lo:hi] != ours_after.ram[lo:hi], f"{name}: named, and the two machines hold the same bytes there"
     # ...the two idles' (two dispatchers since the binding) and THE BOUND DESK'S (`aes_ctlmgr.the_bound_desk_s_classes`)
     left_out = sorted((*classes.values(), *aes_boot.GLUE_STACKS.values(), *nameable.values(),
-                       *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after)))
+                       *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after),
+                       *the_glue_s_parked_return(rom_after, ours_after, blob)))
     assert all(hi <= lo_after for (_lo, hi), (lo_after, _hi) in zip(left_out, left_out[1:])), "the classes do not overlap"
     mine = given_the_rom_s_names(ours_after, blob)
     differing = [(at, length) for at, length in aes_boot.differing_runs(rom_after.ram, bytes(mine))
                  if not any(lo <= at and at + length <= hi for lo, hi in left_out)]
     assert differing == [], f"behind THE DOOR the continued machine differs outside the classes at {[(hex(at), n) for at, n in differing[:6]]}"
+
+
+@every_blob
+def test_the_glue_s_parked_return_is_named_on_the_shipped_blob_alone_where_drive_check_ran(blob):
+    """THE NAME FIRES WHERE IT IS FOR (`the_glue_s_parked_return`): the text window's continuation opens drive A:'s window
+    (drive_check, flipped) — on the shipped blob our machine holds the glue's return in AES_BIOS_RETURN and the ROM's its
+    caller's, so it is named; on the bench blob, whose C calls trp13's C twin, nothing is."""
+    machine, view, receives, _entered = CONTINUED_BEHIND_THE_DOOR["the DESKTOP.INF machine as text: drive A:'s window opened"]
+    rom, behind = inf(view), behind_the_door(machine, blob, view)
+    received = receives(rom)
+    named = the_glue_s_parked_return(rom.continued(*received), behind.continued(*received), blob)
+    assert named == (((aes.AES_BIOS_RETURN, aes.AES_BIOS_RETURN + LONG_BYTES),) if blob == battery.THE_SHIPPED_BLOB else ())
 
 
 @every_blob
@@ -1415,7 +1440,8 @@ def test_a_continued_door_machine_compared_with_no_code_address_mapped_differs_w
     rom_after, ours_after = rom.continued(*received), behind.continued(*received)
     classes, nameable = aes_boot.by_nature(rom_after, ours_after)
     left_out = (*classes.values(), *aes_boot.GLUE_STACKS.values(), *nameable.values(),
-                *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after))
+                *aes_ctlmgr.the_bound_desk_s_classes(rom_after, ours_after).values(), *the_bound_desk_s_draw(ours_after),
+                *the_glue_s_parked_return(rom_after, ours_after, blob))
 
     def outside_the_classes(mine):
         """The longwords the two megabytes differ in outside the classes: each run of differing bytes ends where a

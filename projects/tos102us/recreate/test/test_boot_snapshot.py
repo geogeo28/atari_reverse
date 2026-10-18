@@ -320,6 +320,17 @@ import test_desk_fun                                        # noqa: E402,F401
 import test_desk_usr                                        # noqa: E402,F401
 import test_desk_inf                                        # noqa: E402,F401
 # ---- end of group G4's ----
+# ---- band 6 slice F2, group G3 (units B, G, flipped: their rows at the hands' arrivals) ----
+import test_desk_act                                        # noqa: E402,F401
+import test_desk_fpd                                        # noqa: E402,F401
+# ---- end of group G3's ----
+# ---- band 6 slice F2, group G2 (units A, K, J, flipped: their rows at the hands' arrivals) ----
+import test_desk_app                                        # noqa: E402,F401
+import test_desk_top                                        # noqa: E402,F401
+import test_desk_supp                                       # noqa: E402,F401
+# ---- end of group G2's ----
+# ---- band 6 slices F2b / F2c: each slice's new battery imports here, in a block of its own (before gemsuper's LAST) ----
+# ---- end of slices F2b / F2c ----
 import test_aes_gemsuper                                   # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 

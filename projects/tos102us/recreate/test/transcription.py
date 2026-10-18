@@ -1071,6 +1071,31 @@ def listing(elf):
     return _listing_at(str(Path(elf).resolve()))
 
 
+# The one relocation that writes a whole address into a longword of the image (`R_68K_PC16` writes a displacement).
+ABSOLUTE_LONG_RELOCATION = "R_68K_32"
+_ALLOCATED_RELOCATION_SECTION = re.compile(r"Relocation section '\.rela\.(text|rodata|data)'")
+
+
+@functools.cache
+def _address_longwords_at(path):
+    table = subprocess.run(["m68k-elf-readelf", "-rW", path], capture_output=True, text=True, check=True).stdout
+    addresses, in_the_image = set(), False
+    for line in table.splitlines():
+        if line.startswith("Relocation section"):
+            in_the_image = bool(_ALLOCATED_RELOCATION_SECTION.match(line))
+        elif in_the_image and ABSOLUTE_LONG_RELOCATION in line.split()[2:3]:
+            addresses.add(int(line.split()[0], 16))
+    assert addresses, f"{path} keeps no relocations: link it with -Wl,-q (the Makefile's BENCH_LDLIBS)"
+    return frozenset(addresses)
+
+
+def address_longwords(elf):
+    """THE ADDRESSES OF EVERY LONGWORD OF `elf`'s IMAGE THAT HOLDS AN ADDRESS: each one the link's `R_68K_32` wrote — a
+    table entry, a `jsr`/`lea`/`move.l #` operand, a vector's holder. The bytes of an instruction that merely spell an
+    address (`btst #5,d0; beq.s` = $0005 $6714) carry no relocation, wherever a layout puts them."""
+    return _address_longwords_at(str(Path(elf).resolve()))
+
+
 def call_graph(elf):
     """`{function: every function its code references}` out of the m68k build at `elf` — a `jsr`, a
     branch, or a `lea` or `move.l #` of an address GCC then calls through a register or a frame slot, which

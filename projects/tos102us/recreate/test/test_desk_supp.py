@@ -1,6 +1,7 @@
 """UNIT J, drive_check (`src/desk/desksupp.c`; band 6 wave 1b, group G2): HELD AT TIER 1 AT THE ARRIVALS OF ROM
-RUNS — LINKED, AND NOTHING BOUND. Every case a row that switches (desk_wait's yields), THE ROM'S FLOPPY DRIVER
-REPLAYED (`aes_desksupp`: `DRIVER_REPLAYED` and band 5's scripted GEMDOS in the id).
+RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED: the Line-F table's entry is its thunk, and every case at an arrival is a
+Tier 3 row (`ROWS`, below). Every case a row that switches (desk_wait's yields), THE ROM'S FLOPPY DRIVER REPLAYED
+(`aes_desksupp`: `DRIVER_REPLAYED` and band 5's scripted GEMDOS in the id).
 
 D0 AT RETURN: drive_check answers nothing in C — the word the ROM leaves (desk_wait's binding's yield leftover, or
 fm_error's) is a COUNTED divergence, READ BY NO CALLER (`aes_deskbind.answer_readers`).
@@ -12,6 +13,7 @@ import aes_deskapp as da
 import aes_deskbind as db
 import aes_desksupp as ds
 import aes_event
+import case
 
 CHAINS = ("A: File > Show Info, Return", "A: File > Open", "A: opened", "window: A: opened again (two windows)",
           "file: File > Show Info, Return")
@@ -86,6 +88,76 @@ def test_no_caller_in_the_rom_reads_what_drive_check_leaves_in_d0():
     """BY READING EVERY CALL SITE: drive_check's D0 is read by nothing — the counted divergence of its cases."""
     assert db.calls_of(da.entry_of(ds.DRIVE_CHECK)) and not db.answer_readers(da.entry_of(ds.DRIVE_CHECK))
     assert len(CHAINS) + 3 == 8
+
+
+# ---- band 6 slice F2 (group G2): THE UNIT'S ROWS — each case at an arrival a row that switches with no door
+# (`aes_desksupp.register_row`: MEASURED, the table's second count — no call of the event layer's door), AES_BIOS_RETURN
+# named by nature (`aes_desksupp.BIOS_DOOR_PARKED`); its classes stay Tier 1's. Its pins — DATA, measured by the table's
+# own measurement (`aes_switching.priced_by_the_table`) and each blob's second differential (`aes_switching.measured_on`)
+# from the rows as registered; re-pinned from a recorded run, never by hand.
+#   * NO ROW, by name (`NOT_A_ROW`): the two arrivals whose machine ALREADY HOLDS drive_check's own park in AES_BIOS_RETURN
+#     (the chain's earlier drive_check left it: `RWABS_BACK`) — the ROM's run stores the value the machine holds, so the
+#     name by nature is refused there (the census, and the companion's `aes_switching._its_own_by_nature`), and without
+#     it the shipped blob's glue park differs. Tier 1 holds both cases; the three other arrivals are rows, at the same price.
+NOT_A_ROW = {chain: "AES_BIOS_RETURN already holds drive_check's own park: the ROM's run changes nothing there, so the "
+                    "shipped glue's park cannot be named by nature"
+             for chain in ("file: File > Show Info, Return", "window: A: opened again (two windows)")}
+ROWS = {chain: ds.register_row(da.arrival(ds.DRIVE_CHECK, chain)) for chain in CHAINS if chain not in NOT_A_ROW}
+NO_DOOR_PREMISES = {
+    "aes_drive_check, arrival 0 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_drive_check, arrival 0 of A: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED = {
+    "aes_drive_check, arrival 0 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((15544, 23356), None, None, (0, 0, 0)),
+    "aes_drive_check, arrival 0 of A: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((15544, 23356), None, None, (0, 0, 0)),
+    "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((15544, 23356), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    "aes_drive_check, arrival 0 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
+    "aes_drive_check, arrival 0 of A: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
+    "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
+}
+
+
+def test_every_case_at_an_arrival_is_a_row_that_switches_with_no_door_and_its_pins_are_the_rows():
+    import aes_switching
+    names = {aes_switching.row_name(row) for row in ROWS.values()}
+    assert len(ROWS) == len(CHAINS) - len(NOT_A_ROW) == 3 and all(row.door is None and row.also_dropped == ds.BIOS_DOOR_PARKED for row in ROWS.values())
+    assert names == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("chain", NOT_A_ROW)
+def test_a_case_with_no_row_arrives_with_drive_check_s_own_park_in_the_bios_return(chain):
+    """WHY THERE IS NO ROW (`NOT_A_ROW`), READ OFF THE ARRIVAL: AES_BIOS_RETURN holds the return of drive_check's own BIOS
+    door call already — and on every row's arrival it holds another."""
+    held = lambda arrived: case.long_in(arrived.boot.ram, aes.AES_BIOS_RETURN) & da.BUS
+    assert held(da.arrival(ds.DRIVE_CHECK, chain)) == ds.RWABS_BACK
+    assert all(held(da.arrival(ds.DRIVE_CHECK, other)) != ds.RWABS_BACK for other in CHAINS if other not in NOT_A_ROW)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_has_its_premise_on_the_rom_s_run(name):
+    da.vet_the_premise(name, NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    da.vet_on_a_blob(blob, name, NO_DOOR_PREMISES, NO_DOOR_PRICED, NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_is_priced_as_pinned_and_under_the_bar(name):
+    da.vet_the_price(name, NO_DOOR_PRICED)
 
 
 # ==== BAND 6 WAVE 2 (group G3): THE WINDOWS' OPENERS AND CLOSERS ======================================================

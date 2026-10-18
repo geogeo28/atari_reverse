@@ -161,26 +161,37 @@ LINKED_AND_NOT_FLIPPED.update({
 LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WREDRAW": "unit I: do_wredraw, held at band 6 slice F2 — its C calls the objc_draw "
                                                      "binding, held at slice F1 (F2c, after H2)"})
 LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_WIN_ICALC": "unit L: win_icalc, held at band 6 slice F2 — its C calls app_afind, group G3's (F2b)",
-    "AES_ROM_WIN_BLDVIEW": "unit L: win_bldview, held at band 6 slice F2 — its C calls win_icalc, held (F2b)",
+    "AES_ROM_WIN_ICALC": "unit L: win_icalc, held at band 6 slice F2 only because the groups flipped in parallel — its C "
+                         "callee app_afind is flipped since stage 2 (F2b flips it)",
+    "AES_ROM_WIN_BLDVIEW": "unit L: win_bldview, held at band 6 slice F2 — its C calls win_icalc, a stage artifact (F2b "
+                           "flips both)",
     "AES_ROM_WIN_SHWALL": "unit L: win_shwall, held at band 6 slice F2 only because the groups flipped in parallel — its C "
                           "callees (win_ith, the wind_get binding, fun_msg) are all flipped since stage 1 (F2b flips it)"})
 # ---- end of group G1's ----
 # ---- band 6 wave 1b, group G2 (units A `src/desk/deskapp.c`, K `src/desk/desktop.c`, J `src/desk/desksupp.c`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit A: the desk's application list, held at Tier 1 at its arrivals" for routine in (
-    "SCAN_STR", "SAVE_STR", "APP_PARSE", "APP_TRAN", "APP_RDICON", "APP_GETFH", "SNAP_DISK", "APP_REVIT", "APP_PATH_SAVE", "APP_PATH_RESTORE",
-    "APP_BLDDESK")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit K: the desk's main loop's helpers, held at Tier 1 at their arrivals" for routine in (
-    "I_FIND", "MEN_LIST", "MEN_UPDATE", "DO_VIEWMENU", "CNX_PUT")})
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DRIVE_CHECK": "unit J: drive_check, held at Tier 1 at its arrivals, its floppy driver replayed"})
+# FLIPPED at band 6 slice F2 (stage 2) but two (`aes_desktop.HELD_AT_F2` says the same): a routine flips once every C
+# callee of it is flipped (the cut's rule), so each waits for its callee's slice.
+LINKED_AND_NOT_FLIPPED.update({
+    "AES_ROM_I_FIND": "unit K: i_find, held at band 6 slice F2 only because the groups flipped in parallel — its C "
+                      "callees app_afind and fpd_ofind are flipped since stage 2 (F2b flips it, and AES_ROM_FPD_OFIND, "
+                      "whose last ROM caller it is, joins NOT_ENTERED_ON_OUR_SHORE)",
+    "AES_ROM_MEN_UPDATE": "unit K: men_update, held at band 6 slice F2 — its C calls i_find, held (F2b): flipped, it is a "
+                          "bound referrer of a held core (measured: `aes_deskbind.bound_referrers`)"})
 # ---- end of group G2's ----
 # ---- band 6 wave 1b, group G3 (units B `src/desk/deskact.c`, G `src/desk/deskfpd.c`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit B: a hit test or drag of the desk's, held at Tier 1 at its arrivals" for routine in (
-    "APP_AFIND", "GR_OBFIND", "GR_ISDOWN", "GR_ACCOBS", "GR_EXTENT", "GR_OBALIGN", "GR_PLNS", "GR_BWAIT", "ACT_CHKOBJ",
-    "MOVE_DRVICON", "ACT_CHG", "ACT_ALLCHG")})
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit G: a path or file node routine of the desk's, held at Tier 1 at its arrivals" for routine in (
-    "FN_INIT", "PN_INIT", "FPD_START", "FPD_BLDSPEC", "FPD_PARSE", "FPD_OFIND", "FPD_ELIST", "FN_FREE", "FL_FREE", "FN_ALLOC",
-    "PN_ALLOC", "PN_FREE", "PN_OPEN", "PN_FCOMP", "PN_COMP", "PN_SORT")})
+# FLIPPED at band 6 slice F2 (stage 2): unit G whole, unit B but five. HELD, unit B's five below: a routine flips once
+# every C callee of it is flipped — gr_isdown's C calls unit D's evnt_multi, still held (`aes_deskbind.HELD_AT_F1`), and
+# gr_bwait calls gr_isdown; act_chg, act_allchg and move_drvicon call unit I's do_wredraw (held for objc_draw) —
+# flipped, each would be a bound referrer of a held core (F2c's, after the harness slice H2;
+# `aes_deskact.UNIT_B_HELD_AT_F2` says the same).
+LINKED_AND_NOT_FLIPPED.update({
+    "AES_ROM_GR_ISDOWN": "unit B: gr_isdown, held at band 6 slice F2 — its C calls unit D's evnt_multi, held at slice F1 (F2c, "
+                         "after H2)",
+    "AES_ROM_GR_BWAIT": "unit B: gr_bwait, held at band 6 slice F2 — its C calls gr_isdown, held (F2c)",
+    "AES_ROM_ACT_CHG": "unit B: act_chg, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw (F2c)",
+    "AES_ROM_ACT_ALLCHG": "unit B: act_allchg, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw (F2c)",
+    "AES_ROM_MOVE_DRVICON": "unit B: move_drvicon, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw "
+                            "(F2c)"})
 # ---- end of group G3's ----
 # ---- band 6 wave 1b, group G4 (units C `src/desk/deskdir.c`, H `deskfun.c`, E `deskusr.c`, F `deskinf.c`) ----
 # (FLIPPED at band 6 slice F2, stage 1: unit C's ten others, units H, E and F whole — eighteen. HELD, unit C's four

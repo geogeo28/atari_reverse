@@ -15,20 +15,20 @@ order — and that a row with no line here makes none.
 """
 PINNED = {
     "aes_ap_rdwr, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((244352, 326360, 0),),
-        "bench_shipped": ((232480, 326360, 11740),),
+        "bench": ((245000, 330014, 0),),
+        "bench_shipped": ((233128, 330014, 11740),),
     },
     "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read": {
-        "bench": ((245042, 327164, 0),),
-        "bench_shipped": ((233170, 327164, 11740),),
+        "bench": ((245690, 330818, 0),),
+        "bench_shipped": ((233818, 330818, 11740),),
     },
     "aes_ct_msgup, AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise": {
         "bench": ((4570, 5808, 0),),
         "bench_shipped": ((4414, 5808, 276),),
     },
     "aes_ev_block, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((244352, 326360, 0),),
-        "bench_shipped": ((232480, 326360, 11740),),
+        "bench": ((245000, 330014, 0),),
+        "bench_shipped": ((233128, 330014, 11740),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the next wait; the menu left, a click off it": {
         "bench": ((40744, 55126, 0), (39594, 53622, 0),),
@@ -39,11 +39,11 @@ PINNED = {
         "bench_shipped": ((37748, 55126, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
-        "bench": ((271760, 372646, 0),),
-        "bench_shipped": ((261666, 372646, 13368),),
+        "bench": ((272892, 377462, 0),),
+        "bench_shipped": ((262798, 377462, 13368),),
     },
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": {
-        "bench": ((272102, 373438, 0),),
-        "bench_shipped": ((262008, 373438, 13368),),
+        "bench": ((273234, 378254, 0),),
+        "bench_shipped": ((263140, 378254, 13368),),
     },
 }

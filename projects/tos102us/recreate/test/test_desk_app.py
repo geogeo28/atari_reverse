@@ -1,5 +1,6 @@
 """UNIT A, THE DESK'S APPLICATION LIST (`src/desk/deskapp.c`; band 6 wave 1b, group G2): HELD AT TIER 1 AT THE
-ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED: the Line-F table's entry for each is its thunk, and every
+case at an arrival is a Tier 3 row (`ROWS`, below; the group's flip pins are here too — units K and J).
 
   * EVERY ROUTINE HAS ITS CASES AT ITS ARRIVALS (`aes_deskapp.arrival`): a chain of the hands — or the DESKTOP.INF
     machine's own boot — stopped at the routine's first instruction, the arguments read off its caller's frame. A
@@ -13,7 +14,7 @@ ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
     stack, is held to leave the same word. snap_disk and app_revit answer nothing in C: the ROM's leftover is a COUNTED
     divergence, READ BY NO CALLER (`aes_deskbind.answer_readers`).
 
-WHAT IS NOT HELD: any row, any price, anything of a blob's run.
+WHAT IS NOT HELD: the argument classes' prices (Tier 1's alone).
 """
 import pytest
 
@@ -284,12 +285,13 @@ def test_no_caller_in_the_rom_reads_what_snap_disk_or_app_revit_leave_in_d0():
     assert sum(count for routine in VOID for _chain, count in ARRIVALS[routine]) == 15
 
 
-# ---- THE GROUP'S ROUTINES, LINKED AND UNBOUND (units A, K and J) -----------------------------------------------
+# ---- THE GROUP'S ROUTINES (units A, K and J) ----------------------------------------------------------------------
 import sys                                                                          # noqa: E402
 from pathlib import Path                                                            # noqa: E402
 
 import aes_desksupp                                                                 # noqa: E402
 import aes_desktop                                                                  # noqa: E402
+import aes_deskwin                                                                  # noqa: E402
 import aes_event                                                                    # noqa: E402
 import routines                                                                     # noqa: E402
 
@@ -304,24 +306,143 @@ def _linef_table():
     return linef_table
 
 
-def test_no_function_of_a_blob_outside_the_desk_s_linked_routines_refers_to_one_of_the_group_s(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every core of the group
-    linked; and no function outside the unbound desk (the held cores and what only they reach — the group's own static
-    helpers among them, by their callers, not their names) refers to ANY held core."""
-    assert not db.bound_referrers(blob, GROUP_G2)
+# ---- FLIPPED (band 6 slice F2, group G2): the fifteen, i_find and men_update held (`aes_desktop.HELD_AT_F2`) ----------------
+HELD_G2 = aes_desktop.HELD_AT_F2
+FLIPPED_G2 = tuple(name for name in GROUP_G2 if name not in HELD_G2)
 
 
-def test_the_table_s_entries_for_the_group_stay_the_rom_s_and_no_registry_names_one():
-    """...the generator's verdict for each is THE ROM'S (`linef_table.LINKED_AND_NOT_FLIPPED`), and no registered row
-    is one of them."""
-    linef_table = _linef_table()
-    ours = {getattr(addrs, name): name for name in GROUP_G2}
-    verdicts = {ours[entry.target]: entry.verdict for entry in linef_table.entries() if entry.target in ours}
-    assert verdicts == {name: linef_table.THE_ROM_S for name in GROUP_G2}
-    assert set(GROUP_G2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    registered = [name for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)
-                  if name.split(",")[0] in CORES]
-    assert not registered
+def test_each_flipped_routine_s_thunk_calls_its_core_and_nothing_outside_the_unbound_desk_refers_to_a_held_core(blob):
+    """THE FLIP: every flipped routine's core CALLED BY ITS OWN THUNK of the table — and the desk's one unbound pin
+    (`aes_deskbind.bound_referrers`) holds for the cores still held, the group's two among them (men_update would be a
+    bound referrer of i_find: measured, so it is held with it)."""
+    assert not aes_deskwin.thunks_not_calling_their_core(blob, FLIPPED_G2)
+    assert not db.bound_referrers(blob, HELD_G2)
+
+
+def test_the_table_s_entries_are_the_flipped_routines_thunks_and_the_held_ones_the_rom_s():
+    """...the generator's verdict for each of the fifteen is OURS, THROUGH ITS THUNK; the two held THE ROM'S, held by
+    `LINKED_AND_NOT_FLIPPED` as `HELD_AT_F2` says — and no registered row is a held one's."""
+    assert aes_deskwin.table_verdicts(GROUP_G2) == aes_deskwin.flipped_verdicts(GROUP_G2, HELD_G2)
+    assert set(GROUP_G2) & set(_linef_table().LINKED_AND_NOT_FLIPPED) == set(HELD_G2)
+    held = frozenset(routines.core_symbol(name) for name in HELD_G2)
+    assert not [name for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)
+                if name.split(",")[0] in held]
+
+
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival registered (`aes_deskapp.register_plain` /
+# `register_switching`, R6's kind: the arrival's machine taken over at the arrival): a plain row, or for the three that
+# yield a row that switches with NO DOOR (MEASURED, the table's second count: none makes a call of the event layer's
+# door). app_getfh, app_path_save and app_path_restore traps answered by band 5's recording trap, app_rdicon's two
+# Mallocs too (`aes_deskwin.ROW_SCRIPTED`, in the row's name). The classes stay Tier 1's.
+#   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`; MEASURED, each row's blob differential at `$8995`, `$00` ours / `$10`
+#     the ROM's): app_tran's and app_rdicon's (the rsrc_gaddr binding's yield after the C's own arithmetic, ini_tree's kind).
+#   * AES_XBIOS_RETURN NAMED BY NATURE on app_blddesk's (`XBIOS_DOOR_PARKED`; N16, R9 declared — the user's): its C reaches
+#     trp14's `.S` through the shipped blob's glue, whose `jsr` parks THE GLUE'S return there where the ROM's door parks
+#     its caller's; no ROM instruction but trp14's own two reads it (`test_aes_lineftable.py`,
+#     `test_the_xbios_door_s_parked_return_is_named_by_trp14_alone`). Its three low bytes: the high byte is 0 on both
+#     shores, an address under 16 MB, which the ROM's run never changes — a name over it is refused
+#     (`aes_switching._its_own_by_nature`).
+X_FLAG_DIFFERS = frozenset((APP_TRAN, APP_RDICON))
+XBIOS_DOOR_PARKED = ((aes.AES_XBIOS_RETURN + 1, aes.AES_XBIOS_RETURN + aes.LONG_BYTES,
+                      "AES_XBIOS_RETURN: the shipped glue parks its own return, the ROM's door its caller's — read by trp14 alone"),)
+
+
+def _registered(routine, chain, nth):
+    arrived = da.arrival(routine, chain, nth)
+    if routine == APP_TRAN:
+        return da.register_switching(arrived, door_user=False, x_flag_differs=True)
+    if routine == APP_RDICON:
+        answers, _back = da.dos_answers_in_place(arrived, RDICON_MALLOCS)
+        return da.register_switching(arrived, door_user=False, x_flag_differs=True, answers=answers)
+    if routine == APP_BLDDESK:
+        return da.register_switching(arrived, door_user=False, layers=(da.getrez_layer(arrived),), said=da.GETREZ_STAGED,
+                                     also_dropped=XBIOS_DOOR_PARKED)
+    answers = da.dos_answers_in_place(arrived, TRAPS[routine])[0] if routine in TRAPS else None
+    return da.register_plain(arrived, answers)
+
+
+ROWS = {_id(*each): _registered(*each) for each in AT_ARRIVALS}
+NO_DOOR_PREMISES = {
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, 'C' typed, Install pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, Remove pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
+    "aes_app_blddesk, arrival 0 of file: shown, a key at its end; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), 1, ()),
+    "aes_app_blddesk, arrival 0 of the boot of the DESKTOP.INF machine; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), 1, ()),
+    "aes_app_rdicon, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    "aes_app_rdicon, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    "aes_app_tran, arrival 0 of file: shown, a key at its end":
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+    "aes_app_tran, arrival 0 of the boot of the DESKTOP.INF machine":
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
+}
+NO_DOOR_PRICED = {
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, 'C' typed, Install pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((28430, 42478), None, None, (0, 0, 0)),
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, Remove pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((15162, 22616), None, None, (0, 0, 0)),
+    "aes_app_blddesk, arrival 0 of file: shown, a key at its end; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((21548, 32022), None, None, (0, 0, 0)),
+    "aes_app_blddesk, arrival 0 of the boot of the DESKTOP.INF machine; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        ((21548, 32022), None, None, (0, 0, 0)),
+    "aes_app_rdicon, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((84042, 104984), None, None, (0, 0, 0)),
+    "aes_app_rdicon, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((84042, 104984), None, None, (0, 0, 0)),
+    "aes_app_tran, arrival 0 of file: shown, a key at its end":
+        ((6030, 9986), None, None, (0, 0, 0)),
+    "aes_app_tran, arrival 0 of the boot of the DESKTOP.INF machine":
+        ((6030, 9986), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, 'C' typed, Install pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        {"bench": (69550, 60766), "bench_shipped": (69550, 57990)},
+    "aes_app_blddesk, arrival 0 of A: Options > Install Disk Drive, Remove pressed; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        {"bench": (36164, 31414), "bench_shipped": (36164, 30094)},
+    "aes_app_blddesk, arrival 0 of file: shown, a key at its end; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        {"bench": (52332, 45842), "bench_shipped": (52332, 43794)},
+    "aes_app_blddesk, arrival 0 of the boot of the DESKTOP.INF machine; THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode":
+        {"bench": (52332, 45842), "bench_shipped": (52332, 43794)},
+    "aes_app_rdicon, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (168998, 207878), "bench_shipped": (168998, 154488)},
+    "aes_app_rdicon, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (168998, 207878), "bench_shipped": (168998, 154488)},
+    "aes_app_tran, arrival 0 of file: shown, a key at its end":
+        {"bench": (21900, 18484), "bench_shipped": (21900, 18632)},
+    "aes_app_tran, arrival 0 of the boot of the DESKTOP.INF machine":
+        {"bench": (21900, 18484), "bench_shipped": (21900, 18632)},
+}
+
+
+def test_every_case_at_an_arrival_is_a_row_and_its_pins_are_the_switching_ones():
+    """EVERY ROUTINE OF THE UNIT HAS A ROW AT EACH OF ITS ARRIVALS — a plain row but the three that yield, whose rows switch
+    with no door, pinned here; the X flag declared on exactly app_tran's and app_rdicon's."""
+    import aes_switching
+    switching = [row for row in ROWS.values() if hasattr(row, "door")]
+    assert len(ROWS) == len(AT_ARRIVALS) == 73 and {row.name for row in switching} == set(SWITCHES) and len(switching) == 8
+    assert all(row.door is None for row in switching)
+    assert {row.name for row in switching if row.x_flag_differs} == X_FLAG_DIFFERS
+    names = {aes_switching.row_name(row) for row in switching}
+    assert names == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_that_switches_has_its_premise_on_the_rom_s_run(name):
+    da.vet_the_premise(name, NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_that_switches_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    da.vet_on_a_blob(blob, name, NO_DOOR_PREMISES, NO_DOOR_PRICED, NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_that_switches_is_priced_as_pinned_and_under_the_bar(name):
+    da.vet_the_price(name, NO_DOOR_PRICED)
 
 
 STALE_BYTES = bytes((0xA5,)) * 0x20             # the string buffer under g_pbuff laid stale (it is zeros at every arrival)

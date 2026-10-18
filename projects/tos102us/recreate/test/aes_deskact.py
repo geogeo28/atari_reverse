@@ -64,6 +64,11 @@ UNIT_B_WAVE_2 = tuple(SIGNATURES_WAVE_2)
 # THE ROUTINES WHOSE CALLEES REACH THE DISPATCHER (a binding of unit D's): their cases are rows that switch.
 YIELDING = ("AES_ROM_GR_OBFIND", "AES_ROM_GR_ISDOWN", "AES_ROM_GR_PLNS", "AES_ROM_GR_BWAIT", "AES_ROM_MOVE_DRVICON",
             "AES_ROM_ACT_CHG", "AES_ROM_ACT_ALLCHG")
+# THE FIVE HELD AT BAND 6 SLICE F2 (stage 2), each until its C callees are flipped (`bench/linef_table.py`'s group G3 block
+# says why): gr_isdown (unit D's evnt_multi), gr_bwait (gr_isdown), act_chg, act_allchg and move_drvicon (unit I's
+# do_wredraw — move_drvicon's other callee, unit A's snap_disk, is flipped since stage 2). The unit's seven others are flipped.
+UNIT_B_HELD_AT_F2 = ("AES_ROM_GR_ISDOWN", "AES_ROM_GR_BWAIT", "AES_ROM_MOVE_DRVICON", "AES_ROM_ACT_CHG", "AES_ROM_ACT_ALLCHG")
+UNIT_B_FLIPPED = tuple(name for name in UNIT_B if name not in UNIT_B_HELD_AT_F2)
 
 
 # THE GROUP'S BAND, for what a labelled class lays: texts, points.
@@ -281,6 +286,37 @@ def answered_at_its_width(name, d0):
 def held_plain(each):
     """A PLAIN CASE: the differential over the arrival's megabyte (and what is laid). Its `aes.Result`."""
     return plain(arrival_of(each), *layers_of(each), **dict(each.steered or ()))
+
+
+# ---- band 6 slice F2 (group G3): A FLIPPED ROUTINE'S ROWS --------------------------------------------------------------------
+# EVERY CASE AT AN ARRIVAL OF A FLIPPED ROUTINE, REGISTERED (the orchestrator's provisional ruling R6, unit D's at slice F1:
+# the ROM's arrival machine taken over at the arrival): its machine THE ARRIVAL'S MEGABYTE WHOLE BUT THE HARNESS'S WINDOW
+# (`aes_desk.arrival_s_machine`: a row may poke no byte of a blob's span — the Tier 1 case runs over the whole megabyte,
+# which the window check holds equal to it there). A routine that never yields is a plain row (`aes.register`); one
+# that yields A ROW THAT SWITCHES (`aes_event.register_woken`) — through its door where it is a door user, with no door
+# else (its child's doors its own), the X flag declared where its yield parks each build's own. A LABELLED ARGUMENT CLASS
+# (a `why`) stays Tier 1's.
+def row_label(each):
+    """A row's label (the routine is its name's core): the arrival, and the wake where the case has one."""
+    return f"arrival {each.nth} of {each.chain}" + (f"; {each.wake}" if each.wake else "")
+
+
+def at_arrivals(by_label_of_cases, names):
+    """`{id: case}` of the cases at an arrival of their own (no argument class) of the routines `names`."""
+    return {name: each for name, each in by_label_of_cases.items() if not each.why and each.name in names}
+
+
+def register_row(each, *, answered, door_user=False, x_flag_differs=False):
+    """THE CASE `each` (at an arrival) REGISTERED: a plain row, or the row that switches of a routine that yields. The row."""
+    arrived = arrival_of(each)
+    pokes = aes_desk.arrival_s_machine(arrived.boot.ram)
+    if each.name not in YIELDING:
+        return aes.register(row_label(each), each.name, arrived.arguments, pokes, answer_compared=answered)
+    row = aes_event.woken_row(row_label(each), each.name, arrived.arguments, lambda: pokes, {}, None, objects=True,
+                              answered=answered)
+    door = row.door if door_user else None
+    return aes_event.register_woken(row._replace(door=door, child_doors="" if door_user else row.door.doors,
+                                                 x_flag_differs=x_flag_differs))
 
 
 # ---- LINKED AND UNBOUND -------------------------------------------------------------------------------------------------------

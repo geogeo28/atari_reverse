@@ -4718,8 +4718,12 @@ ROWS_THAT_SWITCH = {
     "aes_win_top": 2, "aes_zoom_closed": 2,
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # units A, K and J flipped (`test_desk_app.py`, `test_desk_top.py`, `test_desk_supp.py`): 36 rows that switch, none a door user's
+    "aes_app_tran": 2, "aes_app_rdicon": 2, "aes_app_blddesk": 4, "aes_men_list": 19, "aes_do_viewmenu": 4, "aes_cnx_put": 2,
+    "aes_drive_check": 3,
     # ---- end of group G2's ----
-    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- band 6 slice F2, group G3 (units B, G) ---- (`test_desk_act.py`: 9, none a door user's)
+    "aes_gr_obfind": 6, "aes_gr_plns": 3,
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- (`test_desk_dir.py`, `test_desk_fun.py`: 9, every one a door user's)
     "aes_desk_d_errmsg": 1, "aes_desk_hide_dial": 3, "aes_desk_fun_alert": 2, "aes_desk_fun_msg": 3,
@@ -4741,6 +4745,9 @@ WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tpla
 # the three rows of hctl_rect whose run makes no VDI call after the menu.
 A_ROW_S_OWN = "a row's own by nature: "
 THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
+# (band 6 slice F2, group G2) a door's parked return the shipped glue's `jsr` makes the `.S` park where the ROM's door parks
+# its caller's — R9's kind, declared (`test_desk_app.XBIOS_DOOR_PARKED`, `aes_desksupp.BIOS_DOOR_PARKED`)
+THE_XBIOS_DOOR_S_PARK, THE_BIOS_DOOR_S_PARK = A_ROW_S_OWN + "AES_XBIOS_RETURN", A_ROW_S_OWN + "AES_BIOS_RETURN"
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
     "the waits": {},
@@ -4775,8 +4782,12 @@ BY_NATURE_CENSUS = {
                                                  "aes_win_sinfo": 2,
                                                  # ---- end of group G1's ----
                                                  # ---- band 6 slice F2, group G2 (units A, K, J) ----
+                                                 # (`test_desk_app.X_FLAG_DIFFERS`)
+                                                 "aes_app_tran": 2, "aes_app_rdicon": 2,
                                                  # ---- end of group G2's ----
                                                  # ---- band 6 slice F2, group G3 (units B, G) ----
+                                                 # (`test_desk_act.X_FLAG_DIFFERS`)
+                                                 "aes_gr_obfind": 5,
                                                  # ---- end of group G3's ----
                                                  # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
                                                  # ---- end of group G4's ----
@@ -4790,6 +4801,9 @@ BY_NATURE_CENSUS = {
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
                                              "aes_dispatch": 4, "aes_marshal": 1},
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
+                           # ---- band 6 slice F2, group G2 (units A, K, J) ---- app_blddesk's every row, drive_check's three
+                           THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4}, THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 3},
+                           # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
                            THE_SCREEN_MANAGER_S_STACK: WITH_THE_SCREEN_MANAGER_OURS,

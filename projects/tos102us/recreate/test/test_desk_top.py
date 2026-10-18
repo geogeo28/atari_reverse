@@ -1,5 +1,6 @@
 """UNIT K, THE DESK'S MAIN LOOP'S HELPERS (`src/desk/desktop.c`; band 6 wave 1b, group G2): HELD AT TIER 1 AT THE
-ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but two (i_find, men_update: `aes_desktop.HELD_AT_F2`): the
+Line-F table's entry for each other is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskapp.arrival`) and A ROW THAT SWITCHES: each routine's menu changes go through
     unit D's bindings, which yield — the C through the host's scheduler held to the ROM's scheduled run, nothing
@@ -14,7 +15,7 @@ import aes_boot
 import aes_desk
 import aes_deskapp as da
 import aes_deskbind as db
-import aes_desktop  # noqa: F401  (the unit's signatures, declared)
+import aes_desktop
 import case
 
 BOOT = da.THE_BOOT
@@ -143,6 +144,208 @@ def test_no_caller_reads_what_men_update_or_cnx_put_leave_in_d0():
     """men_update's and cnx_put's D0 (their last binding's leftover) read by nothing: counted divergences."""
     for routine in (MEN_UPDATE, CNX_PUT):
         assert db.calls_of(da.entry_of(routine)) and not db.answer_readers(da.entry_of(routine))
+
+
+# ---- band 6 slice F2 (group G2): THE UNIT'S ROWS — every case at an arrival of a flipped routine (men_list, do_viewmenu,
+# cnx_put) a row that switches with NO DOOR (`aes_deskapp.register_switching`; MEASURED, the table's second count: none
+# makes a call of the event layer's door); the classes stay Tier 1's, the held two have no row. Their pins — DATA, measured
+# by the table's own measurement and each blob's second differential from the rows as registered; re-pinned from a
+# recorded run, never by hand.
+FLIPPED = tuple(name for name in aes_desktop.UNIT_K if name not in aes_desktop.HELD_AT_F2)
+# ...BUT A PLAIN ROW where the ROM's run reaches no binding that yields (MEASURED: its dispatcher entered no process) —
+# cnx_put with no window open, do_viewmenu asked the view the window already has; a plain row's run is refused by name
+# where it reaches the dispatcher.
+NO_SWITCH = frozenset({(CNX_PUT, BOOT), (CNX_PUT, "Options > Save Desktop, Return"), (CNX_PUT, "window: its closer clicked"),
+                       (DO_VIEWMENU, BOOT), (DO_VIEWMENU, "window: View > Show as Icons (the view it has)")})
+
+
+def _registered(routine, chain, nth):
+    arrived = da.arrival(routine, chain, nth)
+    if (routine, chain) in NO_SWITCH:
+        return da.register_plain(arrived)
+    return da.register_switching(arrived, door_user=False)
+
+
+ROWS = {f"{routine} {chain} {nth}": _registered(routine, chain, nth) for routine, chain, nth in AT_ARRIVALS if routine in FLIPPED}
+NO_DOOR_PREMISES = {
+    "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_cnx_put, arrival 0 of window: Options > Save Desktop, Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Date":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0, ()),
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Type":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0, ()),
+    "aes_do_viewmenu, arrival 0 of window: View > Show as Text":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0, ()),
+    "aes_do_viewmenu, arrival 0 of window: View > Sort by Size":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0, ()),
+    "aes_men_list, arrival 0 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 1 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 2 of A: opened":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_men_list, arrival 3 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 4 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 5 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 6 of A: opened":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_men_list, arrival 7 of A: opened":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 0 of Desk > Desktop Info, Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 1 of Desk > Desktop Info, Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 2 of Desk > Desktop Info, Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 0 of drive A: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 1 of drive A: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 2 of drive A: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 0 of file: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 1 of file: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 2 of file: selected":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_men_list, arrival 3 of file: selected":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED = {
+    "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
+        ((13666, 22582), None, None, (0, 0, 0)),
+    "aes_cnx_put, arrival 0 of window: Options > Save Desktop, Return":
+        ((13666, 22582), None, None, (0, 0, 0)),
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Date":
+        ((12302, 17504), None, None, (0, 0, 0)),
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Type":
+        ((12336, 17504), None, None, (0, 0, 0)),
+    "aes_do_viewmenu, arrival 0 of window: View > Show as Text":
+        ((12426, 17606), None, None, (0, 0, 0)),
+    "aes_do_viewmenu, arrival 0 of window: View > Sort by Size":
+        ((12332, 17504), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 0 of A: opened":
+        ((22596, 32602), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 1 of A: opened":
+        ((49108, 71652), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 2 of A: opened":
+        ((5652, 8276), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 3 of A: opened":
+        ((28190, 40664), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 4 of A: opened":
+        ((22596, 32602), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 5 of A: opened":
+        ((49108, 71652), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 6 of A: opened":
+        ((5652, 8276), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 7 of A: opened":
+        ((28190, 40664), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 0 of Desk > Desktop Info, Return":
+        ((22596, 32602), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 1 of Desk > Desktop Info, Return":
+        ((17002, 24540), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 2 of Desk > Desktop Info, Return":
+        ((28190, 40664), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 0 of drive A: selected":
+        ((22596, 32602), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 1 of drive A: selected":
+        ((11408, 16478), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 2 of drive A: selected":
+        ((17002, 24540), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 0 of file: selected":
+        ((22596, 32602), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 1 of file: selected":
+        ((17002, 24540), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 2 of file: selected":
+        ((49108, 71652), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 3 of file: selected":
+        ((5652, 8276), None, None, (0, 0, 0)),
+    "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
+        ((22596, 32602), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
+        {"bench": (36106, 27818), "bench_shipped": (36106, 28094)},
+    "aes_cnx_put, arrival 0 of window: Options > Save Desktop, Return":
+        {"bench": (36106, 27818), "bench_shipped": (36106, 28094)},
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Date":
+        {"bench": (31028, 26138), "bench_shipped": (31028, 26378)},
+    "aes_do_viewmenu, arrival 0 of files: View > Sort by Type":
+        {"bench": (31028, 26172), "bench_shipped": (31028, 26412)},
+    "aes_do_viewmenu, arrival 0 of window: View > Show as Text":
+        {"bench": (31130, 26262), "bench_shipped": (31130, 26502)},
+    "aes_do_viewmenu, arrival 0 of window: View > Sort by Size":
+        {"bench": (31028, 26168), "bench_shipped": (31028, 26408)},
+    "aes_men_list, arrival 0 of A: opened":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    "aes_men_list, arrival 1 of A: opened":
+        {"bench": (132510, 111370), "bench_shipped": (132510, 112450)},
+    "aes_men_list, arrival 2 of A: opened":
+        {"bench": (15038, 12570), "bench_shipped": (15038, 12690)},
+    "aes_men_list, arrival 3 of A: opened":
+        {"bench": (74474, 62780), "bench_shipped": (74474, 63380)},
+    "aes_men_list, arrival 4 of A: opened":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    "aes_men_list, arrival 5 of A: opened":
+        {"bench": (132510, 111370), "bench_shipped": (132510, 112450)},
+    "aes_men_list, arrival 6 of A: opened":
+        {"bench": (15038, 12570), "bench_shipped": (15038, 12690)},
+    "aes_men_list, arrival 7 of A: opened":
+        {"bench": (74474, 62780), "bench_shipped": (74474, 63380)},
+    "aes_men_list, arrival 0 of Desk > Desktop Info, Return":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    "aes_men_list, arrival 1 of Desk > Desktop Info, Return":
+        {"bench": (44826, 37756), "bench_shipped": (44826, 38116)},
+    "aes_men_list, arrival 2 of Desk > Desktop Info, Return":
+        {"bench": (74474, 62780), "bench_shipped": (74474, 63380)},
+    "aes_men_list, arrival 0 of drive A: selected":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    "aes_men_list, arrival 1 of drive A: selected":
+        {"bench": (30002, 25244), "bench_shipped": (30002, 25484)},
+    "aes_men_list, arrival 2 of drive A: selected":
+        {"bench": (44826, 37756), "bench_shipped": (44826, 38116)},
+    "aes_men_list, arrival 0 of file: selected":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    "aes_men_list, arrival 1 of file: selected":
+        {"bench": (44826, 37756), "bench_shipped": (44826, 38116)},
+    "aes_men_list, arrival 2 of file: selected":
+        {"bench": (132510, 111370), "bench_shipped": (132510, 112450)},
+    "aes_men_list, arrival 3 of file: selected":
+        {"bench": (15038, 12570), "bench_shipped": (15038, 12690)},
+    "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
+        {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+}
+
+
+def test_every_case_at_an_arrival_of_a_flipped_routine_is_a_row_and_its_pins_are_the_switching_ones():
+    import aes_switching
+    switching = [row for row in ROWS.values() if hasattr(row, "door")]       # (a plain row is a tuple)
+    assert {da.entry_of(name) for name in FLIPPED} == {row[1] if not hasattr(row, "door") else da.entry_of(row.name) for row in ROWS.values()}
+    assert (len(ROWS), len(switching)) == (30, 30 - len(NO_SWITCH)) and all(row.door is None for row in switching)
+    assert {aes_switching.row_name(row) for row in switching} == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_has_its_premise_on_the_rom_s_run(name):
+    da.vet_the_premise(name, NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    da.vet_on_a_blob(blob, name, NO_DOOR_PREMISES, NO_DOOR_PRICED, NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_is_priced_as_pinned_and_under_the_bar(name):
+    da.vet_the_price(name, NO_DOOR_PRICED)
 
 
 # ==== BAND 6 WAVE 2 (group G3): cnx_get `$fe2618` ==================================================================

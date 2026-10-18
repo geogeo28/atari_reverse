@@ -1131,6 +1131,10 @@ def register_row(row, under=None):
     `Registered` and one companion under every name. The row as registered."""
     row = row._replace(arguments=tuple(row.arguments), at_idle=dict(row.at_idle or {}))
     made = settled(row)
+    # (F2 stage 2's fix pass, reviewer B's F2: a "switching" row whose ROM run dispatches nothing is a plain row, priced
+    # alike — refused here, where no census could see it)
+    assert made.entered, (f"{row_name(row)}: registered as a row that switches, and the ROM's run through its "
+                          f"dispatcher enters no process — a plain row")
     held = Registered(row, made.pokes, made.drops, made.switches, made.entered, functools.partial(rederived, row), made.qpbs)
     undropped = functools.partial(companion, row)
     for name in under or (row_name(row),):

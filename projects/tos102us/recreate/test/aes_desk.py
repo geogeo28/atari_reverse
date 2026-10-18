@@ -1236,8 +1236,9 @@ OUR_MACHINES = {
 # dos_free's body `$fe3c28..`, which the glue's stubs `$fe3c16..$fe3c22` branched into, entered past its own start —
 # its own entry `$fe3c26` ours through the table, the one span `ENTERED_PAST_ITS_START` named; and dos_sfirst's
 # `moveq #1 / rts` `$fe3a08`, which dos_label branched into.)
-LMUL = 0xfe3db4
-ROM_TEXT_UNDER_ROM_CALLERS = {LMUL: "Alcyon's lmul: `jsr` from deskapp's $fdb220"}
+# (AND Alcyon's lmul `$fe3db4` WENT WITH app_rdicon's FLIP, band 6 slice F2 group G2 — its one ROM caller, deskapp's `$fdb220`
+# `jsr`: measured, it ran in no step of 'file: shown, a key at its end' on our shore since. Nothing is declared now.)
+ROM_TEXT_UNDER_ROM_CALLERS = {}
 # ...a span ENTERED PAST ITS START by the callers that reach it (reviewer B's F5): the routine's own entry is ours
 # through the table, so not a cycle of the ROM's text before `past` may run on our shore. `{its start: past}`. (Empty
 # since unit O's flip: its one span, dos_free's body, has no ROM caller left on our shore.)

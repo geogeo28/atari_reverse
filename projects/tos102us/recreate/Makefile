@@ -14,7 +14,12 @@ GAME := tos102us
 RECREATE := .
 include atari/target.mk
 BENCH_CFLAGS := $(TARGET_CFLAGS) $(TARGET_INCLUDES)
-BENCH_LDLIBS := $(TARGET_LDLIBS)
+# -Wl,-q keeps the link's relocations in the ELF (not in the flat blob, which is byte-identical): a longword that holds
+# an address is one a relocation wrote, so a by-value scan reads those and never an instruction's coincident bytes.
+# -q also KEEPS the empty .data / .bss output sections, which the default script aligns a max page (8 KB) past the
+# rodata: the kit's allocated span (`rom_bench._allocated_span`, every ALLOC section) would then claim 8 KB past the
+# blob as the blob's own, where no comparison looks. -z max-page-size=4 lays them at the blob's end (size 0), as before.
+BENCH_LDLIBS := $(TARGET_LDLIBS) -Wl,-q -Wl,-z,max-page-size=4
 
 # HOW THE SUITE IS SPREAD OVER THE WORKERS (`--dist worksteal`) is test/conftest.py's, not a PYTEST_ARGS of this file:
 # every override of PYTEST_ARGS (`make test PYTEST_ARGS="-n4 -k fuzz"`) would drop it, and `make guarded` has its own.

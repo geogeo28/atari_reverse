@@ -1,5 +1,6 @@
 """THE DESK'S PATH AND FILE NODES (`src/desk/deskfpd.c`; band 6 wave 1b, group G3, unit G): sixteen routines
-`$fdf6d0..$fdfc3b`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+`$fdf6d0..$fdfc3b`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2 (stage 2), FLIPPED: the
+Line-F table's entry for each is its thunk, and every case at an arrival is a Tier 3 plain row (`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskact.arrival`): a chain of the hands stopped at the routine's first
     instruction, the arguments read off the frame the desk's caller pushed. None of the sixteen reaches the
@@ -27,6 +28,7 @@ from harness import BASE_IMAGE, addrs
 
 import aes
 import aes_deskact as da
+import aes_deskarrive as dar
 import aes_deskbind as db
 import aes_deskfpd as df
 import aes_gemdosif as gd
@@ -327,18 +329,21 @@ def test_the_sort_chains_hand_pn_fcomp_their_own_keys_and_the_spec_s_arms_are_th
     assert [built(chain) for chain in (OPEN_A, SHOWN, FOLDER_OPENED)] == [b"A:\\*.*", b"A:\\*.*", b"A:\\A\\*.*"]
 
 
-# ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------------
-def test_no_function_of_a_blob_outside_the_unit_refers_to_one_of_its_routines(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every core of the unit
-    linked; and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core."""
-    assert not db.bound_referrers(blob, df.UNIT_G)
+# ---- FLIPPED (band 6 slice F2, stage 2) ------------------------------------------------------------------------------------------
+def test_the_unit_is_flipped(blob):
+    """THE FLIP PIN (`aes_deskarrive.flipped`): each core called by its own thunk of the table, each entry OURS THROUGH
+    THAT THUNK, none held — and no function outside the unbound desk refers to a core still held."""
+    dar.flipped(blob, df.UNIT_G)
 
 
-def test_the_table_s_entries_for_the_unit_stay_the_rom_s_and_no_registry_names_one():
-    verdicts, linef_table = da.table_verdicts(df.UNIT_G)
-    assert verdicts == {name: linef_table.THE_ROM_S for name in df.UNIT_G}
-    assert set(df.UNIT_G) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    assert not da.registered(df.UNIT_G)
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival a PLAIN ROW (`aes_deskact.register_row`: none of the
+# sixteen reaches the dispatcher), its answer compared where the C has one; the classes stay Tier 1's.
+ROWS = {name: da.register_row(each, answered=df.SIGNATURES[each.name][0] is not None)
+        for name, each in da.at_arrivals(BY_LABEL, df.UNIT_G).items()}
+
+
+def test_every_routine_of_the_unit_has_a_row_at_an_arrival():
+    assert {row[1] for row in ROWS.values()} == {da.entry_of(name) for name in df.UNIT_G} and len(ROWS) == ARRIVALS
 
 
 # ---- band 6 wave 2, group G2 (unit G): pn_close `$fdfa20`, pn_active `$fdfc3c` ---------------------------------------------------

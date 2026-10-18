@@ -513,7 +513,8 @@ def _unbound_extents(blob):
 
 def bound_longwords(blob, also=()):
     """...AND BY VALUE: the held cores (and the symbols `also`) whose address a longword of `blob`'s bytes holds, at
-    any even offset (a table entry, a vector's holder) — OUTSIDE THE INSTRUCTIONS OF THE UNBOUND DESK, where a held
+    every longword the link relocated (`transcription.address_longwords`: a table entry, a vector's holder; never an
+    instruction's bytes that merely spell an address) — OUTSIDE THE INSTRUCTIONS OF THE UNBOUND DESK, where a held
     core's own `jsr abs.l` names its callee. None, while nothing is bound."""
     named = held_cores() | set(also)
     starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(blob.elf) if symbol.name in named}
@@ -524,9 +525,8 @@ def bound_longwords(blob, also=()):
     declared = [(sized[function].start, sized[function].start + sized[function].size, set(cores))
                 for function, cores in REFERRED_BY_BAND_5.items() if function in sized]
     found = set()
-    for offset in range(0, len(image) - LONG_BYTES + 1, aes.WORD_BYTES):
-        (value,) = struct.unpack_from(">I", image, offset)
-        at = blob.base + offset
+    for at in sorted(transcription.address_longwords(blob.elf)):
+        (value,) = struct.unpack_from(">I", image, at - blob.base)
         if value in starts and not any(lo <= at and at + LONG_BYTES <= hi for lo, hi in extents) and not any(
                 lo <= at and at + LONG_BYTES <= hi and starts[value] in cores for lo, hi, cores in declared):
             found.add(starts[value])

@@ -162,7 +162,7 @@ def test_each_named_stop_has_its_address_on_our_shore():
 
 # ---- WHO RAN: the declared spans -------------------------------------------------------------------------------------------------------
 # A chain each of `aes_desk.ROM_TEXT_UNDER_ROM_CALLERS` runs in on our shore: no span is declared that nothing runs.
-RAN_IN = {desk.LMUL: "file: shown, a key at its end"}      # (unit O's five spans went with its flip: `aes_desk`'s note)
+RAN_IN = {}         # (unit O's five spans went with its flip, lmul with app_rdicon's at slice F2: `aes_desk`'s note)
 # band 6's routines whose entry of the shipped blob's table is ours: slice F1's 56 (O + D, three held) and, since slice
 # F2, each group's own count on a line inside its own block (no two authors edit one line; the pin is the sum)
 BAND_6_FLIPPED_AT_F2 = {
@@ -170,10 +170,10 @@ BAND_6_FLIPPED_AT_F2 = {
     "G1": 29,               # the 33 but do_wredraw, win_icalc, win_bldview, win_shwall
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
-    "G2": 0,
+    "G2": 15,               # the 17 but i_find, men_update
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
-    "G3": 0,
+    "G3": 23,               # unit G's sixteen, unit B's seven (gr_isdown, gr_bwait, act_chg, act_allchg, move_drvicon held)
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     "G4": 19,                           # unit C's ten, units H, E, F (eight), and unit D's appl_exit (⚠️ unpriced)
@@ -212,9 +212,27 @@ NOT_ENTERED_ON_OUR_SHORE = {
         "AES_ROM_DESK_WIND_CLOSE": "zoom_closed", "AES_ROM_DESK_WIND_CREATE": "win_alloc",
         "AES_ROM_DESK_WIND_DELETE": "win_free"}.items()},
     # ---- end of group G1's ----
-    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ---- (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`)
+    # EVERY ROM CALLER FLIPPED at slice F2 (group G2) — called by our C alone on our shore: two of the group's own, a binding
+    # of unit D's and a glue leaf of unit O's, whose last ROM callers were the group's...
+    **{name: f"its every ROM caller flipped at band 6 slice F2 (group G2: {callers}): called by our C alone on our shore" for name, callers in {
+        "AES_ROM_APP_TRAN": "app_rdicon", "AES_ROM_DESK_APPL_BVSET": "app_blddesk", "AES_ROM_DOS_GDIR": "app_path_save"}.items()},
+    # ...and two whose ROM callers still the ROM's reach them on NO WALKED CHAIN (measured here) — their flipped callers'
+    # calls are our C's
+    "AES_ROM_SCAN_STR": "its ROM callers but app_parse (flipped at slice F2, group G2) are the Install Disk Drive and Install "
+                        "Application dialogs (`$fdf11a`, `$fdf3c8`, the ROM's), which reach it on no walked chain",
+    "AES_ROM_WIN_VIEW": "its ROM callers but do_viewmenu and win_start (flipped at slice F2) are do_dopen's (the ROM's, wave 2), "
+                        "which reaches it on no walked chain",
     # ---- end of group G2's ----
-    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- band 6 slice F2, group G3 (units B, G) ---- ...CALLED BY OUR C ALONE: every Line-F call word of the routine in the
+    # ROM's GEM text lies in a routine G3 flipped at slice F2 (read off the image: `test_desk_act.CALLED_BY_G3_ALONE`) —
+    # five of unit G's own, unit D's objc_find binding and band 4's gsx_pline
+    **{f"AES_ROM_{routine}": f"its every call word in the ROM's text lies in {caller}, flipped at slice F2 (group G3): only "
+                             f"our C calls it" for routine, caller in (
+        ("FN_INIT", "fpd_start"), ("PN_INIT", "fpd_start"), ("FPD_BLDSPEC", "pn_open"), ("PN_ALLOC", "pn_open"),
+        ("FPD_ELIST", "fl_free"), ("PN_COMP", "pn_sort"), ("PN_FCOMP", "pn_comp"),
+        ("DESK_OBJC_FIND", "gr_obfind (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
+        ("GSX_PLINE", "gr_plns"))},
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     # ...CALLED BY OUR C ALONE: every Line-F call word of the routine in the ROM's GEM text lies in a routine G4 flipped at
@@ -481,14 +499,22 @@ def converse_broken(ours, rom):
 # band 6 slice F2) — laid back into the class, and ini_tree made still the ROM's, for the reader's test alone.
 INI_TREE_UNDER_ROM_RAM = Under("rom_ram's desk arm (the desktop sized, deskmain's second pass): ini_tree, the desk's tree 0",
                                158, ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)
+# ...and a probe OUTSIDE the class (F2 stage 2's fix pass, reviewer B's F1): with the class empty, a routine outside it
+# is the reader's ONLY live branch on every real chain — scan_str's entry, laid back as still the ROM's for this test
+# alone (it is flipped since stage 2), so the probe holds whatever flips next.
+OUTSIDE_THE_CLASS = 0xfdb014
 
 
 def test_the_converse_reader_holds_a_differing_routine_and_the_class_one_pass_a_caller_s_run_exactly(monkeypatch):
     monkeypatch.setitem(RUN_UNDER_BANDS_0_TO_5, INI_TREE, INI_TREE_UNDER_ROM_RAM)
-    still = desk.still_the_rom_s() | {INI_TREE}
+    still = desk.still_the_rom_s() | {INI_TREE, OUTSIDE_THE_CLASS}
     monkeypatch.setattr(desk, "still_the_rom_s", lambda blob=None: still)
-    one, two = desk.Profile(((0xfdb014, 10),), 0, 0), desk.Profile(((0xfdb014, 12),), 0, 0)
-    assert converse_broken(one, one) == [] and converse_broken(one, two) == [("0xfdb014", 10, 12)]
+    # (a differing routine: ini_tree itself, with no caller run; and one outside the class, reported plainly)
+    one, two = desk.Profile(((INI_TREE, 10),), 0, 0), desk.Profile(((INI_TREE, 12),), 0, 0)
+    assert converse_broken(one, one) == [] and converse_broken(one, two) == [(f"{INI_TREE:#x}", 10, 12)]
+    plain, other = desk.Profile(((OUTSIDE_THE_CLASS, 10),), 0, 0), desk.Profile(((OUTSIDE_THE_CLASS, 12),), 0, 0)
+    assert OUTSIDE_THE_CLASS not in RUN_UNDER_BANDS_0_TO_5
+    assert converse_broken(plain, other) == [(f"{OUTSIDE_THE_CLASS:#x}", 10, 12)]
     caller = (ROM_RAM_S_ARM_RETURN, ADDQ_L_AN_CYCLES)
     once = desk.Profile(((INI_TREE, 2 * 158), caller), 0, 0)
     assert converse_broken(desk.Profile(((INI_TREE, 158),), 0, 0), once) == []

@@ -86,10 +86,10 @@ FLIPPED_AT_F2 = {
     "G1": (29, 29, 15),     # the 33 but do_wredraw, win_icalc, win_bldview, win_shwall (held); one entry and one thunk each
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
-    "G2": (0, 0, 0),
+    "G2": (15, 15, 10),     # the 17 but i_find, men_update (held); entered but UNENTERED's five, whose every row switches
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ----
-    "G3": (0, 0, 0),
+    "G3": (23, 23, 21),     # unit G's sixteen, unit B's seven but its five held; all entered but UNENTERED's two
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     "G4": (19, 19, 15),                 # unit C's ten, units H / E / F's eight, appl_exit; all entered but UNENTERED's four
@@ -643,9 +643,14 @@ UNENTERED = {
         "OBJ_INIT", "OBJ_IALLOC", "PRO_EXEC", "DESK_RSRC_LOAD", "INI_TREE", "INI_STR", "DO_XYFIX", "ZOOM_CLOSED", "DO_WFULL",
         "WIN_START", "WIN_ALLOC", "WIN_FREE", "WIN_TOP", "WIN_SINFO")},
     # ---- end of group G1's ----
-    # ---- band 6 slice F2, group G2 (units A, K, J) ----
+    # ---- band 6 slice F2, group G2 (units A, K, J) ---- THE FIVE FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore
+    # instead — `test_aes_desk_ours.py`; cnx_put's and do_viewmenu's plain rows enter theirs: `test_desk_top.NO_SWITCH`)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("APP_TRAN", "APP_RDICON", "APP_BLDDESK", "MEN_LIST", "DRIVE_CHECK")},
     # ---- end of group G2's ----
-    # ---- band 6 slice F2, group G3 (units B, G) ----
+    # ---- band 6 slice F2, group G3 (units B, G) ---- THE TWO FLIPPED THAT YIELD (every case of each a row that switches:
+    # gr_obfind through the objc_find binding, gr_plns through graf_mouse's — entered on our shore instead,
+    # `test_aes_desk_ours.py`)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("GR_OBFIND", "GR_PLNS")},
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- the three that yield on every case (rows that switch: hide_dial,
     # fun_alert, fun_msg), entered on our shore instead (`test_aes_desk_ours.py`); and appl_exit, flipped with NO ROW
@@ -857,13 +862,11 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     ("aes_deskview", "HELD_AT_F2"): 3,   # unit L: win_icalc (app_afind), win_bldview (win_icalc), win_shwall (fun_msg)
     # ---- end of group G1's ----
     # ---- band 6 wave 1b, group G2 (units A, K, J) ----
-    ("aes_deskapp", "UNIT_A"): 11,       # unit A
-    ("aes_desktop", "UNIT_K"): 5,        # unit K
-    ("aes_desksupp", "UNIT_J"): 1,       # unit J
+    # (units A, K and J FLIPPED at band 6 slice F2 — but two of K held, each until its C callees are: `HELD_AT_F2` says why)
+    ("aes_desktop", "HELD_AT_F2"): 2,    # unit K: i_find (app_afind, fpd_ofind), men_update (i_find)
     # ---- end of group G2's ----
     # ---- band 6 wave 1b, group G3 (units B, G) ----
-    ("aes_deskact", "UNIT_B"): 12,       # unit B: the hit tests and drags
-    ("aes_deskfpd", "UNIT_G"): 16,       # unit G: the path and file nodes
+    ("aes_deskact", "UNIT_B_HELD_AT_F2"): 5,     # unit B's five whose C calls a held core; its seven others and unit G flipped at F2
     # ---- end of group G3's ----
     # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
     ("aes_deskdir", "UNIT_C_HELD_AT_F2"): 4,     # unit C's dialog drawers (objc_draw's callers); units H, E, F and ten of C flipped at F2

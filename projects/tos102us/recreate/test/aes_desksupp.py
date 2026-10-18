@@ -167,6 +167,34 @@ def row_of(arrived, replay, label=None, laid=()):
     return row._replace(door=aes_switch.DoorUser(True, source))
 
 
+# ---- band 6 slice F2 (group G2): drive_check's ROW at an arrival — a row that switches with NO DOOR (measured: desk_wait's
+# yields make no call of the event layer's door), over the arrival's machine (`aes_deskapp.switching_row`): the floppy
+# replayed as Tier 1's, Malloc and Mfree answered by BAND 5's scripted trap (`aes_shell`, told Mfree at slice R8: the
+# rows' convention), both said in the row's name. AES_BIOS_RETURN NAMED BY NATURE (`BIOS_DOOR_PARKED`): the C reaches
+# trp13's `.S` through the shipped blob's glue, whose `jsr` parks THE GLUE'S return there where the ROM's door parks its
+# caller's — F1's declared divergence (R9's kind, `test_the_bios_door_s_parked_return_is_named_by_trp13_alone`: no ROM
+# instruction but trp13's own two reads it). Its three low bytes: the high byte is 0 on both shores, an address under
+# 16 MB, which the ROM's run never changes — a name over it is refused (`aes_switching._its_own_by_nature`).
+BIOS_DOOR_PARKED = ((aes.AES_BIOS_RETURN + 1, aes.AES_BIOS_RETURN + aes.LONG_BYTES,
+                     "AES_BIOS_RETURN: the shipped glue parks its own return, the ROM's door its caller's — read by trp13 alone"),)
+
+
+def row_doors(replay, drive):
+    """The row's child's doors: band 5's scripted trap's twins, and the floppy's two hooks (`bind_replay_in_a_child`)."""
+    import aes_deskwin
+    return (f"{aes_deskwin.SHELL_CHILD_DOORS}import aes_desksupp; aes_desksupp.bind_replay_in_a_child(lib, "
+            f"{aes.signed(replay.floprd)}, {aes.signed(replay.rwabs, bits=32)}, {read_frame(replay, drive)!r}, "
+            f"{change_frame(drive)!r}); ")
+
+
+def register_row(arrived):
+    """drive_check's case at `arrived`, REGISTERED as its row (above)."""
+    replay, drive = in_place(arrived), arrived.arguments[0] - ord("A")
+    return da.register_switching(arrived, door_user=False, answers=(replay.malloc, replay.mfree),
+                                 layers=(floppy_staged(replay),), said=DRIVER_REPLAYED, doors=row_doors(replay, drive),
+                                 also_dropped=BIOS_DOOR_PARKED)
+
+
 
 # ==== BAND 6 WAVE 2 (group G3): GEMDOS AND THE FLOPPY REPLAYED UNDER THE WINDOWS' OPENERS AND CLOSERS ==================
 # do_diropen reads a path (pn_active: Fsetdta, Fsfirst, Fsnext), do_dopen and do_fopen check a drive first

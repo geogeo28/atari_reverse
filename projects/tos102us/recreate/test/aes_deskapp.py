@@ -330,3 +330,74 @@ def unit_scripted_row(arrived, answers, layers=(), **kwargs):
 def dos_calls(image):
     """The recording trap's ledger in `image`: `[(function, frame bytes and the two parked returns)]`, in order."""
     return GEMDOS.ledger.recorded(image)
+
+
+# ---- band 6 slice F2 (group G2): A FLIPPED ROUTINE'S ROWS ------------------------------------------------------------------
+# EACH CASE AT AN ARRIVAL OF A FLIPPED ROUTINE, REGISTERED — the orchestrator's provisional ruling R6, F1's row kind (units
+# I and L's, `aes_deskwin.register_row`): the ROM's arrival machine taken over at the arrival, its machine THE ARRIVAL'S
+# MEGABYTE WHOLE BUT THE HARNESS'S WINDOW (`aes_desk.arrival_s_machine`), a case's labelled staging laid over it; priced on
+# the routine's own cycles against the ROM's. A routine that yields is A ROW THAT SWITCHES (`aes_event.register_woken`) —
+# a door user's (its run arrives at an entry of the event layer's door) or with no door, the X flag declared where its
+# yield parks each build's own (`aes_switching.THE_X_FLAG_ALONE`) —, any other a plain row (`aes.register`). A routine
+# that traps through the DOS glue has its `trap #1` answered on both shores by BAND 5's RECORDING, SCRIPTED TRAP
+# (`aes_shell`, told the desk's frames at slice R8 — the user's ruling R8) with the answers the ROM's run in place got:
+# `ROW_SCRIPTED`, said in the row's name. (Tier 1 keeps this unit's recorder, `SCRIPTED`.) The classes stay Tier 1's.
+def row_label(arrived, scripted=False, said=""):
+    """A row's label: the arrival, band 5's scripted trap said where it is staged, and any other staging `said`."""
+    import aes_deskwin
+    return f"arrival {arrived.nth} of {arrived.chain}" + (f"; {aes_deskwin.ROW_SCRIPTED}" if scripted else "") + (f"; {said}" if said else "")
+
+
+def row_machine(arrived, answers=None, *layers):
+    """A row's pokes: the arrival's megabyte whole but the harness's window — band 5's trap scripted with `answers`
+    where given — and `layers`."""
+    import aes_shell
+    scripted = () if answers is None else (aes_shell.scripted_pokes(answers),)
+    return case.merge_pokes(aes_desk.arrival_s_machine(arrived.boot.ram), *scripted, *layers)
+
+
+def register_plain(arrived, answers=None, *layers):
+    """THE CASE (a routine that never yields) REGISTERED: a plain row over `row_machine`, its answer compared where the
+    core answers one."""
+    import aes_shell
+    return aes.register(row_label(arrived, answers is not None), arrived.routine, arrived.arguments,
+                        row_machine(arrived, answers, *layers), hook=aes_shell.scripted_hook if answers is not None else None,
+                        answer_compared=vdi.ALCYON[arrived.routine].restype is not None)
+
+
+def switching_row(arrived, *, door_user, x_flag_differs=False, answers=None, layers=(), said="", doors=None, also_dropped=()):
+    """The case's ROW THAT SWITCHES over `row_machine` (`layers` a staging `said` in its label): a door user's or one with
+    no door, its child's doors the routine's declared ones — band 5's scripted trap's where it traps — or `doors`; the
+    bytes `also_dropped` its own by nature (`aes_switching.SwitchingRow`)."""
+    import aes_deskwin
+    pokes, signature = row_machine(arrived, answers, *layers), vdi.ALCYON[arrived.routine]
+    the_row = aes_event.woken_row(row_label(arrived, answers is not None, said), arrived.routine, arrived.arguments, lambda: pokes,
+                                  {}, None, objects=True, answered=signature.restype is not None)
+    doors = doors if doors is not None else (aes_deskwin.SHELL_CHILD_DOORS if answers is not None else the_row.door.doors)
+    door = the_row.door._replace(doors=doors) if door_user else None
+    return the_row._replace(door=door, child_doors="" if door_user else doors, x_flag_differs=x_flag_differs,
+                            also_dropped=tuple(also_dropped))
+
+
+def register_switching(arrived, **kwargs):
+    """...registered (`aes_event.register_woken`)."""
+    return aes_event.register_woken(switching_row(arrived, **kwargs))
+
+
+# ---- band 6 slice F2 (group G2): WHAT EACH OF THE GROUP'S BATTERIES HOLDS OF ITS ROWS THAT SWITCH, by the row's name — its
+# pins (`aes_switching.Premise`, `Priced`, the whole run's pair a blob) as the battery spells them ----
+def registered_row(name):
+    """The registered switching row of that name."""
+    return aes_event.SWITCHING_ROWS[name].row
+
+
+def vet_the_premise(name, premises):
+    switching.vet_the_premise(registered_row(name), switching.Premise(*premises[name]))
+
+
+def vet_on_a_blob(blob, name, premises, priced, whole):
+    switching.vet_on_a_blob(blob, registered_row(name), switching.Premise(*premises[name]), priced[name][3], whole[name])
+
+
+def vet_the_price(name, priced):
+    switching.vet_the_table_s_price(registered_row(name), switching.Priced(*priced[name]))

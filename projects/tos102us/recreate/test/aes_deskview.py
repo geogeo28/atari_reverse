@@ -31,10 +31,10 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_L = tuple(SIGNATURES)
-# ---- band 6 slice F2 ---- FLIPPED but three (`linef_table.LINKED_AND_NOT_FLIPPED` says why the same): win_icalc and
-# win_bldview, whose C calls a core still held (app_afind, group G3's; win_icalc); and win_shwall, held only because the
-# groups flipped in parallel — its C callees (win_ith, the wind_get binding, fun_msg) are all flipped since stage 1: F2b
-# flips it.
+# ---- band 6 slice F2 ---- FLIPPED but three (`linef_table.LINKED_AND_NOT_FLIPPED` says why the same), each held only
+# because the groups flipped in parallel — F2b flips them: win_icalc, whose C callee app_afind is flipped since stage 2
+# (measured: flipped, only declarations red); win_bldview, whose C calls win_icalc; and win_shwall, whose C callees
+# (win_ith, the wind_get binding, fun_msg) are all flipped since stage 1.
 HELD_AT_F2 = ("AES_ROM_WIN_ICALC", "AES_ROM_WIN_BLDVIEW", "AES_ROM_WIN_SHWALL")
 # ---- band 6 wave 2, group G3 (unit L) ---- the unit's wave-2 routines: their own signatures and list, so wave
 # 1b's UNIT_L (and its count) stays as it is

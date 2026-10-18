@@ -1,5 +1,8 @@
 """THE DESK'S HIT TESTS AND ICON DRAGS (`src/desk/deskact.c`; band 6 wave 1b, group G3, unit B), HELD AT TIER 1 AT
-THE ARRIVALS OF ROM RUNS — LINKED, AND NOTHING BOUND.
+THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2 (stage 2), SEVEN OF THEM FLIPPED: the Line-F table's entry for each
+is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`, below). The five whose C calls a core still
+held (gr_isdown: unit D's evnt_multi; gr_bwait: gr_isdown; act_chg, act_allchg, move_drvicon: unit I's do_wredraw) stay
+LINKED AND NOT FLIPPED (`aes_deskact.UNIT_B_HELD_AT_F2`).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskact.arrival`): a chain of the hands stopped at the routine's first instruction,
     the arguments read off the frame the desk's caller pushed. A routine whose callees never reach the dispatcher is
@@ -19,6 +22,7 @@ import pytest
 import aes
 import aes_desk
 import aes_deskact as da
+import aes_deskarrive as dar
 import aes_deskbind as db
 import aes_event
 import case
@@ -224,6 +228,9 @@ CASES = (
          arguments=lambda arrived: (3, da.BAND_AT, arrived.arguments[2]), laid=("three points", _points_laid)),
     Case("AES_ROM_GR_OBALIGN", DRAGGED), Case("AES_ROM_GR_OBALIGN", FILE_TRASHED),
     # act_chkobj: an icon hit at a point; an icon's whole rectangle; a text line; an icon's object MISSED (its corner)
+    # UNPINNED BY NAME (F2 stage 2's review, MG5 survived): the text line's LAST CELL — its width is 45 cells, and no
+    # case's point or rectangle lies in the 45th alone, so a width of 44 answers alike. No chain reaches it: every
+    # hand's click on a text line is the line's middle (`aes_desk.text_line_point`), the rubber boxes are the desktop's.
     Case("AES_ROM_ACT_CHKOBJ", SELECTED, 0), Case("AES_ROM_ACT_CHKOBJ", SELECTED, 1), Case("AES_ROM_ACT_CHKOBJ", AS_TEXT),
     Case("AES_ROM_ACT_CHKOBJ", OPEN_A), Case("AES_ROM_ACT_CHKOBJ", CORNER, 0, arm=lambda a: a[5:] == (1, 1)),
     Case("AES_ROM_ACT_CHKOBJ", TEXT_VIEW_OPENED, 0, arm=lambda a: a[1] == DESK_ROOT),     # (the desktop's own: icons, whatever the view)
@@ -365,19 +372,142 @@ def test_the_cases_whose_d0_the_c_does_not_have_are_counted():
     assert Counter(BY_LABEL[name].name in VOID for name in BY_LABEL)[True] == NO_WORD_IN_C
 
 
-# ---- LINKED AND UNBOUND -----------------------------------------------------------------------------------------------------------
-def test_no_function_of_a_blob_outside_the_unit_refers_to_one_of_its_routines(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk): every core of the unit
-    linked; and no function outside the unbound desk (the held cores and what only they reach) refers to ANY held core (unit L's
-    win_icalc calls app_afind: an importer of wave 1b, itself unbound)."""
-    assert not db.bound_referrers(blob, da.UNIT_B)
+# ---- FLIPPED (band 6 slice F2, stage 2) — AND THE FIVE HELD, UNBOUND -------------------------------------------------------------
+def test_the_unit_s_seven_are_flipped_and_its_five_held_unbound(blob):
+    """THE FLIP PIN of the seven (`aes_deskarrive.flipped`: each core called by its own thunk, its entry OURS THROUGH
+    THAT THUNK) and THE UNBOUND PIN of the five held (`aes_deskarrive.unbound`: their entries the ROM's, no registry row,
+    and no function outside the unbound desk refers to any held core)."""
+    dar.flipped(blob, da.UNIT_B_FLIPPED)
+    dar.unbound(blob, da.UNIT_B_HELD_AT_F2)
 
 
-def test_the_table_s_entries_for_the_unit_stay_the_rom_s_and_no_registry_names_one():
-    verdicts, linef_table = da.table_verdicts(da.UNIT_B)
-    assert verdicts == {name: linef_table.THE_ROM_S for name in da.UNIT_B}
-    assert set(da.UNIT_B) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    assert not da.registered(da.UNIT_B)
+# ---- band 6 slice F2: THE UNIT'S ROWS — every case at an arrival of a flipped routine registered
+# (`aes_deskact.register_row`): a plain row (app_afind, gr_accobs, gr_extent, gr_obalign, act_chkobj), or A ROW THAT
+# SWITCHES (gr_obfind: the objc_find binding's yield; gr_plns: graf_mouse's) — WITH NO DOOR (measured: no run of either
+# makes a call of the event layer's door), held here three ways (premise, whole run on both blobs, price). The classes
+# stay Tier 1's; the five held have no row.
+#   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`), MEASURED (each row's blob differential at `$8995`, `$00` ours / `$10`
+#     the ROM's): declared on gr_obfind's rows whose objc_find finds an object (the binding's yield after the C's own
+#     compare) — not on the rubber box's, whose point is on no icon, nor on gr_plns's.
+X_FLAG_DIFFERS = frozenset(name for name, each in BY_LABEL.items()
+                           if each.name == "AES_ROM_GR_OBFIND" and not each.why and each.chain != RUBBER)
+ROWS = {name: da.register_row(each, answered=_answers(each.name), x_flag_differs=name in X_FLAG_DIFFERS)
+        for name, each in da.at_arrivals(BY_LABEL, da.UNIT_B_FLIPPED).items()}
+
+# ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by each
+# blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
+NO_DOOR_PREMISES = {
+    'aes_gr_obfind, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), 8, ()),
+    'aes_gr_obfind, arrival 0 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_gr_obfind, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), 8, ()),
+    "aes_gr_obfind, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        ((), 0, 0xae5e, (0xae5e,), 1, ()),
+    'aes_gr_obfind, arrival 0 of file: selected':
+        ((), 0, 0xae5e, (0xae5e,), 9, ()),
+    'aes_gr_obfind, arrival 3 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e,), 6, ()),
+    'aes_gr_plns, arrival 0 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_gr_plns, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED = {
+    'aes_gr_obfind, arrival 0 of A: opened':
+        ((9822, 16074), None, None, (0, 0, 0)),
+    'aes_gr_obfind, arrival 0 of a rubber box on the desktop, round the trash':
+        ((10132, 17958), None, None, (0, 0, 0)),
+    'aes_gr_obfind, arrival 0 of drive A: selected':
+        ((9822, 16074), None, None, (0, 0, 0)),
+    "aes_gr_obfind, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        ((9824, 16048), None, None, (0, 0, 0)),
+    'aes_gr_obfind, arrival 0 of file: selected':
+        ((9442, 15478), None, None, (0, 0, 0)),
+    'aes_gr_obfind, arrival 3 of drive A: dragged to the trash, Return':
+        ((12104, 20572), None, None, (0, 0, 0)),
+    'aes_gr_plns, arrival 0 of drive A: dragged to the trash, Return':
+        ((18810, 24322), None, None, (0, 0, 0)),
+    'aes_gr_plns, arrival 0 of file: dragged to the trash, OK':
+        ((18802, 24314), None, None, (0, 0, 0)),
+    'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
+        ((18810, 24322), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    'aes_gr_obfind, arrival 0 of A: opened':
+        {"bench": (22836, 17344), "bench_shipped": (22836, 17412)},
+    'aes_gr_obfind, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (24720, 18010), "bench_shipped": (24720, 17602)},
+    'aes_gr_obfind, arrival 0 of drive A: selected':
+        {"bench": (22836, 17344), "bench_shipped": (22836, 17412)},
+    "aes_gr_obfind, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        {"bench": (22810, 17346), "bench_shipped": (22810, 17414)},
+    'aes_gr_obfind, arrival 0 of file: selected':
+        {"bench": (22240, 16964), "bench_shipped": (22240, 17032)},
+    'aes_gr_obfind, arrival 3 of drive A: dragged to the trash, Return':
+        {"bench": (27334, 20106), "bench_shipped": (27334, 19910)},
+    'aes_gr_plns, arrival 0 of drive A: dragged to the trash, Return':
+        {"bench": (115872, 112400), "bench_shipped": (115872, 112464)},
+    'aes_gr_plns, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (116182, 112710), "bench_shipped": (116182, 112774)},
+    'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
+        {"bench": (115872, 112400), "bench_shipped": (115872, 112464)},
+}
+ROWS_MADE, SWITCHING = 27, 9
+
+
+def _registered_row(name):
+    return aes_event.SWITCHING_ROWS[name].row
+
+
+def test_every_flipped_routine_has_a_row_at_an_arrival_and_every_row_that_switches_is_pinned():
+    import aes_switching
+    entries = {da.entry_of(row.name) if hasattr(row, "door") else row[1] for row in ROWS.values()}      # (a plain row is a tuple)
+    assert entries == {da.entry_of(name) for name in da.UNIT_B_FLIPPED} and len(ROWS) == ROWS_MADE
+    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door")}
+    assert not any(row.door for row in ROWS.values() if hasattr(row, "door")), "a row that switches through its door"
+    assert set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == switching and len(switching) == SWITCHING
+    assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == X_FLAG_DIFFERS and len(X_FLAG_DIFFERS) == 5
+
+
+# THE ROUTINES G3'S FLIP LEAVES ENTERED BY NO WALKED CHAIN (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`, group G3's block):
+# every Line-F call word of each in the ROM's GEM text lies in a routine G3 flipped — so on our shore only our C calls it.
+CALLED_BY_G3_ALONE = {"AES_ROM_FN_INIT": {"AES_ROM_FPD_START"}, "AES_ROM_PN_INIT": {"AES_ROM_FPD_START"},
+                      "AES_ROM_FPD_BLDSPEC": {"AES_ROM_PN_OPEN"}, "AES_ROM_PN_ALLOC": {"AES_ROM_PN_OPEN"},
+                      "AES_ROM_FPD_ELIST": {"AES_ROM_FL_FREE"}, "AES_ROM_PN_COMP": {"AES_ROM_PN_SORT"},
+                      "AES_ROM_PN_FCOMP": {"AES_ROM_PN_COMP"}, "AES_ROM_DESK_OBJC_FIND": {"AES_ROM_GR_OBFIND"},
+                      "AES_ROM_GSX_PLINE": {"AES_ROM_GR_PLNS"}}
+
+
+def test_the_routines_g3_s_flip_leaves_entered_by_no_chain_are_called_by_g3_s_flipped_routines_alone():
+    import test_aes_desk_ours
+    held = dar._linef_table().LINKED_AND_NOT_FLIPPED
+    for name, callers in CALLED_BY_G3_ALONE.items():
+        assert dar.rom_callers(name) == {da.entry_of(caller) for caller in callers}, name
+        assert not callers & set(held), name
+    assert set(CALLED_BY_G3_ALONE) <= set(test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    import aes_switching
+    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*NO_DOOR_PREMISES[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    import aes_switching
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES[name])
+    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, NO_DOOR_PRICED[name][3], NO_DOOR_WHOLE_RUN[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    import aes_switching
+    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*NO_DOOR_PRICED[name]))
 
 
 def test_the_new_chains_of_the_group_reach_what_they_were_made_for():

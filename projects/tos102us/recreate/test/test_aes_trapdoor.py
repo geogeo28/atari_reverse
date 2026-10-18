@@ -300,7 +300,9 @@ def _door_entry_named(value):
 
 
 def _words_naming_the_rom_s_door(blob):
-    """`{address in blob: the door's entry named}` over every even longword of `blob`."""
+    """`{address in blob: the door's entry named}` over every even longword of `blob`. BY VALUE, not over the link's
+    relocations (`transcription.address_longwords`, the handler count below): the ROM's door addresses are `.equ`
+    constants, which no relocation writes. A coincidence here (instruction bytes spelling $00fe….) REDS, never hides."""
     return {blob.base + offset: _door_entry_named(int.from_bytes(blob.blob[offset:offset + LONG_BYTES], "big"))
             for offset in range(0, len(blob.blob) - LONG_BYTES + 1, WORD_BYTES)
             if _door_entry_named(int.from_bytes(blob.blob[offset:offset + LONG_BYTES], "big"))}
@@ -314,9 +316,10 @@ def test_no_word_of_a_blob_names_the_rom_s_door_and_the_takes_store_the_build_s_
         operand = takes + _operand(site) - blob.base
         assert blob.blob[operand:operand + LONG_BYTES] == handler, f"the take at ${site:x} does not store `{HANDLER}`"
     # ...and the twins: each body holds the handler's address once (the bench blob sizes them; the shipped blob's weak
-    # bodies are counted with the `.S`'s two — four words a blob, wherever the linker laid them)
-    holding = [offset for offset in range(0, len(blob.blob) - LONG_BYTES + 1, WORD_BYTES)
-               if blob.blob[offset:offset + LONG_BYTES] == handler]
+    # bodies are counted with the `.S`'s two — four words a blob, wherever the linker laid them; counted over the link's
+    # relocations, so an instruction whose bytes spell the handler's address, `cmpi.w #4,d2; bne.s` = $0004 $66f4, is none)
+    holding = [at - blob.base for at in sorted(transcription.address_longwords(blob.elf))
+               if blob.blob[at - blob.base:at - blob.base + LONG_BYTES] == handler]
     assert len(holding) == len(VECTOR_TAKE_SITES) + len(THEIR_C_TWINS)
     if blob.elf == transcription.BENCH_ELF:
         twins = [door.text_spans(blob)[twin] for twin in THEIR_C_TWINS]

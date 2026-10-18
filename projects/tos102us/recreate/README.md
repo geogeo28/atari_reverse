@@ -536,7 +536,12 @@ what its flip still owes: TWO since slice F2, evnt_multi and objc_draw — appl_
 each is flipped (`aes_deskwin.HELD_AT_F2`, `aes_deskview.HELD_AT_F2`: do_wredraw, win_icalc, win_bldview, win_shwall;
 `aes_deskdir.UNIT_C_HELD_AT_F2`: draw_dial, show_dial, draw_fld, do_namecon); the GEMDOS users' rows (pro_chdir, win_top,
 win_ontop's text arrival) go over BAND 5's recording trap (`aes_deskwin.ROW_SCRIPTED`, said in the row's name) while their
-Tier 1 cases keep unit O's. Unit O's GEMDOS glue and gemdosif's share their four
+Tier 1 cases keep unit O's. SINCE ITS STAGE 2 units B, G (group G3) and A, K, J (group G2) ARE FLIPPED TOO — BUT SEVEN
+HELD (`aes_deskact.UNIT_B_HELD_AT_F2`: gr_isdown, gr_bwait for evnt_multi, act_chg, act_allchg, move_drvicon for
+do_wredraw; `aes_desktop.HELD_AT_F2`: i_find, a stage artifact F2b flips, and men_update, its caller); their GEMDOS users
+(app_getfh, app_path_save / _restore, app_rdicon, drive_check) go over band 5's trap the same way, and the two door parks a
+flipped caller leaves are named BY NATURE in its rows (app_blddesk's AES_XBIOS_RETURN, drive_check's AES_BIOS_RETURN:
+their three low bytes, held at Tier 1). Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with
@@ -674,8 +679,15 @@ reaches a binding of unit D's, else the plain differential.
   (`LINKED_AND_NOT_FLIPPED`) and every function ONLY THEY reach (a static helper, by its callers, never its name); a
   function outside it referring to ANY held core reds EVERY unit's pin — and, by value, a longword of a blob holding a
   held core's address outside the unbound desk's own instructions (a held core's `jsr abs.l` of another is its
-  operand). A held core cannot be flipped quietly behind it: `test_aes_lineftable.py` refuses a held name that is
-  native, entered by ours alone or registered.
+  operand). THAT SCAN READS THE LINK'S RELOCATIONS, NOT EVERY EVEN OFFSET (`transcription.address_longwords`, band 6
+  slice F2's stage 2): both bench links take `-Wl,-q` (the Makefile's `BENCH_LDLIBS`; the flat blobs byte-identical, the
+  disassembly instruction for instruction), with `-z max-page-size=4` beside it — `-q` keeps the empty `.data` /
+  `.bss`, which the default script lays 8 KB past the blob, and the kit's allocated span would claim those 8 KB as
+  the blob's own; laid at its end, only the linker symbols `__bss_start` / `_edata` / `_end` move — so a longword is
+  an address exactly where an `R_68K_32` wrote one — instruction bytes that merely spell one (`btst #5,d0; beq.s` =
+  `$0005 $6714`) are none, whatever the layout. `test_aes_trapdoor`'s handler count reads the same; its ROM-door half
+  stays by value (`.equ` constants carry no relocation, so a coincidence there reds). A held core cannot be flipped
+  quietly behind it: `test_aes_lineftable.py` refuses a held name that is native, entered by ours alone or registered.
 - **THE DESK'S GLOBALS HAVE ONE HOME** (`include/desk/deskglobals.h`): every offset into the desk's block once (GEM's
   `g_*` / `ml_*` name where the published desktop has one; the ROM's own instruction beside it), an ANODE's layout and
   its a_type values, the desktop's root, the two views, the sort keys, and the helpers every unit had spelt
