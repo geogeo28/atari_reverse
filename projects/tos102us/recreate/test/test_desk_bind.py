@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pytest
 
-from harness import addrs
+from harness import BASE_IMAGE, addrs
 
 import aes
 import aes_boot
@@ -46,6 +46,7 @@ import aes_deskbind as db
 import aes_event
 import aes_objects
 import case
+import isr
 import routines
 import transcription
 
@@ -491,13 +492,14 @@ MASK_WORD_FOUND = ("its companion re-derives its first door call's delivery over
                    "staged where the run leaves it, `$2000` — and the registry over the arrival's own, `$00f8`: the two "
                    "deliveries differ in that one word (`test_tier3.test_every_dropped_row_has_a_differential_…`), a question "
                    "of the switching registrar's (`aes_switching.register_row`), not of the row: Tier 1 holds the case")
-NO_WALK_SERVED = ("a row that switches with no door is modelled with no walked routine served (`aes_switch.modelled`), and "
-                  "this case's C walks the tree (just_draw, `$fe9a88`: form_dial's finish redraws the desktop) — its companion "
-                  "is refused there by name: a question of the switching registrar's. Tier 1 holds the case")
+ITS_ROW_AT_F2C = ("this case's C walks the tree (just_draw, `$fe9a88`: form_dial's finish redraws the desktop), which a row "
+                  "that switches with no door was modelled without until slice H2 (`aes_switch._served_with_no_door`; its "
+                  "companion runs the walk since: `test_a_no_door_companion_whose_c_walks_a_tree_is_served_the_walk`) — its "
+                  "row is made with objc_draw's at F2c, so the table moves once. Tier 1 holds the case")
 NOT_A_ROW = {
     **{name: SCREEN_MANAGER_NO_HISTORY_REACHES for name in AT_ITS_OWN_ARRIVAL
        if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("MENU_IENABLE", BOOT, 0)},
-    **{name: NO_WALK_SERVED for name in AT_ITS_OWN_ARRIVAL
+    **{name: ITS_ROW_AT_F2C for name in AT_ITS_OWN_ARRIVAL
        if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("FORM_DIAL", INFO, 1)},
     **{name: MASK_WORD_FOUND for name in AT_ITS_OWN_ARRIVAL
        if BY_LABEL[name].short == "GRAF_RUBBOX" and BY_LABEL[name].wake in (LET_GO_AT_ONCE, BOX_GROWN)},
@@ -541,6 +543,85 @@ def test_every_flipped_binding_has_a_row_at_an_arrival_and_every_other_case_at_a
     assert rows == FLIPPED - unpriced and unpriced <= FLIPPED
     assert len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 4 and len(HELD) == 11 and len(UNPRICED) == 2
     assert len(X_FLAG_DIFFERS) == 10 and X_FLAG_DIFFERS <= set(ROWS)
+
+
+# ---- band 6 slice H2: THE TWO HARNESS PIECES objc_draw's FLIP WAS HELD FOR (it flips at F2c) ----------------------------------------
+# (P1) A ROW THAT SWITCHES WITH NO DOOR IS SERVED THE WALKED ROUTINES (`aes_switch._served_with_no_door`), as a door child is:
+# a no-door companion whose C walks a tree runs its walk — objc_draw's four (held until F2c) and form_dial's finish over
+# Desktop Info (`ITS_ROW_AT_F2C`). RED before the piece: each refused at just_draw (`$fe9a88`), "where this case staged no
+# routine" (the F1 fix pass's measurement).
+WALKS_A_TREE = sorted(name for name in AT_ITS_OWN_ARRIVAL
+                      if BY_LABEL[name].short == "OBJC_DRAW" or NOT_A_ROW.get(name) == ITS_ROW_AT_F2C)
+
+
+@pytest.mark.parametrize("name", WALKS_A_TREE)
+def test_a_no_door_companion_whose_c_walks_a_tree_is_served_the_walk(name):
+    import aes_switching
+    row = _row_registered(name)
+    assert row.door is None
+    aes_switching.companion(row)
+
+
+def test_the_walk_served_with_no_door_reroutes_no_handed_routine():
+    """P1's docstring claim, PINNED (the RH2 review's F5): the walked routines served beside the handed ones are none of
+    them — so a C that walks no tree runs every handed routine as before, and only a call into a walker reaches one."""
+    walked, handed = set(aes.walkers()), set(aes_event.handed_routines())
+    assert walked and handed and not walked & handed, f"served both ways: {sorted(hex(at) for at in walked & handed)}"
+
+
+# (P2) THE IDLE'S KEYBOARD POLL ON THE DISPATCHER'S STACK — ONE BIOS FRAME, TWO DEPTHS. The F1 fix pass read a refusal of
+# those rows' blob differential (27 / 33 bytes at `$8b34..` / `$8b2a..`, by its words a BIOS trap's frame) as a second
+# piece owed. MEASURED AT SLICE H2, it is none: its script measured on THE KIT'S OWN BENCH (`isr.blob_named`), which gives
+# nothing back, where the battery and the table measure on Tier 3's (`tier3.RomBench`: the dispatcher's stack given back
+# over the frames OUR run pushed, from its top down). Every row of the unit that switches with no door stands so (the
+# slice's probe: all 64, both benches): the ROM's run leaves poll_key's `trap #13` frame — the idle's keyboard poll — as
+# its LOWEST store on the dispatcher's stack, the low end of the drop the registrar derives; our run leaves THE SAME
+# FRAME lower (our dispatcher's frames are deeper; `$8b2a` shipped, `$8b34` bench), inside what it pushed. Held on one
+# such row, both ways, on each blob.
+A_ROW_WITH_NO_DOOR = "aes_desk_graf_mouse, arrival 0 of A: opened"
+TRAP_13 = 0x4E4D                        # `trap #13`: the BIOS's
+
+
+def _the_key_poll_s_return():
+    """BY READING: the address after poll_key's `trap #13` (`addrs.VDI_ROM_POLL_KEY`) — where its BIOS frame returns."""
+    at = addrs.VDI_ROM_POLL_KEY
+    while case.word_in(BASE_IMAGE, at) != TRAP_13:
+        at += aes.WORD_BYTES
+    return at + aes.WORD_BYTES
+
+
+def _key_poll_frames(memory, lo, hi):
+    """Every BIOS frame of the key poll's in `[lo, hi)` of `memory`: where its saved PC (after the SR word) is that return."""
+    return [at for at in range(lo, hi - aes.LONG_BYTES, aes.WORD_BYTES)
+            if case.long_in(memory, at + aes.WORD_BYTES) & aes_boot.BUS == _the_key_poll_s_return()]
+
+
+@pytest.mark.parametrize("blob_name", isr.BLOBS)
+def test_the_idle_s_key_poll_leaves_one_bios_frame_two_deep_and_tier3_gives_ours_back(monkeypatch, blob_name):
+    import aes_switching
+    import harness
+    from recreate_kit import rom_bench
+    row = _registered_row(A_ROW_WITH_NO_DOOR)
+    made = aes_switching.settled(row)
+    _reference, _watch, final, writes = aes_switching._replayed(row, made.pokes)
+    lo, hi = aes_event.DISPATCHER_STACK
+    lowest = min(at for at in writes if lo <= at < hi)
+    assert _key_poll_frames(final, lo, hi) == [lowest] and any(drop[:2] == (lowest, hi) for drop in made.drops)
+    tier3, seen = harness.bench_tier3(), {}
+    called = rom_bench.RomBench._call
+
+    def before_it_is_given_back(self, image, symbol, *args, **kwargs):
+        ran = called(self, image, symbol, *args, **kwargs)
+        seen.update(image=bytes(ran.image), stored=set(tier3.stored_by_the_run_just_made(ran.image)))
+        return ran
+    monkeypatch.setattr(rom_bench.RomBench, "_call", before_it_is_given_back)
+    aes_switching.measured_on(tier3.RomBench(isr.BLOBS[blob_name]), row)
+    pushed = tier3._pushed_from_the_top(seen["stored"], lo, hi)
+    ours = [at for at in _key_poll_frames(seen["image"], lo, hi) if pushed <= at < lowest]
+    assert len(ours) == 1, f"our run's key-poll frame under the ROM's ({lowest:#x}), inside what it pushed ({pushed:#x}..)"
+    monkeypatch.undo()
+    with pytest.raises(AssertionError, match=f"left different memory than the original at .*first {ours[0]:#x} "):
+        aes_switching.measured_on(isr.blob_named(blob_name), row)
 
 
 # ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`: own, the

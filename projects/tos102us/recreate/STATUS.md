@@ -1645,10 +1645,10 @@ arrival — no row, no verdict.
 
 | address | routine | cases | bytes ours / the ROM's | Tier 3 | state | what is held, and what is not |
 |---|---|---|---|---|---|---|
-| `0xfdded8` | `desk_evnt_multi` (`aes_desk_evnt_multi`; `src/desk/deskbind.c`; unit D) | 7 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 234 / 170 B | — no row (not bound) | 🔗 linked, unbound | probe 0.815 (unit D's, shipped blob, one arrival — not a row); frame 76 B (the ROM's 52); HELD AT SLICE F1 (`aes_deskbind.HELD_AT_F1`): flipped, ctlmgr's live-frame staging refuses first (no `link a6`: the frame chain at `$a288` / `$a2bc`), then the answer words' residue (`$a34e` / `$a350`) — both owed |
-| `0xfde2e8` | `desk_objc_draw` (`aes_desk_objc_draw`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 86 / 38 B | — no row (not bound) | 🔗 linked, unbound | probe 0.994 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 18); D0: NO WORD IN C (a named, counted divergence; read by no caller); HELD AT SLICE F1 (`aes_deskbind.HELD_AT_F1`): the no-door fork served the walk in the fix pass (its companions pass, the table 0.81–0.84), but its rows' blob differential refuses on the dispatcher's stack below the derived drop — both pieces owed |
+| `0xfdded8` | `desk_evnt_multi` (`aes_desk_evnt_multi`; `src/desk/deskbind.c`; unit D) | 7 at arrivals + 2 labelled class(es) (`test_desk_bind.py`) | 234 / 170 B | — no row (not bound) | 🔗 linked, unbound | probe 0.815 (unit D's, shipped blob, one arrival — not a row); frame 76 B (the ROM's 52); HELD AT SLICE F1 (`aes_deskbind.HELD_AT_F1`): flipped, ctlmgr's live-frame staging refuses first (no `link a6`: the frame chain at `$a288` / `$a2bc`), then the answer words' residue (`$a34e` / `$a350`) — BOTH MADE AT SLICE H2 (`aes_ctlmgr.the_desk_s_text`; `aes_ctlmgr.ResidueCopies`, narrowed at its fix pass: excused only where both runs copied residue): it flips at F2c |
+| `0xfde2e8` | `desk_objc_draw` (`aes_desk_objc_draw`; `src/desk/deskbind.c`; unit D) | 4 at arrivals + 0 labelled class(es) (`test_desk_bind.py`) | 86 / 38 B | — no row (not bound) | 🔗 linked, unbound | probe 0.994 (unit D's, shipped blob, one arrival — not a row); frame 40 B (the ROM's 18); D0: NO WORD IN C (a named, counted divergence; read by no caller); HELD AT SLICE F1 (`aes_deskbind.HELD_AT_F1`): the no-door fork served the walk in the fix pass (its companions pass, the table 0.81–0.84), but its rows' blob differential refuses on the dispatcher's stack below the derived drop — AT SLICE H2 the fork's walk made (`aes_switch._served_with_no_door`) and that refusal measured to be the kit's own bench, the idle key poll's BIOS frame given back by tier3's (pinned on both blobs): it flips at F2c |
 | `0xfe0c9a` | `do_wredraw` (`aes_do_wredraw`; `src/desk/deskwin.c`; unit I) | 4 arrival(s) + 0 labelled class(es) (`test_desk_win.py`) | 430 / 192 B | — no row (not bound) | 🔗 linked, unbound | probe 429524/415936=0.968 shipped, 429524/416350=0.969 bench (G1's scratch probe, one arrival, not a row); frame 116 B, the ROM's 56; HELD AT SLICE F2 (`aes_deskwin.HELD_AT_F2`): its C calls the objc_draw binding, held at F1 — F2c, after H2 |
-| `0xfe1cb6` | `men_update` (`aes_men_update`; `src/desk/desktop.c`; unit K) | 4 arrival(s) + 2 at arrivals SCRIPTED — a file's, a program's (`test_desk_top.py`) | 644 / 406 B | — no row (not bound) | 🔗 linked, unbound | probe 0.845 / two selected 0.843 / scripted 0.846, 0.845 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller); HELD AT SLICE F2 STAGE 2 (`aes_desktop.HELD_AT_F2`, i_find's caller) and AGAIN AT SLICE F2b, by a MEASURED reason (i_find, its callee, flipped there): FLIPPED, ctlmgr's two desk-turn rows ("woken by the bar, an item chosen", "woken by a button and the bar in one wake") are REFUSED by the desk's live-frames vet (`tier3.vet_the_desk_s_live_frames`) — 9 bytes at `$a2a6..$a2b3`, inside the held evnt_multi binding's frame (A6 `$a2bc`) under the desk's wait, the ROM's `00 .. 07 ..` against our C's dead locals (`43 b4`, a link `$a2f4`); held, both rows green (measured: a build with it held, then the slice's mutant M5 — flipped again — KILLED there). THOSE BYTES ARE THE HELD BINDING'S UNWRITTEN LOCALS (the review's read of the ROM's desk_evnt_multi binding, `$fdded8`, `linkw %fp,#-26`: before its Line-F ev_multi call, where the desk parks, it writes only fp−4, fp−8 and the arg slot; −22 only after the return, −20..−10 only after dsptch) — the residue of men_update's own frame at that depth, on both shores; no value the ROM computes is there. The same LIVE-FRAMES BREAK that holds evnt_multi: HELD UNTIL H2, it flips at F2c after H2 (the orchestrator's ruling, provisional: AWAITING (24)); its boot arrival will then need a `NOT_A_ROW` by name (refused by `aes_takeover`, "NO HISTORY OF OURS", as menu_ienable's — the author's first probe) |
+| `0xfe1cb6` | `men_update` (`aes_men_update`; `src/desk/desktop.c`; unit K) | 4 arrival(s) + 2 at arrivals SCRIPTED — a file's, a program's (`test_desk_top.py`) | 644 / 406 B | — no row (not bound) | 🔗 linked, unbound | probe 0.845 / two selected 0.843 / scripted 0.846, 0.845 (the fix pass's probe on the Tier 3 bench class, whole run, shipped blob); D0 a leftover the C has none of (counted; read by no caller); HELD AT SLICE F2 STAGE 2 (`aes_desktop.HELD_AT_F2`, i_find's caller) and AGAIN AT SLICE F2b, by a MEASURED reason (i_find, its callee, flipped there): FLIPPED, ctlmgr's two desk-turn rows ("woken by the bar, an item chosen", "woken by a button and the bar in one wake") are REFUSED by the desk's live-frames vet (`tier3.vet_the_desk_s_live_frames`) — 9 bytes at `$a2a6..$a2b3`, inside the held evnt_multi binding's frame (A6 `$a2bc`) under the desk's wait, the ROM's `00 .. 07 ..` against our C's dead locals (`43 b4`, a link `$a2f4`); held, both rows green (measured: a build with it held, then the slice's mutant M5 — flipped again — KILLED there). THOSE BYTES ARE THE HELD BINDING'S UNWRITTEN LOCALS (the review's read of the ROM's desk_evnt_multi binding, `$fdded8`, `linkw %fp,#-26`: before its Line-F ev_multi call, where the desk parks, it writes only fp−4, fp−8 and the arg slot; −22 only after the return, −20..−10 only after dsptch) — the residue of men_update's own frame at that depth, on both shores; no value the ROM computes is there. The same LIVE-FRAMES BREAK that holds evnt_multi: HELD UNTIL H2, it flips at F2c after H2 (the orchestrator's ruling, provisional: AWAITING (24)); its boot arrival will then need a `NOT_A_ROW` by name (refused by `aes_takeover`, "NO HISTORY OF OURS", as menu_ienable's — the author's first probe); AT SLICE H2 the staging taught a flipped binding puts those 9 bytes below the desk's live frames (the binding's own frame, each build's): proved in a private copy, it flips at F2c |
 | `0xfdc152` | `gr_isdown` (`aes_gr_isdown`; `src/desk/deskact.c`; unit B) | 2 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 116 / 104 B | — no row (not bound) | 🔗 linked, unbound | probe 0.834 (64,078 / 53,450: group G3's, shipped blob) ; its answer held to the ROM's in place at its width; HELD AT SLICE F2 STAGE 2 (`aes_deskact.UNIT_B_HELD_AT_F2`): its C calls unit D's evnt_multi, held at F1 — F2c, after H2 |
 | `0xfdc268` | `move_drvicon` (`aes_move_drvicon`; `src/desk/deskact.c`; unit B) | 1 arrival(s) + 1 labelled class(es) (`test_desk_act.py`) | 318 / 304 B | — no row (not bound) | 🔗 linked, unbound | probe 0.952 (606,804 / 577,588: group G3's, shipped blob) ; D0 a leftover the C has none of (counted; read by no caller); HELD AT SLICE F2 STAGE 2 (`aes_deskact.UNIT_B_HELD_AT_F2`): its C calls unit I's do_wredraw, held for objc_draw — F2c (its other callee, unit A's snap_disk, is flipped since this stage) |
 | `0xfdc4fe` | `gr_bwait` (`aes_gr_bwait`; `src/desk/deskact.c`; unit B) | 3 arrival(s) + 0 labelled class(es) (`test_desk_act.py`) | 174 / 124 B | — no row (not bound) | 🔗 linked, unbound | probe 0.94 (297,092 / 279,190: group G3's, shipped blob) ; its answer held to the ROM's in place at its width; HELD AT SLICE F2 STAGE 2 (`aes_deskact.UNIT_B_HELD_AT_F2`): its C calls gr_isdown, held — F2c |
@@ -5739,6 +5739,80 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       orchestrator's, provisional — AWAITING (24)): the census comment corrected; this entry and the rows written from the
       author's candidate, every figure re-read off the tree; men_update held to H2; win_shwall's levels 1–2 honestly
       unpinned; unit L's door-user rows accepted as built. No code, no object moved (177 hashes equal to the author's).
+  - **BAND 6 SLICE H2 — THE HARNESS FOR objc_draw, evnt_multi AND men_update; NOTHING FLIPS (THE FLIPS ARE F2c's)**
+    (2026-10-18; on `392953f`, ONE AUTHOR ALONE IN THE SHARED TREE — the brief `scratchpad/b6/F2/H2/brief.md`, hand-back
+    `scratchpad/b6/F2/H2/handback.md`; one reviewer in private trees, `scratchpad/RH2/review.md`; then one fix pass alone
+    in the tree, `scratchpad/b6/F2/H2/FIX/handback.md`). tier3.txt `c6635359` and the 177 object hashes UNCHANGED.
+    - **(P1) objc_draw — A ROW THAT SWITCHES WITH NO DOOR IS SERVED THE WALK** (`aes_switch._served_with_no_door`: the
+      event layer's handed routines AND `aes.walkers()`, as a door child is served them — F1's item-5 attempt reused): a
+      no-door companion whose C walks a tree (objc_draw's four, form_dial INFO-1) runs its walk where it was refused by
+      name at just_draw (`$fe9a88`). Pinned: `test_desk_bind.test_a_no_door_companion_whose_c_walks_a_tree_is_served_the_walk`
+      (5), and the docstring's claim that the walk reroutes nothing (the walked addresses none of the handed ones:
+      `…test_the_walk_served_with_no_door_reroutes_no_handed_routine`, the review's F5). form_dial INFO-1 stays
+      `NOT_A_ROW`, reason `ITS_ROW_AT_F2C` (was `NO_WALK_SERVED`, no longer true): its row is made with objc_draw's.
+    - **(P2) objc_draw — THE DISPATCHER-STACK REFUSAL WAS NEVER A HARNESS GAP.** F1's fix pass measured on THE KIT'S OWN
+      BENCH (`isr.blob_named`, its script `scratchpad/b6/F1/FIX/scripts/pins_new_rows.py`), which gives nothing back; the
+      battery and the table measure on Tier 3's (`tier3.RomBench`), which gives our dispatcher's stack back over the
+      frames our run pushed (`_pushed_from_the_top`, derived from our write ledger — no literal widened). THE CAUSE,
+      MEASURED on all 64 of unit D's no-door rows and objc_draw's four: the bytes are the idle's keyboard poll —
+      poll_key's `trap #13` BIOS frame (SR `$2710`, return `$fca7d4`). The ROM's run leaves it as its LOWEST store on the
+      dispatcher's stack, `$8b5e`, the low end of the drop the registrar derives; ours leaves THE SAME FRAME deeper (our
+      dispatcher's frames are deeper) — `$8b2a` shipped, `$8b34` bench — inside what our run pushed. NO HARNESS CODE:
+      pinned by reading (the return after poll_key's `trap #13`) and by run, ON BOTH BLOBS (the review's F4):
+      `test_desk_bind.test_the_idle_s_key_poll_leaves_one_bios_frame_two_deep_and_tier3_gives_ours_back[blob]` — the
+      ROM's lowest store is that frame at the drop's low end, ours lower and inside what it pushed, and the kit's bench
+      refuses at exactly our frame's address. F1's "one thing more" is closed by that pin.
+    - **(P3a) evnt_multi / men_update — THE LIVE-FRAMES STAGING TAUGHT A FLIPPED BINDING**: the desk's text is its ROM
+      text LESS ITS FLIPPED ROUTINES' (`aes_ctlmgr.the_desk_s_text`, `aes_desk.less_the_flipped`), so under a flipped
+      evnt_multi binding (our C: no `link a6`) the desk's own frames begin at deskmain's call (`$a2c0`); every link and
+      return from there up still held. The binding's own frame, each build's by nature, lies below the live frames — and
+      with it men_update's 9 bytes at `$a2a6..$a2b3`: no class is needed for them once the binding flips.
+    - **(P3b) evnt_multi — THE BINDING'S RESIDUE, A CLASS BY NATURE READ OFF EACH RUN, NARROWED**: the ROM's binding
+      (`$fdded8`) copies six answer words out after its yield and ev_multi writes only the words of the events that came,
+      so under MU_MESAG the key's and the clicks' words (`$a350`, `$a34e`) are residue — the ROM's `0001/0000`, ours
+      `0000/0007` on the shipped blob (equal on the bench blob: the class is needed on the shipped blob only, the
+      review's F6). `aes_ctlmgr.ResidueCopies` observes each run at its binding's copy-out with the run's write ledger
+      (saturated: refused by name); a word is RESIDUE where no store reached ANY byte of its answer word. THE NARROWING
+      (the review's F1, the orchestrator's ruling): our shore ALSO observes OUR C BINDING's copy-out (`our_copying`, the
+      instruction after its `jsr aes_dsptch` read off our build's listing; its first out pointer and first answer word
+      read there, the other five BY THE SIGNATURE), and `residue_where_the_runs_end` excuses a word ONLY where BOTH runs
+      copied residue there AND each run's end still holds the word it copied — before it, a word our C copied from
+      anything under a flipped binding was excused (M4 killed by cycle pins alone). Pinned by reading
+      (`test_the_rom_s_binding_copies_out_six_answer_words_it_never_writes_before_it_parks`: six consecutive words after
+      the yield; before ev_multi the binding stores only fp−4, fp−8 and the argument slot), by run
+      (`test_a_menu_row_s_rom_run_copies_the_key_and_the_clicks_out_of_its_binding_s_residue`: `[F,F,F,F,T,T]`, our
+      shore's verdicts equal — the ROM's binding's while held, our C's in the flipped proof) and by mechanism
+      (`test_where_the_runs_end_a_residue_word_may_differ_and_nothing_else`; `test_an_answer_word_is_residue_only_where_no_byte_of_it_was_stored`,
+      the review's F3). `aes_switching.Switching`'s observers now take `(memory, sp)` and run FIRST (the copy-out PC is
+      also the desk's resume PC); the aptape / evmulti observers updated.
+    - **THE PRIVATE-COPY PROOF** (the three flipped, bookkeeping only: held lists emptied, `DOOR_USER_BINDINGS` +=
+      EVNT_MULTI, men_update's boot arrival `NOT_A_ROW`, census and counts, `DEPTHS` from a fresh walk, 14 rows' pins
+      from a record, whole-run pins by `tools/repin.py`): 14 NEW ROWS, NONE OVER 1.10 — objc_draw 0.84 / 0.81 / 0.81 /
+      0.81 (no door; whole 0.99), evnt_multi 0.65 ×3, 0.74, 0.65, 0.67, 0.70 (door users; caller's own 0.74; whole
+      0.81–0.92), men_update 0.69 / 0.68 / 0.68 (no door; whole 0.84–0.85); no row ratio moved, the desk-turn sub-ratios
+      of ap_sendmsg / ev_block / ap_rdwr 0.71 → 0.69, mn_do 0.68 → 0.69, ctlmgr 0.69 → 0.68 (F1's convention: the
+      binding's and men_update's ROM text moves to the ROM side of the turn). tier3.txt `2217ff36`, 7,409 lines (the
+      author's, the review's and the fix pass's — the narrowing in it — byte-equal); the three invariants, who-ran and
+      the converse on all 113 chains; `tools/flipped_depths.py` full EXIT 0, worst 1,536 of 1,548, 0 over; PD0's
+      partial deepest unchanged, A: File > Open 1,532. THE FIX PASS's proof (its final tree plus the same bookkeeping,
+      forced rebuild): `make bench` rc 0, tier3.txt `2217ff36` again (the narrowing passes every row of the table), the blobs and the `.so` the review's; the cycle's seven batteries (ctlmgr, desk_bind, desk_top, tier3, evlib_woken, aptape, evmulti) 7,030 passed.
+    - **MUTANTS** (each in its own process group, forced rebuild where C moves, caches moved aside, sources and products
+      hash-restored). THE AUTHOR's: M0 control green; M1 the fork without the walkers KILLED 5; M2 put-back narrowed
+      (`MOST_UNSTORED_FRAME_BYTES = 1`) KILLED 25; M2b widened KILLED 1; M3 staging untaught KILLED 24; M5 class widened
+      (every copy residue) KILLED 1; M6 class off KILLED 4; M4 `clicks_out` given the key's word KILLED 9 — Tier 1 by
+      memory, ctlmgr's rows by cycles only. THE REVIEW's: R1 the fork without just_draw KILLED 5 (by name); R2 put-back
+      gap 3 KILLED 129; R3P a stray C write at `$a34c` KILLED 7 (memory); R5 the class without "the ROM's end holds"
+      KILLED 1 (mechanism); R6 / R6P frame +2 KILLED 1 / 5; R7 `not any` → `not all` SURVIVED (its F3); R8 / R8P the
+      observer after the dispatcher's branch KILLED 1 / 5; M4 with its prototype narrowing KILLED 6 by memory. THE FIX
+      PASS's (`scratchpad/b6/F2/H2/FIX/sweep.log`; held tree unless P): N0 control green; R5 re-run (the ROM's-end clause dropped) KILLED 1, the mechanism test alone (by nature: F7); R7 (`not any` → `not all`) KILLED 1 by the new mechanism case (F3 closed); N1 (our-end clause dropped) and N2 (our-residue clause dropped) KILLED 1 each, the mechanism test; N3P (our C's copy-out unobserved) and N4P (our pointer stride a word) KILLED 5 each — BY MEMORY on the shipped blob's two menu rows (`$a34f` / `$a351`, ROM `01`/`00`, ours `00`/`07`) and the by-run test; M4P (`clicks_out` given the key's word, forced rebuild, the binding FLIPPED) KILLED 7, EVERY ONE BY MEMORY at the live-frames vet — both menu rows on BOTH blobs (`$a34f`: ROM `01`, ours `07` shipped / `00` bench), the table's two rows and the by-run test; no cycle pin reached.
+    - **THE REVIEW** (`scratchpad/RH2/review.md`): NO BLOCKER. F1 (medium) the class excused any value our C wrote into
+      the two out words under a flipped binding — NARROWED (above); F2 form_dial INFO-1's row unpriced — F2c prices it;
+      F3 R7 survived — a mechanism case added; F4 P2 pinned on the shipped blob only — parametrized; F5 P1's docstring
+      claim unpinned — pinned; F6 the class is the shipped blob's alone — recorded for F2c's legend; F7 R5 is caught by
+      the mechanism test only — by nature (no row can show a ROM end that moved since its copy).
+    - **THE FIX PASS** (rulings the orchestrator's, provisional — AWAITING (24)): the narrowing adopted, re-derived from
+      the review's prototype (the ledger read through a named `tier3._the_run_s_ledger`; our listing's first pair read
+      refused by name where absent); F3's case, F4's parametrization, F5's pin; this entry. No object moved.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -5955,6 +6029,18 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
   deeper, the deepest unchanged), the full flip exit 0 at 1,536. **NEXT: H2** ALONE (the objc_draw / evnt_multi
   harness), then **F2c** (the objc_draw / evnt_multi holds — and men_update, its boot arrival a `NOT_A_ROW` by name).
   The user's question on do_wfull's shrink arm (AWAITING (24)) waits.
+  **BAND 6 SLICE H2 IS IN** (its entry, above; harness only, NOTHING FLIPPED, tier3.txt and every object unchanged):
+  the no-door fork serves the walk (P1); the dispatcher-stack refusal measured to be the kit's bench, never a harness
+  gap, pinned on both blobs (P2); the live-frames staging taught a flipped binding (P3a); the evnt_multi binding's
+  residue a class by nature read off EACH run, excused only where both runs copied residue and each end holds what it
+  copied (P3b, narrowed at the fix pass). Proved in a private copy: the three flipped, 14 rows 0.65–0.84,
+  `flipped_depths` EXIT 0 at 1,536. **NEXT: F2c** — flip objc_draw, evnt_multi and men_update, and THE TEN WAITING ON
+  THEM: do_wredraw, act_chg, act_allchg, move_drvicon, gr_isdown, gr_bwait, draw_dial, show_dial, draw_fld, do_namecon;
+  WITH form_dial INFO-1's ROW PRICED AND LISTED there (`ITS_ROW_AT_F2C`; the review's F2: its price, pins and whole-run
+  pair are unmeasured today); men_update's boot arrival a `NOT_A_ROW` by name (takeover-refused, menu_ienable's class);
+  F2c's legend sentence for the class says "copied from residue ON BOTH SHORES" and that ONLY THE SHIPPED BLOB needs it
+  (the review's F6) — it moves tier3.txt, so it lands with the flip. The user's question on do_wfull's shrink arm
+  (AWAITING (24)) waits.
   LEFT BY THE FLIP FOR IT, each said in its entry: ct_msgup's row with an accessory's turn inside (a kit call over
   the ROM's arrival's machine: the turn is still the ROM's code on both shores); the door's AES round trip as a
   table row (pinned by its own battery today); `j09`, bchange's owners and get_evb's empty list on our code; the
@@ -6829,6 +6915,23 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       - (4) UNIT L's DOOR-USER ROWS ACCEPTED AS BUILT: win_bldview's and win_shwall's rows are DOOR USERS' (measured), where
         unit L's stage-1 rows had none; their pins live in `test_desk_view.DOOR_USERS_*`, read by `test_tier3.py` as unit
         I's are (the census comment in `test_aes_event.py` corrected to say so).
+    (24, continued) BAND 6 SLICE H2 (its entry, above). The rulings below are the ORCHESTRATOR'S, PROVISIONAL (the fix
+      pass's brief; review `scratchpad/RH2/review.md`):
+      - (1) THE RESIDUE CLASS NARROWED (the review's F1): a word is excused only where BOTH runs copied residue there and
+        each run's end still holds the word it copied — our shore observes our C binding's copy-out too, read off our
+        build's listing, never a literal address. The author's form (excused wherever our run made no copy) is NOT taken:
+        under a flipped binding it excused any value our C wrote into the two out words (M4 caught by cycles alone).
+      - (2) FORM_DIAL INFO-1 STAYS `NOT_A_ROW` (`ITS_ROW_AT_F2C`) UNTIL F2c, AND F2c MUST PRICE IT (the review's F2): its
+        price, its pins and its whole-run pair are measured and listed in F2c's proof, not added unpriced.
+      - (3) P2 ADDS NO HARNESS CODE; its pin closes F1's "second piece owed" (parametrized on both blobs: F4).
+      - (4) F2c's LEGEND SENTENCE for the class says "copied from residue on both shores", and that only the shipped blob
+        needs it (F6); it lands with the flip, as it moves tier3.txt.
+      - (5) R5 (the class without "the ROM's end still holds") IS CAUGHT BY THE MECHANISM TEST ONLY, BY NATURE (F7): no
+        row's run leaves the ROM's end moved since its copy; the mechanism case is that clause's only surface.
+      - (6) MEN_UPDATE's BOOT ARRIVAL needs a `NOT_A_ROW` by name at F2c (takeover-refused, "no history", menu_ienable's
+        class — the author's proof; the review did not reproduce the refusal by run).
+      - (7) THE `Switching` OBSERVER API CHANGE ACCEPTED: observers take `(memory, sp)` and are called first (the copy-out
+        PC is also the desk's resume PC); every observer (aptape, evmulti, tier3) updated.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -6955,10 +7058,20 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (band 6 slice F2b's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **32,689 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (band 6 slice H2's fix pass, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **32,702 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 SLICE H2, WITH ITS FIX PASS (2026-10-18; one author, one reviewer in private trees, then the fix pass, each
+  alone in the shared tree on `392953f` — the wave log's entry; harness only: NO OBJECT MOVED, tier3.txt `c6635359` and
+  the 177 hashes equal to F2b's): the author's `make test` 32,699 passed / 8 skipped (`scratchpad/b6/F2/H2/final.log`);
+  THE FIX PASS's `make test` in the shared tree (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` of the
+  project moved aside first: **32,702 passed / 8 skipped, 0 failed** (`scratchpad/b6/F2/H2/FIX/final.log`).
+  RE-SUMMED, ITEMISED BY FILE from the fix pass's own collection against F2b's fix pass's (32,710 = 32,702 + 8 skipped,
+  against 32,697; `scratchpad/b6/F2/H2/FIX/collect_perfile.txt` against `scratchpad/b6/F2/F2b/FIX/collect_perfile.txt`,
+  291 files both): +13 — `test_desk_bind.py` 568 → 576 (+8: P1's five companions, the walk's no-reroute pin, P2's
+  key-poll pin on both blobs), `test_aes_ctlmgr.py` 195 → 200 (+5: P3a's staging, P3b's by-reading, by-run and
+  mechanism tests, and the fix pass's any-byte residue case); no other file's count moved.
 - BAND 6 SLICE F2b, WITH ITS FIX PASS (2026-10-18; one author, then the fix pass, each alone in the shared tree on
   `a05ef6b` — the wave log's entry; objects: only `src_aes_lineftable_S.o` moved, the two blobs with it,
   `libtos102us.so` `fbf372b2` unchanged; the table 7,269 → 7,329 lines): the author's `make test` (32,680 passed, 9

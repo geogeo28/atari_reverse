@@ -916,7 +916,7 @@ def where_the_tail_begins(name):
     row, found = WOKEN_ROWS[name], []
     made = switching.settled(row)
 
-    def at_acancel(memory):
+    def at_acancel(memory, _sp):
         if evasync.running(memory) & aes_event.OS_BUS_ADDR_MASK == made.switches.process:
             found.append(bytes(memory[:addrs.ST_RAM_BYTES]))
     watch = switching.the_rom_s(made.switches, addrs.AES_ROM_EV_MULTI, observing={addrs.AES_ROM_ACANCEL: at_acancel})

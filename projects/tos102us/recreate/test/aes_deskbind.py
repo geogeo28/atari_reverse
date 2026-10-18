@@ -119,7 +119,12 @@ BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
 #     the words of events that did not occur being each shore's frame residue (`$a34e` clicks_out, `$a350` key_out
 #     under a menu wake — residue on both shores, no byte our C writes otherwise than the ROM's binding does; measured
 #     `$a34f` `$01` / `$00` once (1) was taught). Owed: a by-nature class for those words, held two ways as the
-#     unread D0/A0 class is — by reading (deskmain reads them under MU_BUTTON / MU_KEYBD alone) and by a run;
+#     unread D0/A0 class is — by reading (deskmain reads them under MU_BUTTON / MU_KEYBD alone) and by a run.
+#     BOTH PIECES MADE AT SLICE H2 (the flip lands at F2c): (1) the desk's frames read over its text LESS ITS FLIPPED
+#     ROUTINES' (`aes_ctlmgr.the_desk_s_text`), so under a flipped binding they begin at its caller's call; (2) the
+#     words the ROM's binding copies out of answer words no store of its run reached (`aes_ctlmgr.ResidueCopies`, read
+#     off each run where its binding copies them — the ROM's, and our C's once flipped — and excused only where both
+#     runs copied residue and each end still holds it; by reading, the ROM's binding writes none of them before it parks);
 #   * objc_draw — it yields by its own `dsptch` alone (no door entry: no door user), and a row that switches with no
 #     door is modelled with no walked routine served (`aes_switch.modelled`): its C walks the tree through just_draw
 #     (`$fe9a88`), which that fork does not stage — every one of its four rows' companions is refused there by name.
@@ -128,8 +133,12 @@ BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
 #     0.84, nothing else moves) and found the flip needs ONE THING MORE: each of those five rows' second differential
 #     on both blobs (`aes_switching.measured_on`, the battery's whole-run pin) is refused — our run leaves 27 (bench) /
 #     33 (shipped) bytes on the dispatcher's stack BELOW the registered drop (`$8b34..` / `$8b2a..`; by its words a
-#     BIOS trap's frame, PC `$fca7d4`), which the registrar derives only where the ROM's run stores. Both owed; Tier 1
-#     holds each case (the door child serves the walk).
+#     BIOS trap's frame, PC `$fca7d4`), which the registrar derives only where the ROM's run stores. Tier 1 holds each
+#     case (the door child serves the walk). AT SLICE H2: the fork's walk MADE (`aes_switch._served_with_no_door`), and
+#     the "one thing more" MEASURED TO BE NONE — that refusal was the F1 script's instrument, the kit's own bench
+#     (`isr.blob_named`), which puts nothing back; the battery's and the table's bench (`tier3.RomBench`) give our
+#     dispatcher's stack back over the frames our run pushed, and the bytes are the idle's keyboard poll's BIOS frame,
+#     the ROM's run's own at its drop's low end (`test_desk_bind.test_the_idle_s_key_poll_…`). Held until F2c.
 HELD_AT_F1 = (PREFIX + "EVNT_MULTI", PREFIX + "OBJC_DRAW")
 # ---- band 6 slice F2 (group G4) ---- A BINDING FLIPPED WITH NO ROW: ⚠️ VERIFIED-BUT-UNPRICED (the user's ruling of
 # 2026-10-17: a routine faithful at Tier 1 whose arrivals no row kind reaches — as crit_err's and gem_entry's), each with

@@ -3376,7 +3376,10 @@ dispatcher: its turn is a turn of ours priced as an accessory's (W6-R7, `aes_des
 takeover differs from the ROM-booted machine in five by-nature classes (`aes_ctlmgr.the_bound_desk_s_classes`), and
 a row's two runs are entered with THE DESK'S LIVE FRAMES laid as the ROM's (`aes_ctlmgr.lay_the_desk_s_live_frames`,
 a labelled staging: the dead locals the takeover leaves) and compared byte for byte where they end
-(`tier3.vet_the_desk_s_live_frames`). THE FIRST DISPATCH of a row from an idle — the ROM's dispatcher's loop, its
+(`tier3.vet_the_desk_s_live_frames`) — read over the desk's text LESS ITS FLIPPED ROUTINES' (`aes_ctlmgr.the_desk_s_text`:
+a flipped binding's frame is its build's own), and BUT FOR ONE CLASS BY NATURE (band 6 slice H2): the evnt_multi
+binding's out words copied from answer words no store reached, observed at each run's copy-out and excused only where
+BOTH runs copied residue and each end still holds what it copied (`aes_ctlmgr.residue_where_the_runs_end`). THE FIRST DISPATCH of a row from an idle — the ROM's dispatcher's loop, its
 Line-F callees ours — is a line of its own, held to the bar. The tests that once reached the table through a staged
 `$cc24` (`test_aes_lineftable.py`) now enter it through the registry's own lay: every thunk read off the
 blob's bytes against its signature; 292 thunks and 51 native routines ENTERED by their routine's own registered

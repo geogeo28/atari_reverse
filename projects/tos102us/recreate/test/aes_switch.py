@@ -2754,6 +2754,17 @@ def _a_door_user_s_run(run, buf, binding, door, at_calls, left_out_beside):
     return aes_event.exit_as_an_interpreter_does(call)
 
 
+def _served_with_no_door():
+    """THE BINDING OF A ROW THAT SWITCHES WITH NO DOOR (band 6 slice H2): the event layer's own (`aes_event.event_layer_hooks`)
+    WITH THE WALKED ROUTINES BESIDE ITS HANDED ONES, on the one register hook — as a door child is served them
+    (`aes_event._child_walkers`' `objects`). A C that yields by its own `dsptch` and walks a tree (objc_draw's binding,
+    everyobj handing just_draw; form_dial's finish) runs its walk; the walked addresses are none of the handed ones
+    (`test_desk_bind.test_the_walk_served_with_no_door_reroutes_no_handed_routine`), so a C that walks nothing runs as
+    before."""
+    walked = {**aes_event.handed_routines(), **aes.walkers()}
+    return aes.doors(aes_event.vdi_hook, aes.alcyon_object_hook(walked))()
+
+
 def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, door=None, left_out_beside=()):
     """THE C `symbol` of the candidate (a core over the image, `typed` its values after it) run over `pokes` IN A
     FORK with the model switched on and held to `reference` (`hooks`): its exit code and stderr, the image it left —
@@ -2791,7 +2802,7 @@ def modelled(symbol, typed, pokes, reference, *, answered=True, foreign=False, d
         def call():
             run()
             print(f"{IDLES_LINE}{binding.idles}\n{POLLS_LINE}{binding.polls}", file=sys.stderr)
-        hooked = aes_event.inside_its_own_pass(aes.doors(aes_event.EVENT_LAYER_HOOKS, lambda: binding), call)
+        hooked = aes_event.inside_its_own_pass(aes.doors(_served_with_no_door, lambda: binding), call)
         returncode, stderr = aes_event.in_a_fork(hooked, MODEL_SECONDS, SERVED_IN_A_FORK)
         handed = slots_held = parked = answers_back = dispatched = None
     return Modelled(returncode, stderr, bytes(over), vdi_helpers.answer_in(stderr) if answered else None,

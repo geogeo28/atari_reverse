@@ -29,10 +29,11 @@ labelled argument classes among them); these rows are what a blob adds — the r
 switch.
 """
 import functools
+import re
 from collections import namedtuple
 
 import derived
-from harness import addrs, make_image
+from harness import BASE_IMAGE, addrs, make_image
 
 import aes
 import aes_boot
@@ -41,6 +42,7 @@ import aes_event
 import aes_gemctrl as gc
 import aes_switch
 import case
+import routines
 import vdi_helpers
 
 ENTRY, SYMBOL = addrs.AES_ROM_CTLMGR, aes_boot.ENTRY_SYMBOL
@@ -347,17 +349,29 @@ def the_desk_s_stack(machine):
 # (`lay_the_desk_s_live_frames`, a labelled staging: the dead bytes of the takeover the ROM's, every frame link and
 # return held equal first), and where the two runs END they are compared byte for byte (`tier3.vet_the_desk_s_live_frames`)
 # — what our AES writes into the desk's frames (an answer through a pointer the desk hands it) is compared there.
-def _the_desk_s_frames(memory):
+# THE DESK'S TEXT IS ITS ROM TEXT LESS ITS FLIPPED ROUTINES' (band 6 slice H2): a desk routine whose Line-F entry is
+# ours runs OUR code on our shore, and its frame there is our build's (GCC's, no `link a6`), as the AES's under it is.
+# So the desk's own frames begin at the first frame whose return lies in desk text STILL THE ROM'S on the blob measured:
+# under a flipped binding (evnt_multi's, where the desk parks) they begin at the binding's caller's call — the
+# binding's own frame, the ROM's on its shore and ours on ours, is below them and differs by nature.
+def the_desk_s_text(blob=None):
+    """`((lo, hi), ...)`: THE DESK'S ROM TEXT STILL THE ROM'S on a machine of `blob` (ours by default) — units A-L and
+    the utility text, less every flipped routine's (`aes_desk.less_the_flipped`)."""
+    return aes_desk.less_the_flipped((aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT), blob)
+
+
+def _the_desk_s_frames(memory, blob=None):
     """The A6 of every frame of THE DESK'S OWN, lowest first, in PD0's stack over a ROM-shore `memory` where the desk
     is parked, and UDA0's top. Walked up the ROM's frame chain (Alcyon's `link a6`: the caller's A6 at `0(a6)`, the
     return at `4(a6)`) from the A6 savestate keeps in PD0's UDA: the desk's frames begin at the first whose return
-    lies in the desk's ROM text (`aes_desk.DESK_TEXT`, `UTILITY_TEXT`). REFUSED BY NAME where the chain leaves the stack
-    before it reaches one: no ROM frame of the desk's is parked there."""
+    lies in the desk's ROM text still the ROM's on `blob` (`the_desk_s_text`). REFUSED BY NAME where the chain leaves
+    the stack before it reaches one: no ROM frame of the desk's is parked there."""
     lo, top = (case.long_in(memory, aes.SHELL_PD + aes.PD_UDA) & aes_boot.BUS) + aes.UDA_STATE_BYTES, aes.AES_UDA1
     frame, frames = case.long_in(memory, lo - aes.UDA_STATE_BYTES + aes.UDA_A6) & aes_boot.BUS, []
+    its_text = the_desk_s_text(blob)
     while lo <= frame < top - aes.LONG_BYTES:
         returns_to = case.long_in(memory, frame + aes.LONG_BYTES) & aes_boot.BUS
-        if frames or any(text_lo <= returns_to < text_hi for text_lo, text_hi in (aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT)):
+        if frames or any(text_lo <= returns_to < text_hi for text_lo, text_hi in its_text):
             frames.append(frame)
         frame = case.long_in(memory, frame) & aes_boot.BUS
     if not frames:
@@ -366,19 +380,19 @@ def _the_desk_s_frames(memory):
     return frames, top
 
 
-def the_desk_s_live_frames(memory):
-    """`(lo, top)`: THE DESK'S OWN FRAMES (`_the_desk_s_frames`) — from the return slot of the call it is parked under
-    to UDA0's top."""
-    frames, top = _the_desk_s_frames(memory)
+def the_desk_s_live_frames(memory, blob=None):
+    """`(lo, top)`: THE DESK'S OWN FRAMES on a machine of `blob` (`_the_desk_s_frames`) — from the return slot of the
+    call it is parked under to UDA0's top."""
+    frames, top = _the_desk_s_frames(memory, blob)
     return frames[0] + aes.LONG_BYTES, top
 
 
-def lay_the_desk_s_live_frames(ours, rom):
+def lay_the_desk_s_live_frames(ours, rom, blob=None):
     """OUR SHORE'S MACHINE `ours` (an image, in place) GIVEN THE ROM'S BYTES OVER THE DESK'S LIVE FRAMES of the ROM's
-    machine `rom` it starts beside (the note above) — A LABELLED STAGING, laid where a row's two runs are entered. What
-    it may lay is DEAD BYTES alone: REFUSED BY NAME where a frame link or a return of the desk's chain differs (the
-    desk would stand in other frames). The count of bytes laid."""
-    frames, top = _the_desk_s_frames(rom)
+    machine `rom` it starts beside (the note above), on `blob` — A LABELLED STAGING, laid where a row's two runs are
+    entered. What it may lay is DEAD BYTES alone: REFUSED BY NAME where a frame link or a return of the desk's chain
+    differs (the desk would stand in other frames). The count of bytes laid."""
+    frames, top = _the_desk_s_frames(rom, blob)
     lo = frames[0] + aes.LONG_BYTES     # (the lowest frame's own link is its callee's: the AES's, under the desk's)
     links = [(f"{at:#x}", case.long_in(rom, at), case.long_in(ours, at)) for frame in frames
              for at in (frame, frame + aes.LONG_BYTES) if lo <= at < top and case.long_in(rom, at) != case.long_in(ours, at)]
@@ -386,6 +400,135 @@ def lay_the_desk_s_live_frames(ours, rom):
     laid = sum(1 for at in range(lo, top) if rom[at] != ours[at])
     ours[lo:top] = bytes(rom[lo:top])
     return laid
+
+
+# THE ROM'S evnt_multi BINDING'S RESIDUE (band 6 slice H2) — A CLASS BY NATURE of the desk's live frames, read off the
+# ROM's run. desk_evnt_multi (`$fdded8`) hands ev_multi six answer words in its own frame and copies ALL SIX out through
+# its caller's six pointers after its yield; before it parks it stores nothing of them (by reading: its packed button
+# and timer longwords and the argument slot alone, `the_binding_s_copies`), and ev_multi answers only the words of the
+# events that came (the key's under MU_KEYBD, the clicks' under MU_BUTTON). A word no store of the run reached before
+# the copy is its frame's RESIDUE — whatever the last frame at that depth left there — and it travels into deskmain's
+# frame. Under a FLIPPED binding the residue is each build's own (the ROM's binding's frame on its shore, our C's on
+# ours): such a word may differ where the runs end, and nothing else may. Each word is READ OFF EACH RUN where its
+# binding copies it out (`ResidueCopies`: the run's write ledger at that instant) — the ROM's binding's copy-out on
+# either shore while it is the ROM's, OUR C binding's (`our_copying`) on ours once flipped — never a listed range; and
+# a word is excused only where BOTH runs copied residue there and each run's end still holds the word it copied
+# (`residue_where_the_runs_end`, the RH2 review's narrowing): a word our C copies from an answer, or another word than
+# the one the ROM's copies there, is compared by memory.
+EVNT_MULTI_BINDING_NAME = "AES_ROM_DESK_EVNT_MULTI"
+EVNT_MULTI_BINDING = getattr(addrs, EVNT_MULTI_BINDING_NAME)
+_LINK = re.compile(r"^linkw %fp,#-(\d+)$")
+_OUT_POINTER = re.compile(r"^moveal %fp@\((\d+)\),%a0$")
+_ANSWER_COPIED = re.compile(r"^movew %fp@\((-\d+)\),%a0@$")
+BindingCopies = namedtuple("BindingCopies", "frame_bytes at copies")
+BindingCopies.__doc__ = """The ROM's evnt_multi binding's copy-out, BY READING its text: its frame's bytes (its `link`),
+`at` — the instruction after its yield (`dsptch`), where the copy-out begins — and `copies`: `((the answer word's
+offset from A6, the out pointer's), ...)` in the order it copies them."""
+
+
+def the_binding_s_listing():
+    """`((address, length, text, the routine a Line-F call names or None), ...)`: the ROM's evnt_multi binding, from
+    its entry to the next routine of the inventory."""
+    import aes_deskbind                 # (the GEM text's listing; that module imports the switching registrar)
+    starts = aes_desk.inventoried()
+    end, listing, at = starts[starts.index(EVNT_MULTI_BINDING) + 1], [], EVNT_MULTI_BINDING
+    while at < end:
+        length, text = aes_deskbind.listed_at(at)
+        listing.append((at, length, text, None if text else aes.line_f_target(case.word_in(BASE_IMAGE, at))))
+        at += length
+    return tuple(listing)
+
+
+@functools.cache
+def the_binding_s_copies():
+    """The binding's `BindingCopies`, read off `the_binding_s_listing` — REFUSED BY NAME where its text is not the
+    shape read: a `link`, one yield, then out-pointer / answer-word pairs."""
+    listing = the_binding_s_listing()
+    linked = _LINK.match(listing[0][2])
+    assert linked, f"${EVNT_MULTI_BINDING:x}: the binding does not open with a `link`: {listing[0][2]!r}"
+    yielding = [index for index, (_at, _length, _text, called) in enumerate(listing) if called == addrs.AES_ROM_DSPTCH]
+    assert len(yielding) == 1, f"${EVNT_MULTI_BINDING:x}: the binding yields {len(yielding)} times"
+    after = listing[yielding[0] + 1:]
+    copies = []
+    for (_at, _length, out, _called), (_at2, _length2, answer, _called2) in zip(after[0::2], after[1::2]):
+        pointer, word = _OUT_POINTER.match(out), _ANSWER_COPIED.match(answer)
+        if not (pointer and word):
+            break
+        copies.append((int(word.group(1)), int(pointer.group(1))))
+    return BindingCopies(int(linked.group(1)), after[0][0], tuple(copies))
+
+
+def the_rom_s_copying():
+    """`(at, ((the answer word's offset from SP at `at`, the out pointer's), ...))`: the ROM's binding's copy-out
+    (`the_binding_s_copies`), offset from its yield's stack pointer — the `link`'s, every argument popped."""
+    reading = the_binding_s_copies()
+    return reading.at, tuple((reading.frame_bytes + answer, reading.frame_bytes + out) for answer, out in reading.copies)
+
+
+# OUR C BINDING'S COPY-OUT, BY READING OUR BUILD'S LISTING: after its call of aes_dsptch it loads each out pointer off
+# SP (`movel %sp@(N),%dX`) and copies an answer word of its frame through it (`movew %fp@(X,%sp:l),…` — `%fp` holds
+# `image`, the machine's base). Only the FIRST pointer and the FIRST answer word are read; the rest follow BY ITS
+# SIGNATURE (`aes_deskbind.SIGNATURES`: six consecutive long pointer arguments; six consecutive answer words, the ROM's).
+# Read off every copy, a C that copies another word than the i-th through the i-th pointer would be refused by its
+# codegen; read so, it is caught BY MEMORY — its end does not hold the word observed copied there.
+OUR_BINDING = routines.core_symbol(EVNT_MULTI_BINDING_NAME)
+OUR_DSPTCH = routines.core_symbol("AES_ROM_DSPTCH")
+_OUR_OUT_POINTER = re.compile(r"^movea?l %sp@\((\d+)\),%[ad]\d$")
+_OUR_ANSWER_COPIED = re.compile(r"^movew %fp@\(([0-9a-f]+),%sp:l\),")
+
+
+def _first_read(after, pattern, base):
+    """The first operand `pattern` reads in `after` (`[(address, text)]`), in `base` — REFUSED BY NAME where none does."""
+    read = next((found for _at, text in after if (found := pattern.match(text))), None)
+    assert read, f"{OUR_BINDING}: no `{pattern.pattern}` after its call of {OUR_DSPTCH}: its copy-out is not the shape read"
+    return int(read.group(1), base)
+
+
+@functools.cache
+def our_copying(elf):
+    """`(at, pairs)` as `the_rom_s_copying`, for OUR C binding on the blob `elf` (the note above): `at` the instruction
+    after its call of aes_dsptch — REFUSED BY NAME where it calls it other than once."""
+    body = aes_switch.listed_functions(elf)[OUR_BINDING]
+    yielding = [index for index, (_at, text) in enumerate(body) if text.endswith(f"<{OUR_DSPTCH}>")]
+    assert len(yielding) == 1, f"{OUR_BINDING}: it calls {OUR_DSPTCH} {len(yielding)} times"
+    after = body[yielding[0] + 1:]
+    pointer, answer = _first_read(after, _OUR_OUT_POINTER, 10), _first_read(after, _OUR_ANSWER_COPIED, 16)
+    return after[0][0], tuple((answer + index * aes.WORD_BYTES, pointer + index * aes.LONG_BYTES)
+                              for index in range(len(the_binding_s_copies().copies)))
+
+
+class ResidueCopies:
+    """WHAT ONE RUN'S COPIES-OUT OF AN evnt_multi BINDING CARRIED, at each of `copyings` (`(at, pairs)` each: the ROM's
+    binding's, `the_rom_s_copying`, by default; on our shore ours too, `our_copying` — whichever its run reaches):
+    `observing` — the stops to give its watch (`aes_switching.Switching`'s) — and `copied`: `{an out word's address:
+    (the word copied there, was it RESIDUE)}`, RESIDUE where no store of the run so far (`ledger()`: the emulator's
+    write ledger, `({address: byte}, saturated)`) reached ANY byte of the answer word. A saturated ledger is refused by
+    name: what the run stored is then not known."""
+
+    def __init__(self, ledger, *copyings):
+        self._ledger, self.copied = ledger, {}
+        self.observing = {at: functools.partial(self._copied_out, pairs) for at, pairs in (copyings or (the_rom_s_copying(),))}
+
+    def _copied_out(self, pairs, memory, sp):
+        stored, saturated = self._ledger()
+        assert not saturated, "the run's write ledger saturated before an evnt_multi binding's copy-out: its residue is not known"
+        for answer, out in pairs:
+            word = range(sp + answer, sp + answer + aes.WORD_BYTES)
+            self.copied[case.long_in(memory, sp + out) & aes_boot.BUS] = (bytes(memory[word.start:word.stop]),
+                                                                        not any(at in stored for at in word))
+
+
+def residue_where_the_runs_end(its_memory, the_rom_s, ours, our_memory):
+    """THE BYTES OF THE DESK'S LIVE FRAMES THAT MAY DIFFER BY NATURE where a row's two runs end (`ResidueCopies` of each
+    shore): each out word BOTH runs copied out of their binding's RESIDUE, where each run's end still holds the word it
+    copied (`its_memory`, `our_memory`). A frozenset of addresses."""
+    excused = set()
+    for to, (word, residue) in the_rom_s.copied.items():
+        our_word, our_residue = ours.copied.get(to, (None, False))
+        if (residue and our_residue and bytes(its_memory[to:to + aes.WORD_BYTES]) == word
+                and bytes(our_memory[to:to + aes.WORD_BYTES]) == our_word):
+            excused.update(range(to, to + aes.WORD_BYTES))
+    return frozenset(excused)
 
 
 def the_bound_desk_s_gemdos_windows(memory):

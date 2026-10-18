@@ -23,7 +23,8 @@ UNIT_K = tuple(SIGNATURES)
 # ---- band 6 slice F2 (group G2) ---- FLIPPED but two at stage 2: i_find, held only because the groups flipped in
 # parallel (its C callees app_afind and fpd_ofind flipped beside it) — FLIPPED at slice F2b —, and men_update, HELD at
 # slice F2b by a measured reason (`linef_table.LINKED_AND_NOT_FLIPPED` says it): flipped, ctlmgr's two desk-turn rows are
-# refused by the desk's live-frames vet, its C's dead bytes in the held evnt_multi binding's frame not the ROM's.
+# refused by the desk's live-frames vet, its C's dead bytes in the held evnt_multi binding's frame not the ROM's — the
+# binding's unwritten locals, out of the compare once the binding flips (slice H2's pieces): it flips with it at F2c.
 HELD_AT_F2 = ("AES_ROM_MEN_UPDATE",)
 # ---- band 6 wave 2, group G3 (unit K) ---- the unit's wave-2 routines: their own signatures and list, so wave
 # 1b's UNIT_K (and its count) stays as it is

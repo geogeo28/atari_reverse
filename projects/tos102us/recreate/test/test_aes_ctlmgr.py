@@ -30,6 +30,7 @@ import aes
 import aes_accessory_turns_pinned
 import aes_boot
 import aes_ctlmgr as cm
+import aes_desk
 import aes_stack as stack
 import aes_event
 import aes_gemctrl as gc
@@ -1211,6 +1212,151 @@ def test_where_the_runs_end_a_byte_of_the_desk_s_live_frames_is_compared():
     with pytest.raises(AssertionError, match=r"THE DESK'S LIVE FRAMES .* ARE NOT THE ROM'S — 1 byte"):
         tier3().vet_the_desk_s_live_frames("a row", blob, _stood_in(rom), _stood_in(other), programs)
     tier3().vet_the_desk_s_live_frames("a row", blob, _stood_in(rom), _stood_in(other), ())
+
+
+# ---- band 6 slice H2: THE DESK'S LIVE FRAMES UNDER A FLIPPED evnt_multi BINDING (it flips at F2c) -----------------------------------
+# (a) THE STAGING TAUGHT: the desk's own frames begin at the first frame whose return lies in desk text STILL THE ROM'S on
+# the blob (`aes_ctlmgr.the_desk_s_text`) — under a flipped binding, at its caller's call. (b) THE ROM'S BINDING'S RESIDUE:
+# the out words it copies from answer words no store of its run reached (`aes_ctlmgr.ResidueCopies`), the one class by
+# nature of the live frames, read off each run — excused only where BOTH runs copied residue there and each run's end
+# still holds what it copied (the RH2 review's narrowing). evnt_multi is held until F2c: each piece is held here over today's
+# machines and rows — the binding's state laid, where a test needs it, by the flipped set alone (`aes_desk.flipped`).
+def _the_binding_laid(monkeypatch, flipped):
+    """`aes_desk.flipped` as the blob's own, with evnt_multi's binding in it (`flipped`) or out of it."""
+    as_built = aes_desk.flipped
+    monkeypatch.setattr(aes_desk, "flipped", lambda blob=None: as_built(blob) - {cm.EVNT_MULTI_BINDING}
+                        | ({cm.EVNT_MULTI_BINDING} if flipped else set()))
+
+
+def _the_binding_s_text():
+    starts = aes_desk.inventoried()
+    return range(cm.EVNT_MULTI_BINDING, starts[starts.index(cm.EVNT_MULTI_BINDING) + 1])
+
+
+def test_under_a_flipped_binding_the_desk_s_frames_begin_at_its_caller_s_call(monkeypatch):
+    """ON THE DESK'S MACHINE, PARKED IN evnt_multi's BINDING: while the binding is the ROM's, the desk's own frames begin
+    at the AES's frame under it (its return into the binding); FLIPPED, at THE BINDING'S OWN FRAME — the one the AES's
+    links to, its return into deskmain's call — so the binding's frame is below the live frames, its build's own by
+    nature as the AES's is. The staging over the flipped set lays from there, and refuses a changed return as before."""
+    blob, rom = _shipped(), gc.machine(gc.THE_DESK).ram
+    ours = bytearray(cm.our_machine(types.SimpleNamespace(machine=gc.THE_DESK), blob))
+    _the_binding_laid(monkeypatch, flipped=False)
+    (held_lowest, *_), _top = cm._the_desk_s_frames(rom, blob)
+    assert case.long_in(rom, held_lowest + aes.LONG_BYTES) & aes_boot.BUS in _the_binding_s_text()
+    _the_binding_laid(monkeypatch, flipped=True)
+    assert not any(lo <= cm.EVNT_MULTI_BINDING < hi for lo, hi in cm.the_desk_s_text(blob))
+    (lowest, *_), _top = cm._the_desk_s_frames(rom, blob)
+    assert lowest == case.long_in(rom, held_lowest) & aes_boot.BUS
+    assert case.long_in(rom, lowest + aes.LONG_BYTES) & aes_boot.BUS not in _the_binding_s_text()
+    lo, top = cm.the_desk_s_live_frames(rom, blob)
+    assert lo == lowest + aes.LONG_BYTES and cm.lay_the_desk_s_live_frames(ours, rom, blob) > 0 and ours[lo:top] == rom[lo:top]
+    ours[lo:lo + aes.LONG_BYTES] = bytes(aes.LONG_BYTES)
+    with pytest.raises(AssertionError, match="the desk's frame chain on our machine is not the ROM's"):
+        cm.lay_the_desk_s_live_frames(ours, rom, blob)
+
+
+THE_ANSWER_WORDS = 6                    # ev_multi's: the mouse's x and y, the buttons, the keys' state, the key, the clicks
+ITS_PACKED_LONGWORDS = ("%fp@(-4)", "%fp@(-8)")     # the button word, the timer: what it stores in its frame before it parks
+
+
+def _the_binding_before(called):
+    """The ROM's evnt_multi binding's instructions before its Line-F call of `called`."""
+    listing = cm.the_binding_s_listing()
+    return listing[:next(index for index, (_at, _length, _text, names) in enumerate(listing) if names == called)]
+
+
+def test_the_rom_s_binding_copies_out_six_answer_words_it_never_writes_before_it_parks():
+    """BY READING (`aes_ctlmgr.the_binding_s_copies`): desk_evnt_multi copies SIX consecutive answer words of its frame out
+    through its caller's six pointers, after its yield (the instruction after its `dsptch`); and before its Line-F call
+    of ev_multi — where it parks — it stores into its frame only its two packed longwords and the argument slot at the
+    `link`'s stack pointer (the answers' address it hands): none of the six."""
+    reading = cm.the_binding_s_copies()
+    answers = tuple(answer for answer, _out in reading.copies)
+    assert len(answers) == THE_ANSWER_WORDS and answers == tuple(range(answers[0], answers[0] + THE_ANSWER_WORDS * aes.WORD_BYTES,
+                                                                       aes.WORD_BYTES))
+    yielded = next(at for at, _length, _text, called in cm.the_binding_s_listing() if called == addrs.AES_ROM_DSPTCH)
+    assert reading.at == yielded + aes.WORD_BYTES
+    before = [text for _at, _length, text, _called in _the_binding_before(addrs.AES_ROM_EV_MULTI) if text]
+    into_its_frame = sorted({text.rpartition(",")[2] for text in before if text.rpartition(",")[2].startswith("%fp@(-")})
+    assert into_its_frame == sorted(ITS_PACKED_LONGWORDS)
+    assert all(int(at[len("%fp@("):-1]) >= answers[-1] + aes.WORD_BYTES for at in ITS_PACKED_LONGWORDS)
+    unpushed = before[:next(index for index, text in enumerate(before) if text.endswith(",%sp@-"))]
+    assert [text for text in unpushed if "%sp@" in text] == ["movel %fp,%sp@", f"addil #{answers[0]},%sp@"]
+
+
+def test_a_menu_row_s_rom_run_copies_the_key_and_the_clicks_out_of_its_binding_s_residue(monkeypatch):
+    """BY RUN (`aes_ctlmgr.ResidueCopies`, read off the ROM's run where its binding copies out): an item chosen from the
+    bar wakes the desk with MU_MESAG alone — ev_multi answers the mouse, the buttons and the keys' state (ev_rets), no key
+    and no clicks: THOSE TWO words are the binding's residue, and only they. Our shore's copies, to the same six out words,
+    carry the same verdicts — the ROM's binding's while it is held (until F2c), OUR C binding's once flipped
+    (`aes_ctlmgr.our_copying`, read off our build's listing)."""
+    seen = []
+    vet = bench_tier3().vet_the_desk_s_live_frames
+
+    def kept(who, blob, rom, ours, programs, copies=None):
+        seen.append(copies)
+        vet(who, blob, rom, ours, programs, copies)
+    monkeypatch.setattr(bench_tier3(), "vet_the_desk_s_live_frames", kept)
+    bench_tier3().idle_to_idle_on(_shipped(), THE_MENU, WOKEN[THE_MENU])
+    (the_rom_s, ours), = seen
+    verdicts = [residue for _word, residue in the_rom_s.copied.values()]
+    assert verdicts == [False] * (THE_ANSWER_WORDS - 2) + [True] * 2, "the key's and the clicks', the last two it copies"
+    assert ({to: residue for to, (_word, residue) in ours.copied.items()}
+            == {to: residue for to, (_word, residue) in the_rom_s.copied.items()})
+
+
+def test_where_the_runs_end_a_residue_word_may_differ_and_nothing_else():
+    """`aes_ctlmgr.residue_where_the_runs_end` and the vet, read by hand over the ROM-booted desk's machine: an out word
+    BOTH runs copied from residue may differ, where each run's end still holds the word it copied; NOT where our run
+    copied no word there, nor copied an answer, nor copied a word its end does not hold (a C that copies another word
+    there: the RH2 review's M4), nor where the ROM's word was an answer, nor where the ROM's run left another value there
+    since; and a byte beside it is compared as ever."""
+    blob, rom = _shipped(), gc.machine(gc.THE_DESK).ram
+    programs = ((aes.SHELL_PD, cm.the_desk_s_stack(gc.machine(gc.THE_DESK))),)
+    lo, top = cm.the_desk_s_live_frames(rom, blob)
+    word_at = top - 4 * aes.WORD_BYTES
+    word = bytes(rom[word_at:word_at + aes.WORD_BYTES])
+    other = bytearray(rom)
+    other[word_at] ^= 1
+    ours_held = bytes(other[word_at:word_at + aes.WORD_BYTES])
+
+    def copies(rom_s, ours=None):
+        made = [cm.ResidueCopies(lambda: ({}, False)) for _shore in range(2)]
+        made[0].copied, made[1].copied = rom_s, ours or {}
+        return tuple(made)
+    residue, ours_residue = {word_at: (word, True)}, {word_at: (ours_held, True)}
+    bench_tier3().vet_the_desk_s_live_frames("a row", blob, _stood_in(rom), _stood_in(other), programs,
+                                            copies(residue, ours_residue))
+    for refused in (copies(residue), copies(residue, {word_at: (ours_held, False)}), copies(residue, {word_at: (word, True)}),
+                    copies({word_at: (word, False)}, ours_residue),
+                    copies({word_at: (bytes(b ^ 0xFF for b in word), True)}, ours_residue), None):
+        with pytest.raises(AssertionError, match=r"THE DESK'S LIVE FRAMES .* ARE NOT THE ROM'S — 1 byte"):
+            bench_tier3().vet_the_desk_s_live_frames("a row", blob, _stood_in(rom), _stood_in(other), programs, refused)
+    beside = bytearray(other)
+    beside[word_at + aes.WORD_BYTES] ^= 1
+    with pytest.raises(AssertionError, match=r"ARE NOT THE ROM'S — 1 byte"):
+        bench_tier3().vet_the_desk_s_live_frames("a row", blob, _stood_in(rom), _stood_in(beside), programs,
+                                                copies(residue, ours_residue))
+
+
+def test_an_answer_word_is_residue_only_where_no_byte_of_it_was_stored():
+    """`aes_ctlmgr.ResidueCopies` read by hand at a copy-out (the RH2 review's F3): the word copied is RESIDUE only where
+    no store of the run reached EITHER byte of it — one byte stored makes it an answer; a store beside it does not; and
+    a saturated ledger is refused by name."""
+    sp, answer, out, to = 0x1000, 0x10, 0x40, 0x2000        # a stand-in copy-out: one word, one pointer, off SP
+    copy_out = 0xF00
+    at = sp + answer
+    memory = bytearray(to + aes.LONG_BYTES)
+    memory[sp + out:sp + out + aes.LONG_BYTES] = to.to_bytes(aes.LONG_BYTES, "big")
+    memory[at:at + aes.WORD_BYTES] = word = bytes((0x12, 0x34))
+    for stored, residue in (((), True), ((at - 1, at + aes.WORD_BYTES), True), ((at,), False), ((at + 1,), False),
+                            ((at, at + 1), False)):
+        made = cm.ResidueCopies(lambda: (dict.fromkeys(stored, 0), False), (copy_out, ((answer, out),)))
+        made.observing[copy_out](memory, sp)
+        assert made.copied == {to: (word, residue)}, f"stored {[hex(byte) for byte in stored]}"
+    saturated = cm.ResidueCopies(lambda: ({}, True), (copy_out, ((answer, out),)))
+    with pytest.raises(AssertionError, match="ledger saturated"):
+        saturated.observing[copy_out](memory, sp)
 
 
 def test_the_first_dispatch_is_held_to_the_bar_by_itself():

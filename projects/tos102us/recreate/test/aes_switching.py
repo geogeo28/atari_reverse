@@ -125,7 +125,7 @@ class Switching:
     `ours` (an `OurDispatcher`): the run is OUR build's — its own idle and switchto are stops beside the ROM's (a
     foreign window's dispatcher is the ROM's on both shores), and `relocated` is `switches.at_idles` as OUR idle
     takes them (`tier3.deliveries_for_our_shore`), `relocated_polls` its `at_polls`. `tally()`: the holder's running totals, a tuple; `foreign` is then
-    one tuple of differences per window. `observing`: `{PC: observe(memory)}` — further stops of the holder's own,
+    one tuple of differences per window. `observing`: `{PC: observe(memory, sp)}` — further stops of the holder's own,
     in whichever process they are reached. `ledger()`: the addresses the run has stored so far (its write ledger),
     for a holder that must know WHO stored a byte (`stored_outside_the_windows`).
 
@@ -207,6 +207,8 @@ class Switching:
             self.hold_the_manager_s_spans(memory)       # (a watch nobody handed its run's entry image: from its first stop)
         if self._programs_stood is None:                # ...and every loaded program's, behind a door (all but the one running)
             self._hold_the_programs_spans(memory)
+        if pc in self._observing:       # (first: an observed PC may be a stop of the dispatcher's too — a resume's)
+            self._observing[pc](memory, sp)
         if pc == self._resumes_at:
             self._resumed(pc, sp, memory)
         elif pc in self._rtes:
@@ -215,9 +217,7 @@ class Switching:
             self._polling(pc, sp, memory)
         elif pc in self._polled:
             self._polled.discard(pc)    # past the poll: its entry is a stop again
-        elif pc in self._observing:
-            self._observing[pc](memory)
-        else:
+        elif pc not in self._observing:
             assert self.inner is not None and pc in self._inner_armed and self._window is None, (
                 f"a run that switches stopped at {pc:#x}: no stop of its dispatcher's, and none its door watch armed")
             self._inner_armed = frozenset(self.inner.stopped(pc, sp, memory))
@@ -712,13 +712,13 @@ def the_rom_s(switches, entered_at=None, tally=_whole_cycles, inner=None, observ
 
 
 def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None, relocated_polls=None, takeover=False,
-         images=None, door=False, programs=()):
+         images=None, door=False, programs=(), observing=None):
     """OUR SHORE, on `blob`: `relocated` the row's idle deliveries as our own dispatcher takes them,
     `relocated_polls` those it takes at a poll that is no idle; `takeover`: over a machine whose screen manager is
-    ours (`aes_takeover`); `door`, `programs`: and whose trap door is (`Switching`'s)."""
+    ours (`aes_takeover`); `door`, `programs`: and whose trap door is (`Switching`'s); `observing` its further stops."""
     return Switching(switches, inner=inner, ours=our_dispatcher(blob), relocated=relocated,
                      relocated_polls=relocated_polls, tally=tally, ledger=ledger, takeover=takeover, images=images,
-                     door=door, programs=programs)
+                     door=door, programs=programs, observing=observing)
 
 
 # ---- THE REGISTRAR: a row that blocks and is woken ------------------------------------------------------------------------

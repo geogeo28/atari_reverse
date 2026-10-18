@@ -364,7 +364,7 @@ def _calls_of_the_cursor_routine(row, pokes):
     reference = switching.scheduled(row, pokes)
     drwaddr, hide_count, seen = aes.header_constants("gsxif.h")["AES_DRWADDR"], vdi.field("LINEA", "M_HID_CT").at, []
     watch = switching.the_rom_s(switching.switches_of(reference), switching._entry(row), observing={
-        addrs.VDI_ROM_DEFAULT_USER_CUR: lambda memory: seen.append((case.long_in(memory, drwaddr), case.word_in(memory, hide_count)))})
+        addrs.VDI_ROM_DEFAULT_USER_CUR: lambda memory, _sp: seen.append((case.long_in(memory, drwaddr), case.word_in(memory, hide_count)))})
     rom_bench.watched_original(make_image(pokes), switching._entry(row), watch)
     rom_bench.vet_the_run_just_made(f"the ROM's replay of {row.label}")
     watch.vet_ended(row.label)

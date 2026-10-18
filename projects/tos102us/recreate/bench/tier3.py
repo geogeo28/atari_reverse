@@ -3258,6 +3258,19 @@ def _our_ledger():
     return emu.bench_writes(BASE_IMAGE)[0].keys()
 
 
+def residue_copies(blob):
+    """`(the ROM's, ours)`: an `aes_ctlmgr.ResidueCopies` for each shore's run of a row from a machine's idle, each
+    reading the emulator's write ledger as its run stands (the runs are made one after the other) — ours at the ROM's
+    binding's copy-out AND our C binding's on `blob` (whichever its run reaches)."""
+    return (aes_ctlmgr.ResidueCopies(_the_run_s_ledger),
+            aes_ctlmgr.ResidueCopies(_the_run_s_ledger, aes_ctlmgr.the_rom_s_copying(), aes_ctlmgr.our_copying(blob.elf)))
+
+
+def _the_run_s_ledger():
+    """The emulator's write ledger as the run stands: `({address: byte}, saturated)`."""
+    return emu.bench_writes(BASE_IMAGE)
+
+
 def foreign_of(measured):
     """The `Foreign` of `measured`: its foreign windows — none, for a row whose run enters no other process."""
     return getattr(measured, "foreign", NO_FOREIGN_WINDOW)
@@ -3771,19 +3784,22 @@ def vet_the_machines_where_the_runs_end(who, blob, rom, ours, named, its_own=(),
         f"in {sorted(needed)}: a class named and not needed excuses a store for nothing")
 
 
-def vet_the_desk_s_live_frames(who, blob, rom, ours, programs):
+def vet_the_desk_s_live_frames(who, blob, rom, ours, programs, copies=None):
     """THE DESK'S LIVE FRAMES ARE THE ROM'S WHERE THE TWO RUNS END (band 6 slice B0's fix pass; reviewer A's F1): on a
     row whose machine holds the desk as a process of ours (`programs` names PD0), everything from the desk's lowest ROM
-    frame to UDA0's top (`aes_ctlmgr.the_desk_s_live_frames`, read on the ROM's run) byte for byte — the program
-    windows leave PD0's whole stack out, and a store of our AES's into the desk's own frames (an answer through a
-    pointer the desk hands it) would hide there. Our run was entered with them the ROM's (`_two_shores`:
-    `aes_ctlmgr.lay_the_desk_s_live_frames`, the dead bytes the takeover left)."""
+    frame on `blob` to UDA0's top (`aes_ctlmgr.the_desk_s_live_frames`, read on the ROM's run) byte for byte — the
+    program windows leave PD0's whole stack out, and a store of our AES's into the desk's own frames (an answer through
+    a pointer the desk hands it) would hide there. Our run was entered with them the ROM's (`_two_shores`:
+    `aes_ctlmgr.lay_the_desk_s_live_frames`, the dead bytes the takeover left). BUT FOR ONE CLASS BY NATURE (band 6
+    slice H2): `copies` — the two runs' `aes_ctlmgr.ResidueCopies` (the ROM's, ours) — the out words BOTH runs'
+    evnt_multi bindings copied out of their frames' residue and still hold (`aes_ctlmgr.residue_where_the_runs_end`)."""
     if aes.SHELL_PD not in dict(programs):
         return
     its = rom.memory
     mapped = mapped_back(bytearray(ours.memory[:addrs.ST_RAM_BYTES]), code_relocations(blob.elf, aes_ctlmgr.SYMBOL))
-    lo, top = aes_ctlmgr.the_desk_s_live_frames(its)
-    differing = [at for at in range(lo, top) if its[at] != mapped[at]]
+    lo, top = aes_ctlmgr.the_desk_s_live_frames(its, blob)
+    residue = aes_ctlmgr.residue_where_the_runs_end(its, *copies, mapped) if copies else frozenset()
+    differing = [at for at in range(lo, top) if its[at] != mapped[at] and at not in residue]
     assert not differing, (
         f"{who}: where the two runs end THE DESK'S LIVE FRAMES [{lo:#x}, {top:#x}) ARE NOT THE ROM'S — {len(differing)} "
         f"byte(s), the first {[(hex(at), hex(its[at]), hex(mapped[at])) for at in differing[:COMPARED_ADDRESSES_SHOWN]]} "
@@ -3862,7 +3878,7 @@ def _two_shores(blob, who, machine, switches, images_of=None):
     if not door:                        # ...the desk is a process of ours behind a door alone (the binding's part of it)
         programs = tuple((pd, stack) for pd, stack in programs if pd != aes.SHELL_PD)
     else:                               # ...and its live frames entered as the ROM's (`aes_ctlmgr`'s note: a staging)
-        aes_ctlmgr.lay_the_desk_s_live_frames(our_image, rom_image)
+        aes_ctlmgr.lay_the_desk_s_live_frames(our_image, rom_image, blob)
     assert door or not programs, f"{who}: a machine with loaded programs of ours and no door of ours"
     images.programs = programs
     at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, aes_ctlmgr.SYMBOL) for taken in (switches.at_idles, switches.at_polls))
@@ -3896,12 +3912,13 @@ def idle_to_idle_on(blob, who, woken):
     switches = made.switches
     relocations, images, rom_image, our_image, ours_watching, door, programs = _two_shores(blob, who, woken, switches)
     images.topped = aes_ctlmgr.THE_TOPPED_WORDS in woken.differs
+    copies = residue_copies(blob)
     the_rom_s = aes_switching.IdleToIdle(switches, tally=_the_rom_s_foreign_tally, images=images.the_rom_s,
-                                         door=door, programs=programs)
+                                         door=door, programs=programs, observing=copies[0].observing)
     rom = _run_to_its_next_idle(rom_image, the_rom_s, blob)
     _mapped_at_entry(our_image, relocations)
     came_with = what_came_with(our_image, relocations)
-    watch = aes_switching.IdleToIdle(switches, **ours_watching)
+    watch = aes_switching.IdleToIdle(switches, **ours_watching, observing=copies[1].observing)
     ours = _run_to_its_next_idle(our_image, watch, blob)
     rom_bench.vet_blob_intact(aes_ctlmgr.SYMBOL, our_image, (blob.base, blob.base + len(blob.blob)), blob.blob)
     vet_no_slot_names_the_rom(aes_ctlmgr.SYMBOL, our_image, relocations, came_with, watch.foreign_codes)
@@ -3934,7 +3951,7 @@ def idle_to_idle_on(blob, who, woken):
                 sum(turn.ours + turn.glue for turn in every_turn) + ours_outside)
     vet_who_ran_the_door(who, rom, ours, door)
     vet_the_machines_where_the_runs_end(who, blob, rom, ours, woken.differs, programs=programs)
-    vet_the_desk_s_live_frames(who, blob, rom, ours, programs)
+    vet_the_desk_s_live_frames(who, blob, rom, ours, programs, copies)
     vet_the_streams_alike(who, rom, ours)
     OUR_RUN.append(OurRun(aes_ctlmgr.SYMBOL, ours.in_the_aes, False, 0))
     measured = Measurement(rom.cost, ours.cost, blob.overhead)
@@ -4201,12 +4218,13 @@ def through_its_handler_on(blob, who, handled):
     images.stops_only = tuple(handled.at_stops_only)
     glue, doors = glue_of(blob), {}
     its_marks, our_marks = (_HandlerMarks(blob, glue, routine, symbol) for _shore in range(2))
+    copies = residue_copies(blob)
 
     def the_rom_s_handling(_memory, _sp):
         images.its_own = (*its_own, *handled.at_stops_only)
         doors[aes_switching.THE_ROM_S] = the_rom_s_door_watch(symbol, entry, switches.at_calls, blocks=False)
         return aes_switching.the_rom_s(switches, entry, _the_rom_s_foreign_tally, doors[aes_switching.THE_ROM_S],
-                                       images=images.the_rom_s, door=door, programs=programs)
+                                       images=images.the_rom_s, door=door, programs=programs, observing=copies[0].observing)
 
     def our_handling(_memory, _sp):
         images.its_own = (*its_own, *handled.at_stops_only)
@@ -4214,11 +4232,12 @@ def through_its_handler_on(blob, who, handled):
         at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, symbol) for taken in (switches.at_idles, switches.at_polls))
         return aes_switching.ours(blob, switches, at_idles, _our_foreign_tally(blob, glue), doors[aes_switching.OURS],
                                   ledger=_our_ledger, relocated_polls=at_polls, takeover=True, images=images.ours,
-                                  door=door, programs=programs)
+                                  door=door, programs=programs, observing=copies[1].observing)
 
     the_rom_s = aes_switching.ThroughAHandler(
         aes_switching.ToAnArrival(arriving.switches, entry, arriving.which, _frame_the_rom_s_caller_pushed(words),
-                                  tally=_the_rom_s_foreign_tally, images=images.the_rom_s, door=door, programs=programs),
+                                  tally=_the_rom_s_foreign_tally, images=images.the_rom_s, door=door, programs=programs,
+                                  observing=copies[0].observing),
         the_rom_s_handling, its_marks)
     rom = _run_to_its_next_idle(rom_image, the_rom_s, blob)
     images.its_own = ()
@@ -4226,7 +4245,7 @@ def through_its_handler_on(blob, who, handled):
     came_with = what_came_with(our_image, relocations)
     watch = aes_switching.ThroughAHandler(
         aes_switching.ToAnArrival(arriving.switches, blob.entry(symbol), arriving.which, _frame_our_caller_pushed(words),
-                                  **ours_watching), our_handling, our_marks)
+                                  **ours_watching, observing=copies[1].observing), our_handling, our_marks)
     ours = _run_to_its_next_idle(our_image, watch, blob)
     # TO THE ARRIVAL: what `arriving` derived, on both shores.
     the_rom_s.arriving.vet_ended(f"{who}: the ROM's run")
@@ -4278,7 +4297,7 @@ def through_its_handler_on(blob, who, handled):
         f"return — cost moved into code counted as shared")
     vet_the_identity(who, measured, mine, its)
     vet_the_machines_where_the_runs_end(who, blob, rom, ours, handled.differs, its_own, programs)
-    vet_the_desk_s_live_frames(who, blob, rom, ours, programs)
+    vet_the_desk_s_live_frames(who, blob, rom, ours, programs, copies)
     vet_the_streams_alike(who, rom, ours)
     OUR_RUN.append(OurRun(symbol, our_slice.aes, False, 0))
     lo, top = aes_takeover.spans_of(rom.memory).stack

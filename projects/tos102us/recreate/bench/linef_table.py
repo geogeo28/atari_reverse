@@ -143,11 +143,12 @@ LINKED_AND_NOT_FLIPPED.update({
     "AES_ROM_DESK_EVNT_MULTI": "unit D: evnt_multi, held at band 6 slice F1 — flipped, ctlmgr's live-frame staging refuses "
                                "first (our C binding has no `link a6`: the desk's frame chain differs at $a288 / $a2bc), "
                                "and behind it the answer words it copies out for events that did not occur ($a34e "
-                               "clicks_out, $a350 key_out) are each shore's residue: a by-nature class no row has",
-    "AES_ROM_DESK_OBJC_DRAW": "unit D: objc_draw, held at band 6 slice F1 — no row of it can be made: a row that switches "
-                              "with no door is modelled with no walked routine served, and its C walks the tree (just_draw); "
-                              "served it (the fix pass's probe), each row's blob differential is refused on the dispatcher's "
-                              "stack below the registered drop"})
+                               "clicks_out, $a350 key_out) are each shore's residue — both harness pieces made at slice H2 "
+                               "(`aes_ctlmgr.the_desk_s_text`, `aes_ctlmgr.ResidueCopies`): it flips at F2c",
+    "AES_ROM_DESK_OBJC_DRAW": "unit D: objc_draw, held at band 6 slice F1 — its C walks the tree (just_draw), and a row that "
+                              "switches with no door was modelled with no walked routine served; the fork's walk made at "
+                              "slice H2 (`aes_switch._served_with_no_door`), its rows priced and measured on both blobs (the "
+                              "F1 probe's refusal was the kit's own bench's): it flips at F2c"})
 # ---- unit O: FLIPPED at band 6 slice F1 — its seventeen C cores thunked, trp13 a row of the transcribed table (native) ----
 # ---- end of band 6 wave 1a's ----
 # ---- band 6 wave 1b: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
@@ -168,8 +169,9 @@ LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WREDRAW": "unit I: do_wredraw, held a
 LINKED_AND_NOT_FLIPPED.update({
     "AES_ROM_MEN_UPDATE": "unit K: men_update, held at band 6 slice F2b — MEASURED: flipped, ctlmgr's two desk-turn rows "
                           "are refused by the desk's live-frames vet (its C leaves other dead bytes than the ROM's at "
-                          "$a2a6..$a2b3, inside the held evnt_multi binding's frame under the desk's wait) — a harness "
-                          "question, the user's"})
+                          "$a2a6..$a2b3, inside the held evnt_multi binding's frame under the desk's wait: that binding's "
+                          "unwritten locals) — out of the compare once the binding flips (slice H2's pieces): it flips with "
+                          "evnt_multi at F2c"})
 # ---- end of group G2's ----
 # ---- band 6 wave 1b, group G3 (units B `src/desk/deskact.c`, G `src/desk/deskfpd.c`) ----
 # FLIPPED at band 6 slice F2 (stage 2): unit G whole, unit B but five. HELD, unit B's five below: a routine flips once
