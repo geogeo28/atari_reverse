@@ -178,6 +178,9 @@ BAND_6_FLIPPED_AT_F2 = {
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     "G4": 19,                           # unit C's ten, units H, E, F (eight), and unit D's appl_exit (⚠️ unpriced)
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b (the five stage artifacts) ----
+    "F2b": 4,               # win_icalc, win_bldview, win_shwall, i_find (men_update held: `aes_desktop.HELD_AT_F2`)
+    # ---- end of slice F2b's ----
 }
 BAND_6_FLIPPED = 56 + sum(BAND_6_FLIPPED_AT_F2.values())
 
@@ -245,6 +248,14 @@ NOT_ENTERED_ON_OUR_SHORE = {
         ("DESK_FORM_ERROR", "d_errmsg (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
         ("DOS_DELETE", "d_dofdel (unit O's glue entry: its verified rows enter its thunk through the table, N15)"))},
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b ---- EVERY ROM CALLER FLIPPED, the last at slice F2b (i_find, win_bldview): called by our C
+    # alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`)
+    **{name: f"its every ROM caller flipped (the last at band 6 slice F2b: {callers}): called by our C alone on our shore"
+       for name, callers in {
+           "AES_ROM_FPD_OFIND": "i_find",
+           "AES_ROM_WIN_ICALC": "win_bldview", "AES_ROM_WIN_OCALC": "win_bldview", "AES_ROM_OBJ_IALLOC": "app_blddesk, win_bldview",
+           "AES_ROM_OBJ_WFREE": "app_blddesk, win_free, win_bldview"}.items()},
+    # ---- end of slice F2b's ----
 }
 
 
@@ -612,8 +623,8 @@ DEPTHS = {
     'drive A: dragged to the trash, Return': (1216, 0, 254, 0),
     'a rubber box on the desktop, round the trash': (1110, 0, 254, 0),
     'A: opened': (1518, 0, 254, 0),
-    'window: View > Show as Text': (1064, 750, 254, 458),
-    'window: View > Sort by Size': (1064, 750, 254, 0),
+    'window: View > Show as Text': (1126, 750, 254, 458),
+    'window: View > Sort by Size': (1126, 750, 254, 0),
     'window: File > Close Window': (1414, 668, 254, 0),
     'window: its closer clicked': (1382, 520, 260, 0),
     'window: its fuller clicked': (1180, 520, 260, 0),
@@ -628,37 +639,37 @@ DEPTHS = {
     'file: double-clicked (the alert)': (1260, 0, 254, 0),
     "file: dragged to the trash, Return (Cancel, the dialog's default)": (1280, 0, 254, 0),
     'file: dragged to the trash, OK': (1280, 0, 254, 0),
-    "folder: File > New Folder, 'A', Return": (1228, 668, 254, 0),
+    "folder: File > New Folder, 'A', Return": (1290, 668, 254, 0),
     'folder: the file dragged onto it, Return': (1304, 0, 254, 0),
-    'folder: opened': (1414, 0, 254, 0),
-    'folder: File > Close': (1458, 668, 254, 0),
+    'folder: opened': (1452, 0, 254, 0),
+    'folder: File > Close': (1520, 668, 254, 0),
     'folder: selected, File > Show Info, Return': (1354, 668, 254, 0),
     'folder: dragged to the trash, OK': (1280, 0, 254, 0),
     'text view: A: opened': (1518, 0, 254, 458),
-    'text view: Options > Save Desktop, Return': (1210, 668, 254, 458),
+    'text view: Options > Save Desktop, Return': (1272, 668, 254, 458),
     'files: A: opened': (1518, 0, 254, 0),
     "files: the window's down arrow clicked": (570, 706, 260, 0),
     "files: the window's vertical bar clicked under its slider (a page)": (570, 706, 260, 0),
-    "files: the window's right arrow clicked": (1102, 404, 260, 0),
+    "files: the window's right arrow clicked": (1164, 404, 260, 0),
     "files: the long file shown, a blank at each page's end and at its end": (1442, 668, 254, 0),
     'files: the long file dragged onto the folder, Return': (1304, 0, 254, 0),
     'files: the folder (not empty) dragged to the trash, OK': (1280, 0, 254, 0),
     'files: the window made full': (1180, 520, 260, 0),
     'files: the program selected, File > Show Info, Return': (1318, 668, 254, 0),
     'files: the program selected, Options > Install Application, Return': (1294, 668, 254, 0),
-    'files: View > Show as Text': (1064, 750, 254, 458),
+    'files: View > Show as Text': (1126, 750, 254, 458),
     'window: its fuller clicked again (back to its size)': (1180, 520, 260, 0),
     'files: the right arrow clicked, then the window made full': (1180, 520, 260, 0),
-    'files: the right arrow clicked, then View > Sort by Size': (1064, 750, 254, 0),
-    'window: View > Show as Icons (the view it has)': (1064, 750, 254, 0),
-    'window: Options > Save Desktop, Return': (1210, 668, 254, 0),
-    'files: the right arrow clicked, then Options > Save Desktop, Return': (1210, 668, 254, 0),
+    'files: the right arrow clicked, then View > Sort by Size': (1126, 750, 254, 0),
+    'window: View > Show as Icons (the view it has)': (1126, 750, 254, 0),
+    'window: Options > Save Desktop, Return': (1272, 668, 254, 0),
+    'files: the right arrow clicked, then Options > Save Desktop, Return': (1272, 668, 254, 0),
     'a rubber box on the desktop, round drive B: and the trash': (1110, 0, 254, 0),
     'drive A: dragged to a bare spot of the desktop': (1080, 0, 254, 0),
     "drive A:'s object clicked at its corner, outside its image and its label": (570, 0, 254, 0),
-    'files: View > Sort by Size': (1064, 750, 254, 0),
-    'files: View > Sort by Date': (1064, 750, 254, 0),
-    'files: View > Sort by Type': (1064, 750, 254, 0),
+    'files: View > Sort by Size': (1126, 750, 254, 0),
+    'files: View > Sort by Date': (1126, 750, 254, 0),
+    'files: View > Sort by Type': (1126, 750, 254, 0),
     'folder: the file dragged onto it again, Return — the name conflict, Return': (1304, 0, 254, 0),
     "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1280, 0, 254, 0),
     'folders: B dragged onto A, Return': (1304, 0, 254, 0),
@@ -679,21 +690,21 @@ DEPTHS = {
     "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1280, 0, 254, 0),
     "folder: File > New Folder again, 'A', Return — the name taken, Return": (1218, 668, 254, 0),
     'file: dragged to the trash, OK — then drive A: dragged into its window': (1184, 0, 260, 0),
-    'files: the right arrow clicked, then the left arrow clicked': (1102, 404, 260, 0),
-    "files: the window's sizer pulled up and left (smaller)": (1074, 650, 260, 0),
-    'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1102, 404, 260, 0),
-    "files: the window's right arrow gadget itself clicked (a column)": (1102, 404, 260, 0),
+    'files: the right arrow clicked, then the left arrow clicked': (1164, 404, 260, 0),
+    "files: the window's sizer pulled up and left (smaller)": (1100, 650, 260, 0),
+    'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1164, 404, 260, 0),
+    "files: the window's right arrow gadget itself clicked (a column)": (1164, 404, 260, 0),
     "files: the window's down arrow gadget itself clicked (a row)": (570, 404, 260, 0),
     "files: the window's up arrow gadget clicked (a row)": (570, 404, 260, 0),
-    "files: the window's horizontal slider dragged right": (1110, 706, 260, 0),
-    'window: Esc typed (the top window read again)': (1048, 0, 240, 0),
+    "files: the window's horizontal slider dragged right": (1172, 706, 260, 0),
+    'window: Esc typed (the top window read again)': (1110, 0, 240, 0),
     'two windows: File > Close Window (one left on top)': (1418, 668, 254, 0),
-    'files: the window sized smaller, then its right arrow clicked': (1102, 404, 260, 0),
+    'files: the window sized smaller, then its right arrow clicked': (1164, 404, 260, 0),
     'files: the right arrow clicked, then the long file shown': (1442, 668, 254, 0),
     'files: View > Sort by Size, then the long file shown': (1442, 668, 254, 0),
     "files: View > Show as Text, then the long file's line shown": (1290, 668, 254, 458),
-    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1228, 668, 254, 0),
-    'two windows: View > Show as Text': (1064, 750, 254, 458),
+    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1290, 668, 254, 0),
+    'two windows: View > Show as Text': (1126, 750, 254, 458),
     'files: a fifth entry, then the down arrow gadget clicked (a row)': (570, 404, 260, 0),
     "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1280, 0, 254, 458),
     'text view: drive A: dragged to a bare spot of the desktop': (1080, 0, 254, 0),

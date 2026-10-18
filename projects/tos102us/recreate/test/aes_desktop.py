@@ -20,11 +20,11 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_K = tuple(SIGNATURES)
-# ---- band 6 slice F2 (group G2) ---- FLIPPED but two (`linef_table.LINKED_AND_NOT_FLIPPED` says why the same): i_find,
-# held only because the groups flipped in parallel — its C callees app_afind and fpd_ofind are flipped since stage 2 (a
-# stage artifact, measured: flipped, only declarations red) — and men_update, whose C calls i_find — flipped, it is a
-# bound referrer of a held core (measured: `aes_deskbind.bound_referrers` names it). F2b flips both.
-HELD_AT_F2 = ("AES_ROM_I_FIND", "AES_ROM_MEN_UPDATE")
+# ---- band 6 slice F2 (group G2) ---- FLIPPED but two at stage 2: i_find, held only because the groups flipped in
+# parallel (its C callees app_afind and fpd_ofind flipped beside it) — FLIPPED at slice F2b —, and men_update, HELD at
+# slice F2b by a measured reason (`linef_table.LINKED_AND_NOT_FLIPPED` says it): flipped, ctlmgr's two desk-turn rows are
+# refused by the desk's live-frames vet, its C's dead bytes in the held evnt_multi binding's frame not the ROM's.
+HELD_AT_F2 = ("AES_ROM_MEN_UPDATE",)
 # ---- band 6 wave 2, group G3 (unit K) ---- the unit's wave-2 routines: their own signatures and list, so wave
 # 1b's UNIT_K (and its count) stays as it is
 SIGNATURES_WAVE_2 = {

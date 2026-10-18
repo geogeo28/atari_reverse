@@ -94,6 +94,9 @@ FLIPPED_AT_F2 = {
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     "G4": (19, 19, 15),                 # unit C's ten, units H / E / F's eight, appl_exit; all entered but UNENTERED's four
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b (the five stage artifacts) ----
+    "F2b": (4, 4, 2),       # win_icalc, win_bldview, win_shwall, i_find (men_update held); entered but UNENTERED's two
+    # ---- end of slice F2b's ----
 }
 ENTRIES_FLIPPED_AT_F2 = sum(entries for entries, _thunks, _entered in FLIPPED_AT_F2.values())
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_AT_F2,
@@ -658,6 +661,10 @@ UNENTERED = {
     **{f"AES_ROM_DESK_{routine}": [INTERRUPTED] for routine in ("HIDE_DIAL", "FUN_ALERT", "FUN_MSG")},
     "AES_ROM_DESK_APPL_EXIT": [NO_CASE],
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b ---- THE TWO FLIPPED THAT YIELD (every row of each switches: win_bldview, win_shwall — entered
+    # on our shore instead, `test_aes_desk_ours.py`; win_icalc's and i_find's plain rows enter theirs)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("WIN_BLDVIEW", "WIN_SHWALL")},
+    # ---- end of slice F2b's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group adds its own entered count on its line of FLIPPED_AT_F2)
@@ -857,13 +864,13 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     # (unit D's forty bindings and desk_wait, unit O's eighteen: FLIPPED at band 6 slice F1 — but three bindings held)
     ("aes_deskbind", "HELD_AT_F1"): 2,   # unit D: evnt_multi, objc_draw, held (`aes_deskbind.HELD_AT_F1` says why; appl_exit flipped at F2)
     # ---- band 6 wave 1b, group G1 (units I, L) ----
-    # (units I and L FLIPPED at band 6 slice F2 — but four held, each until its C callees are: `HELD_AT_F2` says why)
+    # (units I and L FLIPPED at band 6 slice F2 — but do_wredraw, held until its C callees are: `HELD_AT_F2` says why)
     ("aes_deskwin", "HELD_AT_F2"): 1,    # unit I: do_wredraw (the objc_draw binding)
-    ("aes_deskview", "HELD_AT_F2"): 3,   # unit L: win_icalc (app_afind), win_bldview (win_icalc), win_shwall (fun_msg)
+    ("aes_deskview", "HELD_AT_F2"): 0,   # unit L: none (win_icalc, win_bldview, win_shwall flipped at slice F2b)
     # ---- end of group G1's ----
     # ---- band 6 wave 1b, group G2 (units A, K, J) ----
-    # (units A, K and J FLIPPED at band 6 slice F2 — but two of K held, each until its C callees are: `HELD_AT_F2` says why)
-    ("aes_desktop", "HELD_AT_F2"): 2,    # unit K: i_find (app_afind, fpd_ofind), men_update (i_find)
+    # (units A, K and J FLIPPED at band 6 slice F2 — but men_update: `HELD_AT_F2` says why; i_find at slice F2b)
+    ("aes_desktop", "HELD_AT_F2"): 1,    # unit K: men_update (held at slice F2b by a measured reason; i_find flipped there)
     # ---- end of group G2's ----
     # ---- band 6 wave 1b, group G3 (units B, G) ----
     ("aes_deskact", "UNIT_B_HELD_AT_F2"): 5,     # unit B's five whose C calls a held core; its seven others and unit G flipped at F2

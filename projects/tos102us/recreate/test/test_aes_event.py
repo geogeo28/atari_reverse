@@ -4728,6 +4728,9 @@ ROWS_THAT_SWITCH = {
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ---- (`test_desk_dir.py`, `test_desk_fun.py`: 9, every one a door user's)
     "aes_desk_d_errmsg": 1, "aes_desk_hide_dial": 3, "aes_desk_fun_alert": 2, "aes_desk_fun_msg": 3,
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b ---- (`test_desk_view.py`: 8, every one a door user's — win_bldview's six, win_shwall's two)
+    "aes_win_bldview": 6, "aes_win_shwall": 2,
+    # ---- end of slice F2b's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -5376,7 +5379,7 @@ SLOTS_HELD_WHERE_PARKED = {
     # ---- band 6 slice F2 (N14): wave 1b's routines that are door users, one block a group — what each holds where the
     # desk is parked (the group's frames held across a binding's wait: 1b's AES_DESK_WIN_FRAME, AES_DESK_VIEW_FRAME,
     # AES_APP_TRAN_BITBLK, G3's and G4's) ----
-    # ---- band 6 slice F2, group G1 (units I, L) ---- unit I's two door users (unit L has none): do_wfull's and zoom_closed's
+    # ---- band 6 slice F2, group G1 (units I, L) ---- unit I's two door users (unit L's are F2b's): do_wfull's and zoom_closed's
     # own frame (`AES_DESK_WIN_FRAME`) and the binding's they wait in (wind_set's, wind_close's: `AES_DESK_BIND_FRAME`)
     "aes_do_wfull": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME"),
     "aes_zoom_closed": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME"),
@@ -5393,6 +5396,11 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_desk_fun_alert": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
     "aes_desk_fun_msg": ("AES_DESK_FUN_MSG",),
     # ---- end of group G4's ----
+    # ---- band 6 slice F2b ---- unit L's two door users, flipped at F2b: win_bldview its own frame (`AES_DESK_VIEW_FRAME`)
+    # across the binding's wait it calls; win_shwall that, and fun_msg's message frame across appl_write's
+    "aes_win_bldview": ("AES_DESK_VIEW_FRAME", "AES_DESK_BIND_FRAME"),
+    "aes_win_shwall": ("AES_DESK_BIND_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
+    # ---- end of slice F2b's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

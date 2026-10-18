@@ -157,26 +157,19 @@ LINKED_AND_NOT_FLIPPED.update({
 # ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----
 # FLIPPED at band 6 slice F2 (stage 1) but four: a routine flips once every C callee of it is flipped (the cut's rule —
 # flipped alone, a caller of a held core breaks the converse invariant and the unbound pin), so each of these waits for
-# its callee's slice (`aes_deskwin.HELD_AT_F2`, `aes_deskview.HELD_AT_F2` say the same).
+# its callee's slice (`aes_deskwin.HELD_AT_F2` says the same). Unit L's three held at stage 1 (win_icalc, win_bldview,
+# win_shwall: stage artifacts of the groups' parallel flips) FLIPPED at slice F2b.
 LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WREDRAW": "unit I: do_wredraw, held at band 6 slice F2 — its C calls the objc_draw "
                                                      "binding, held at slice F1 (F2c, after H2)"})
-LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_WIN_ICALC": "unit L: win_icalc, held at band 6 slice F2 only because the groups flipped in parallel — its C "
-                         "callee app_afind is flipped since stage 2 (F2b flips it)",
-    "AES_ROM_WIN_BLDVIEW": "unit L: win_bldview, held at band 6 slice F2 — its C calls win_icalc, a stage artifact (F2b "
-                           "flips both)",
-    "AES_ROM_WIN_SHWALL": "unit L: win_shwall, held at band 6 slice F2 only because the groups flipped in parallel — its C "
-                          "callees (win_ith, the wind_get binding, fun_msg) are all flipped since stage 1 (F2b flips it)"})
 # ---- end of group G1's ----
 # ---- band 6 wave 1b, group G2 (units A `src/desk/deskapp.c`, K `src/desk/desktop.c`, J `src/desk/desksupp.c`) ----
-# FLIPPED at band 6 slice F2 (stage 2) but two (`aes_desktop.HELD_AT_F2` says the same): a routine flips once every C
-# callee of it is flipped (the cut's rule), so each waits for its callee's slice.
+# FLIPPED at band 6 slice F2 (stage 2) but two, i_find and men_update; i_find (a stage artifact of the groups' parallel
+# flips) FLIPPED at slice F2b, men_update HELD there by a measured reason (`aes_desktop.HELD_AT_F2` says the same).
 LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_I_FIND": "unit K: i_find, held at band 6 slice F2 only because the groups flipped in parallel — its C "
-                      "callees app_afind and fpd_ofind are flipped since stage 2 (F2b flips it, and AES_ROM_FPD_OFIND, "
-                      "whose last ROM caller it is, joins NOT_ENTERED_ON_OUR_SHORE)",
-    "AES_ROM_MEN_UPDATE": "unit K: men_update, held at band 6 slice F2 — its C calls i_find, held (F2b): flipped, it is a "
-                          "bound referrer of a held core (measured: `aes_deskbind.bound_referrers`)"})
+    "AES_ROM_MEN_UPDATE": "unit K: men_update, held at band 6 slice F2b — MEASURED: flipped, ctlmgr's two desk-turn rows "
+                          "are refused by the desk's live-frames vet (its C leaves other dead bytes than the ROM's at "
+                          "$a2a6..$a2b3, inside the held evnt_multi binding's frame under the desk's wait) — a harness "
+                          "question, the user's"})
 # ---- end of group G2's ----
 # ---- band 6 wave 1b, group G3 (units B `src/desk/deskact.c`, G `src/desk/deskfpd.c`) ----
 # FLIPPED at band 6 slice F2 (stage 2): unit G whole, unit B but five. HELD, unit B's five below: a routine flips once

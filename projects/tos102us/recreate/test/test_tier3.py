@@ -85,6 +85,9 @@ import test_desk_win                                       # noqa: E402  (unit I
 import test_desk_dir                                       # noqa: E402  (unit C: d_errmsg's alert through form_error's door)
 import test_desk_fun                                       # noqa: E402  (unit H: fun_alert's and fun_msg's rows)
 # ---- end of group G4's ----
+# ---- band 6 slice F2b: its batteries whose door users' rows are pinned there ----
+import test_desk_view                                      # noqa: E402  (unit L: win_bldview's and win_shwall's door users)
+# ---- end of slice F2b's ----
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -3514,7 +3517,7 @@ DOOR_USERS_PRICED.update(test_desk_bind.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_bind.DOOR_USERS_WHOLE_RUN)
 # ...and, since band 6 slice F2, each wave-1b group's (its batteries' `DOOR_USERS_PRICED` / `DOOR_USERS_WHOLE_RUN`, imported
 # at this module's top by the group), one block a group:
-# ---- band 6 slice F2, group G1 (units I, L) ---- (unit L's rows make no door call: no door user of its own)
+# ---- band 6 slice F2, group G1 (units I, L) ---- (unit L's stage-1 rows make no door call: its door users are F2b's, below)
 DOOR_USERS_PRICED.update(test_desk_win.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_win.DOOR_USERS_WHOLE_RUN)
 # ---- end of group G1's ----
@@ -3527,6 +3530,10 @@ for _battery in (test_desk_dir, test_desk_fun):
     DOOR_USERS_PRICED.update(_battery.DOOR_USERS_PRICED)
     DOOR_USERS_WHOLE_RUN.update(_battery.DOOR_USERS_WHOLE_RUN)
 # ---- end of group G4's ----
+# ---- band 6 slice F2b ---- (unit L's win_bldview and win_shwall, flipped at F2b: door users)
+DOOR_USERS_PRICED.update(test_desk_view.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_view.DOOR_USERS_WHOLE_RUN)
+# ---- end of slice F2b's ----
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():

@@ -1,6 +1,7 @@
 """UNIT K, THE DESK'S MAIN LOOP'S HELPERS (`src/desk/desktop.c`; band 6 wave 1b, group G2): HELD AT TIER 1 AT THE
-ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but two (i_find, men_update: `aes_desktop.HELD_AT_F2`): the
-Line-F table's entry for each other is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`).
+ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but men_update (i_find since slice F2b; men_update held there by a
+measured reason: `aes_desktop.HELD_AT_F2`): the Line-F table's entry for each other is its thunk, and every case of theirs
+at an arrival is a Tier 3 row (`ROWS`).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskapp.arrival`) and A ROW THAT SWITCHES: each routine's menu changes go through
     unit D's bindings, which yield — the C through the host's scheduler held to the ROM's scheduled run, nothing
@@ -148,7 +149,7 @@ def test_no_caller_reads_what_men_update_or_cnx_put_leave_in_d0():
 
 # ---- band 6 slice F2 (group G2): THE UNIT'S ROWS — every case at an arrival of a flipped routine (men_list, do_viewmenu,
 # cnx_put) a row that switches with NO DOOR (`aes_deskapp.register_switching`; MEASURED, the table's second count: none
-# makes a call of the event layer's door); the classes stay Tier 1's, the held two have no row. Their pins — DATA, measured
+# makes a call of the event layer's door); the classes stay Tier 1's (i_find's rows: slice F2b's, below; men_update held). Their pins — DATA, measured
 # by the table's own measurement and each blob's second differential from the rows as registered; re-pinned from a
 # recorded run, never by hand.
 FLIPPED = tuple(name for name in aes_desktop.UNIT_K if name not in aes_desktop.HELD_AT_F2)
@@ -167,6 +168,9 @@ def _registered(routine, chain, nth):
 
 
 ROWS = {f"{routine} {chain} {nth}": _registered(routine, chain, nth) for routine, chain, nth in AT_ARRIVALS if routine in FLIPPED}
+# ---- band 6 slice F2b: i_find FLIPPED — its three arrivals PLAIN ROWS (no binding under it). men_update HELD at F2b
+# (`aes_desktop.HELD_AT_F2`, a measured reason): no row.
+ROWS.update({f"{I_FIND} {chain} {nth}": da.register_plain(da.arrival(I_FIND, chain, nth)) for chain, nth in I_FIND_ARRIVALS})
 NO_DOOR_PREMISES = {
     "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
@@ -329,7 +333,8 @@ def test_every_case_at_an_arrival_of_a_flipped_routine_is_a_row_and_its_pins_are
     import aes_switching
     switching = [row for row in ROWS.values() if hasattr(row, "door")]       # (a plain row is a tuple)
     assert {da.entry_of(name) for name in FLIPPED} == {row[1] if not hasattr(row, "door") else da.entry_of(row.name) for row in ROWS.values()}
-    assert (len(ROWS), len(switching)) == (30, 30 - len(NO_SWITCH)) and all(row.door is None for row in switching)
+    plain = len(NO_SWITCH) + len(I_FIND_ARRIVALS)
+    assert (len(ROWS), len(switching)) == (33, 33 - plain) and all(row.door is None for row in switching)
     assert {aes_switching.row_name(row) for row in switching} == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
 
 

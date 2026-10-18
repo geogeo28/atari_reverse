@@ -1,6 +1,6 @@
 """THE DESK'S WINDOWS — THE VIEW, THE WINDOW LIST, THE LAYOUT LEAVES (`src/desk/deskview.c`; band 6 wave 1b, group G1,
-unit L), HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but three (win_icalc,
-win_bldview, win_shwall: `aes_deskview.HELD_AT_F2`), each case at an arrival of a flipped routine a Tier 3 row (`ROWS`).
+unit L), HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED (win_icalc, win_bldview and
+win_shwall since slice F2b), each case at an arrival of a flipped routine a Tier 3 row (`ROWS`).
 
 How a case is taken, run and held is the group's (`aes_deskwin.py`; `test_desk_win.py` says it whole): an arrival of
 a chain of the hands, the routine's arguments read off its caller's frame; a row that switches where the routine
@@ -205,23 +205,26 @@ FLIPPED = tuple(name for name in v.UNIT_L if name not in v.HELD_AT_F2)
 
 def test_each_flipped_routine_s_thunk_calls_its_core_and_nothing_outside_the_unbound_desk_refers_to_a_held_core(blob):
     """THE FLIP: every flipped routine's core CALLED BY ITS OWN THUNK of the table — and the desk's one unbound pin holds
-    for the cores still held, the unit's three among them."""
+    for the cores still held (none of the unit's since slice F2b)."""
     assert not w.thunks_not_calling_their_core(blob, FLIPPED)
     assert not db.bound_referrers(blob, v.HELD_AT_F2)
 
 
 def test_the_table_s_entries_are_the_flipped_routines_thunks_and_the_held_ones_the_rom_s():
-    """...the generator's verdict for each of the fourteen flipped is OURS, THROUGH ITS THUNK; the three held THE ROM'S."""
+    """...the generator's verdict for each of the seventeen flipped is OURS, THROUGH ITS THUNK (none held since slice F2b)."""
     assert w.table_verdicts(v.UNIT_L) == w.flipped_verdicts(v.UNIT_L, v.HELD_AT_F2)
     assert set(v.UNIT_L) & set(w._linef_table().LINKED_AND_NOT_FLIPPED) == set(v.HELD_AT_F2)
 
 
 # ---- band 6 slice F2: THE UNIT'S ROWS (`test_desk_win.py` says how: `aes_deskwin.register_row`) -------------------------------------
 # win_top's two traps (and win_ontop's at its text arrival) answered by band 5's recording trap (`aes_deskwin.ROW_SCRIPTED`).
-# MEASURED: no row of the unit's makes a call of the event layer's door (none of its bindings' AES routines waits):
-# every one a row that switches with no door. The X flag (each row's blob differential at `$8995`): win_sinfo's two
-# (the wind_set binding's yield after the C's own arithmetic, unit D's kind).
-DOOR_USERS = frozenset()
+# MEASURED: no row of the unit's flipped at stage 1 makes a call of the event layer's door (none of its bindings' AES
+# routines waits): each a row that switches with no door. SINCE SLICE F2b win_bldview's six and win_shwall's two are DOOR
+# USERS' ROWS (MEASURED, the table's second count: 8 and 1 calls of a rebound entry — undeclared, each companion's fork
+# reaches the door's hook, which no fork with no door serves), pinned in `DOOR_USERS_*` and read by `test_tier3.py`.
+# The X flag (each row's blob differential at `$8995`): win_sinfo's two (the wind_set binding's yield after the C's own
+# arithmetic, unit D's kind).
+DOOR_USERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name in ("AES_ROM_WIN_BLDVIEW", "AES_ROM_WIN_SHWALL"))
 X_FLAG_DIFFERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name == "AES_ROM_WIN_SINFO")
 ROWS = {name: w.register_row(BY_LABEL[name], BY_LABEL[name].name in v.YIELDS_L, door_user=name in DOOR_USERS,
                              x_flag_differs=name in X_FLAG_DIFFERS)
@@ -230,8 +233,42 @@ ROWS = {name: w.register_row(BY_LABEL[name], BY_LABEL[name].name in v.YIELDS_L, 
 # ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by each
 # blob's second differential (`aes_switching.measured_on`), from the rows as registered; re-pinned from a recorded run
 # (`tools/repin.py`), never by hand.
-DOOR_USERS_PRICED = {}
-DOOR_USERS_WHOLE_RUN = {}
+DOOR_USERS_PRICED = {
+    'aes_win_bldview, arrival 1 of A: File > Open':
+        ((245296, 434788), (243872, 432076), 8, (0, 0, 0)),
+    'aes_win_bldview, arrival 1 of window: View > Show as Text':
+        ((245398, 434980), (243974, 432268), 8, (0, 0, 0)),
+    'aes_win_bldview, arrival 1 of files: A: opened':
+        ((282790, 486180), (281366, 483468), 8, (0, 0, 0)),
+    'aes_win_bldview, arrival 1 of files: View > Show as Text':
+        ((280244, 482638), (278820, 479926), 8, (0, 0, 0)),
+    'aes_win_bldview, arrival 1 of window: A: opened again (two windows)':
+        ((245346, 434892), (243922, 432180), 8, (0, 0, 0)),
+    'aes_win_bldview, arrival 1 of files: the right arrow clicked, then View > Sort by Size':
+        ((275588, 475258), (274164, 472546), 8, (0, 0, 0)),
+    'aes_win_shwall, arrival 1 of window: View > Show as Text':
+        ((16102, 27792), (11044, 18934), 1, (0, 0, 0)),
+    'aes_win_shwall, arrival 1 of window: View > Sort by Size':
+        ((16102, 27792), (11044, 18934), 1, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN = {
+    'aes_win_bldview, arrival 1 of A: File > Open':
+        {"bench": (1165562, 994238), "bench_shipped": (1165562, 997938)},
+    'aes_win_bldview, arrival 1 of window: View > Show as Text':
+        {"bench": (1165754, 993494), "bench_shipped": (1165754, 998268)},
+    'aes_win_bldview, arrival 1 of files: A: opened':
+        {"bench": (1226176, 1045080), "bench_shipped": (1226176, 1047874)},
+    'aes_win_bldview, arrival 1 of files: View > Show as Text':
+        {"bench": (1233698, 1049430), "bench_shipped": (1233698, 1056204)},
+    'aes_win_bldview, arrival 1 of window: A: opened again (two windows)':
+        {"bench": (980826, 809448), "bench_shipped": (980826, 813148)},
+    'aes_win_bldview, arrival 1 of files: the right arrow clicked, then View > Sort by Size':
+        {"bench": (1210452, 1031862), "bench_shipped": (1210452, 1035562)},
+    'aes_win_shwall, arrival 1 of window: View > Show as Text':
+        {"bench": (41316, 31254), "bench_shipped": (41316, 30478)},
+    'aes_win_shwall, arrival 1 of window: View > Sort by Size':
+        {"bench": (41316, 31254), "bench_shipped": (41316, 30478)},
+}
 NO_DOOR_PREMISES = {
     'aes_win_alloc, arrival 1 of A: File > Open':
         ((), 0, 0xae5e, (0xae5e,), 36938, ()),
@@ -314,7 +351,7 @@ def test_the_rows_are_the_cases_at_arrivals_of_the_flipped_routines_and_split_by
     assert set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == set(NO_DOOR_PREMISES)
     assert {switching[row] for row in DOOR_USERS_PRICED} == set(DOOR_USERS)
     assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS)
-    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (37, 10, 2)
+    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (48, 18, 2)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)
