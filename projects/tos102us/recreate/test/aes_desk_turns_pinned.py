@@ -15,35 +15,35 @@ order — and that a row with no line here makes none.
 """
 PINNED = {
     "aes_ap_rdwr, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((245000, 330014, 0),),
-        "bench_shipped": ((233128, 330014, 11740),),
+        "bench": ((245300, 337824, 0),),
+        "bench_shipped": ((233428, 337824, 11740),),
     },
     "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read": {
-        "bench": ((245690, 330818, 0),),
-        "bench_shipped": ((233818, 330818, 11740),),
+        "bench": ((245990, 338628, 0),),
+        "bench_shipped": ((234118, 338628, 11740),),
     },
     "aes_ct_msgup, AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise": {
         "bench": ((4570, 5808, 0),),
         "bench_shipped": ((4414, 5808, 276),),
     },
     "aes_ev_block, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((245000, 330014, 0),),
-        "bench_shipped": ((233128, 330014, 11740),),
+        "bench": ((245300, 337824, 0),),
+        "bench_shipped": ((233428, 337824, 11740),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the next wait; the menu left, a click off it": {
-        "bench": ((40744, 55126, 0), (39594, 53622, 0),),
-        "bench_shipped": ((37748, 55126, 2140), (36594, 53622, 2140),),
+        "bench": ((41658, 55780, 0), (40876, 54798, 0),),
+        "bench_shipped": ((38662, 55780, 2140), (37876, 54798, 2140),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); then a title, the menu left, a click off it": {
-        "bench": ((40744, 55126, 0),),
-        "bench_shipped": ((37748, 55126, 2140),),
+        "bench": ((41658, 55780, 0),),
+        "bench_shipped": ((38662, 55780, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
-        "bench": ((272750, 378564, 0),),
-        "bench_shipped": ((262656, 378564, 13368),),
+        "bench": ((273050, 386374, 0),),
+        "bench_shipped": ((262956, 386374, 13368),),
     },
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": {
-        "bench": ((273092, 379356, 0),),
-        "bench_shipped": ((262998, 379356, 13368),),
+        "bench": ((273392, 387166, 0),),
+        "bench_shipped": ((263298, 387166, 13368),),
     },
 }

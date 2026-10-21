@@ -88,6 +88,9 @@ import test_desk_fun                                       # noqa: E402  (unit H
 # ---- band 6 slice F2b: its batteries whose door users' rows are pinned there ----
 import test_desk_view                                      # noqa: E402  (unit L: win_bldview's and win_shwall's door users)
 # ---- end of slice F2b's ----
+# ---- band 6 slice F2c: its batteries whose door users' rows are pinned there ----
+import test_desk_act                                       # noqa: E402  (unit B: gr_isdown's and gr_bwait's door users)
+# ---- end of slice F2c's ----
 import test_boot_snapshot                                  # noqa: E402
 
 
@@ -3475,13 +3478,13 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (257418, 220594), SHIPPED_BLOB: (257418, 217614)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
         BENCH_BLOB: (144852, 124532), SHIPPED_BLOB: (144852, 123758)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 549946), SHIPPED_BLOB: (639424, 549378)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 542436), SHIPPED_BLOB: (639424, 541868)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
         BENCH_BLOB: (1102608, 1030164), SHIPPED_BLOB: (1102608, 1019284)},
-    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1147468), SHIPPED_BLOB: (1237428, 1133706)},
-    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1227556), SHIPPED_BLOB: (1331494, 1212848)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1147728), SHIPPED_BLOB: (1237428, 1133966)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1227922), SHIPPED_BLOB: (1331494, 1213214)},
     "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203296), SHIPPED_BLOB: (212120, 201634)},
     "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 277612), SHIPPED_BLOB: (297138, 275082)},
     "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256388), SHIPPED_BLOB: (275878, 253996)},
@@ -3534,6 +3537,11 @@ for _battery in (test_desk_dir, test_desk_fun):
 DOOR_USERS_PRICED.update(test_desk_view.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_view.DOOR_USERS_WHOLE_RUN)
 # ---- end of slice F2b's ----
+# ---- band 6 slice F2c ---- (unit B's gr_isdown and gr_bwait, flipped at F2c: door users — evnt_multi's wait; unit C's
+# do_namecon's three ride test_desk_dir's line above, unit D's evnt_multi's seven test_desk_bind's)
+DOOR_USERS_PRICED.update(test_desk_act.DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_act.DOOR_USERS_WHOLE_RUN)
+# ---- end of slice F2c's ----
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():

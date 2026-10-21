@@ -495,8 +495,8 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
 
 ### W6-R4 ON THE FLIPPED STATE — `tools/flipped_depths.py` (band 6 slice D)
 
-The suite's `DEPTHS` are the shipped blob's AS IT IS (since band 6 slice F1: units O and D flipped, three bindings
-held — `test_aes_desk_ours.py` re-derives them on that partial flip). The hard gate binds every flip that
+The suite's `DEPTHS` are the shipped blob's AS IT IS (since band 6 slice F2c: units O and D and wave 1b's hundred
+flipped, nothing of them held — `test_aes_desk_ours.py` re-derives them on that partial flip). The hard gate binds every flip that
 deepens a path (the user's R1), so each flip slice is measured BEFORE it lands on the state it is heading for: a private
 build with EVERY linked routine of band 6 flipped.
 
@@ -541,7 +541,11 @@ HELD (`aes_deskact.UNIT_B_HELD_AT_F2`: gr_isdown, gr_bwait for evnt_multi, act_c
 do_wredraw; `aes_desktop.HELD_AT_F2`: i_find, a stage artifact F2b flips, and men_update, its caller); their GEMDOS users
 (app_getfh, app_path_save / _restore, app_rdicon, drive_check) go over band 5's trap the same way, and the two door parks a
 flipped caller leaves are named BY NATURE in its rows (app_blddesk's AES_XBIOS_RETURN, drive_check's AES_BIOS_RETURN:
-their three low bytes, held at Tier 1). Unit O's GEMDOS glue and gemdosif's share their four
+their three low bytes, held at Tier 1). SINCE SLICES F2b AND F2c EVERY ONE OF THOSE HELD IS FLIPPED (F2b: i_find,
+win_icalc, win_bldview, win_shwall; F2c: the evnt_multi and objc_draw bindings, men_update and the ten waiting on them) —
+WAVE 1b IS COMPLETE, every held list above `()`. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
+routine's wait, refused by name on a plain row) and registers plain an arrival of a yielding routine whose ROM run
+enters no process (`reaches_no_binding`, measured both ways). Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with

@@ -306,7 +306,7 @@ def _linef_table():
     return linef_table
 
 
-# ---- FLIPPED (band 6 slice F2, group G2): the fifteen, i_find and men_update held (`aes_desktop.HELD_AT_F2`) ----------------
+# ---- FLIPPED (band 6 slice F2, group G2): the fifteen — i_find since slice F2b, men_update since F2c (`aes_desktop.HELD_AT_F2`) --
 HELD_G2 = aes_desktop.HELD_AT_F2
 FLIPPED_G2 = tuple(name for name in GROUP_G2 if name not in HELD_G2)
 

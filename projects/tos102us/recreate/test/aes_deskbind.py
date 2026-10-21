@@ -138,8 +138,9 @@ BINDINGS = tuple(PREFIX + short for short in SIGNATURES)
 #     the "one thing more" MEASURED TO BE NONE — that refusal was the F1 script's instrument, the kit's own bench
 #     (`isr.blob_named`), which puts nothing back; the battery's and the table's bench (`tier3.RomBench`) give our
 #     dispatcher's stack back over the frames our run pushed, and the bytes are the idle's keyboard poll's BIOS frame,
-#     the ROM's run's own at its drop's low end (`test_desk_bind.test_the_idle_s_key_poll_…`). Held until F2c.
-HELD_AT_F1 = (PREFIX + "EVNT_MULTI", PREFIX + "OBJC_DRAW")
+#     the ROM's run's own at its drop's low end (`test_desk_bind.test_the_idle_s_key_poll_…`). Held until, and FLIPPED
+#     at, slice F2c (both): none held since.
+HELD_AT_F1 = ()
 # ---- band 6 slice F2 (group G4) ---- A BINDING FLIPPED WITH NO ROW: ⚠️ VERIFIED-BUT-UNPRICED (the user's ruling of
 # 2026-10-17: a routine faithful at Tier 1 whose arrivals no row kind reaches — as crit_err's and gem_entry's), each with
 # why; Tier 1 holds its cases and the our-shore walk its flip (who-ran, the converse invariant).

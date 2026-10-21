@@ -1,8 +1,8 @@
 """THE DESK'S HIT TESTS AND ICON DRAGS (`src/desk/deskact.c`; band 6 wave 1b, group G3, unit B), HELD AT TIER 1 AT
-THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2 (stage 2), SEVEN OF THEM FLIPPED: the Line-F table's entry for each
-is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`, below). The five whose C calls a core still
-held (gr_isdown: unit D's evnt_multi; gr_bwait: gr_isdown; act_chg, act_allchg, move_drvicon: unit I's do_wredraw) stay
-LINKED AND NOT FLIPPED (`aes_deskact.UNIT_B_HELD_AT_F2`).
+THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2 (stage 2), SEVEN OF THEM FLIPPED, the five whose C called a core
+then held (gr_isdown: unit D's evnt_multi; gr_bwait: gr_isdown; act_chg, act_allchg, move_drvicon: unit I's do_wredraw)
+SINCE SLICE F2c: the Line-F table's entry for each is its thunk, and every case of theirs at an arrival is a Tier 3 row
+(`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskact.arrival`): a chain of the hands stopped at the routine's first instruction,
     the arguments read off the frame the desk's caller pushed. A routine whose callees never reach the dispatcher is
@@ -385,13 +385,24 @@ def test_the_unit_s_seven_are_flipped_and_its_five_held_unbound(blob):
 # (`aes_deskact.register_row`): a plain row (app_afind, gr_accobs, gr_extent, gr_obalign, act_chkobj), or A ROW THAT
 # SWITCHES (gr_obfind: the objc_find binding's yield; gr_plns: graf_mouse's) — WITH NO DOOR (measured: no run of either
 # makes a call of the event layer's door), held here three ways (premise, whole run on both blobs, price). The classes
-# stay Tier 1's; the five held have no row.
+# stay Tier 1's.
+#   * SINCE SLICE F2c, the five flipped there: gr_isdown's and gr_bwait's rows DOOR USERS' (MEASURED, the table's second
+#     count: one call of a rebound entry each — the evnt_multi binding's wait, ended by the case's wake), pinned in
+#     `DOOR_USERS_*` and read by `test_tier3.py`; move_drvicon's, act_chg's and act_allchg's (the objc_draw binding's
+#     yield under do_wredraw) rows that switch with no door — but act_allchg's three arrivals whose ROM run through its
+#     dispatcher enters no process (`REACHES_NO_BINDING`, MEASURED and pinned below: nothing changed, nothing drawn —
+#     no binding reached), plain rows.
 #   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`), MEASURED (each row's blob differential at `$8995`, `$00` ours / `$10`
 #     the ROM's): declared on gr_obfind's rows whose objc_find finds an object (the binding's yield after the C's own
 #     compare) — not on the rubber box's, whose point is on no icon, nor on gr_plns's.
 X_FLAG_DIFFERS = frozenset(name for name, each in BY_LABEL.items()
                            if each.name == "AES_ROM_GR_OBFIND" and not each.why and each.chain != RUBBER)
-ROWS = {name: da.register_row(each, answered=_answers(each.name), x_flag_differs=name in X_FLAG_DIFFERS)
+DOOR_USERS = frozenset(name for name, each in BY_LABEL.items()
+                       if each.name in ("AES_ROM_GR_ISDOWN", "AES_ROM_GR_BWAIT") and not each.why)
+REACHES_NO_BINDING = frozenset(name for name, each in BY_LABEL.items() if each.name == "AES_ROM_ACT_ALLCHG" and not each.why
+                               and each.chain in (SELECTED, OPEN_A, TWO_WINDOWS))
+ROWS = {name: da.register_row(each, answered=_answers(each.name), door_user=name in DOOR_USERS, x_flag_differs=name in X_FLAG_DIFFERS,
+                              reaches_no_binding=name in REACHES_NO_BINDING, **WAKES.get(each.wake, {}))
         for name, each in da.at_arrivals(BY_LABEL, da.UNIT_B_FLIPPED).items()}
 
 # ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by each
@@ -415,6 +426,20 @@ NO_DOOR_PREMISES = {
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
     'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_move_drvicon, arrival 0 of drive A: dragged to a bare spot of the desktop':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_act_chg, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_act_chg, arrival 0 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_act_chg, arrival 1 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_act_chg, arrival 2 of drive A: dragged to the trash, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_act_chg, arrival 0 of file: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_act_allchg, arrival 1 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
 }
 NO_DOOR_PRICED = {
     'aes_gr_obfind, arrival 0 of A: opened':
@@ -435,6 +460,20 @@ NO_DOOR_PRICED = {
         ((18802, 24314), None, None, (0, 0, 0)),
     'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
         ((18810, 24322), None, None, (0, 0, 0)),
+    'aes_move_drvicon, arrival 0 of drive A: dragged to a bare spot of the desktop':
+        ((107734, 146002), None, None, (0, 0, 0)),
+    'aes_act_chg, arrival 0 of drive A: selected':
+        ((67246, 88650), None, None, (0, 0, 0)),
+    'aes_act_chg, arrival 0 of A: File > Open':
+        ((67980, 89288), None, None, (0, 0, 0)),
+    'aes_act_chg, arrival 1 of drive A: dragged to the trash, Return':
+        ((66564, 87970), None, None, (0, 0, 0)),
+    'aes_act_chg, arrival 2 of drive A: dragged to the trash, Return':
+        ((66422, 87690), None, None, (0, 0, 0)),
+    'aes_act_chg, arrival 0 of file: selected':
+        ((61974, 82268), None, None, (0, 0, 0)),
+    'aes_act_allchg, arrival 1 of a rubber box on the desktop, round the trash':
+        ((65398, 85534), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_gr_obfind, arrival 0 of A: opened':
@@ -455,8 +494,46 @@ NO_DOOR_WHOLE_RUN = {
         {"bench": (116182, 112710), "bench_shipped": (116182, 112774)},
     'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
         {"bench": (115872, 112400), "bench_shipped": (115872, 112464)},
+    'aes_move_drvicon, arrival 0 of drive A: dragged to a bare spot of the desktop':
+        {"bench": (606804, 577378), "bench_shipped": (606804, 578152)},
+    'aes_act_chg, arrival 0 of drive A: selected':
+        {"bench": (449374, 434140), "bench_shipped": (449374, 433958)},
+    'aes_act_chg, arrival 0 of A: File > Open':
+        {"bench": (448340, 433234), "bench_shipped": (448340, 433072)},
+    'aes_act_chg, arrival 1 of drive A: dragged to the trash, Return':
+        {"bench": (378428, 363130), "bench_shipped": (378428, 363010)},
+    'aes_act_chg, arrival 2 of drive A: dragged to the trash, Return':
+        {"bench": (374568, 359390), "bench_shipped": (374568, 359248)},
+    'aes_act_chg, arrival 0 of file: selected':
+        {"bench": (432068, 417682), "bench_shipped": (432068, 417282)},
+    'aes_act_allchg, arrival 1 of a rubber box on the desktop, round the trash':
+        {"bench": (354688, 340684), "bench_shipped": (354688, 340836)},
 }
-ROWS_MADE, SWITCHING = 27, 9
+DOOR_USERS_PRICED = {
+    'aes_gr_isdown, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        ((24990, 37030), (5062, 6776), 1, (0, 0, 0)),
+    'aes_gr_isdown, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        ((28634, 40944), (5062, 6768), 1, (0, 0, 0)),
+    'aes_gr_bwait, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        ((63422, 86944), (43494, 56690), 1, (0, 0, 0)),
+    'aes_gr_bwait, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        ((67066, 90858), (43494, 56682), 1, (0, 0, 0)),
+    'aes_gr_bwait, arrival 0 of file: dragged to the trash, OK; the button let go at the first idle':
+        ((63406, 86928), (43478, 56674), 1, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN = {
+    'aes_gr_isdown, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        {"bench": (64078, 54408), "bench_shipped": (64078, 53450)},
+    'aes_gr_isdown, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        {"bench": (74046, 64256), "bench_shipped": (74046, 63424)},
+    'aes_gr_bwait, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        {"bench": (297092, 280014), "bench_shipped": (297092, 279190)},
+    'aes_gr_bwait, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        {"bench": (306570, 289372), "bench_shipped": (306570, 288674)},
+    'aes_gr_bwait, arrival 0 of file: dragged to the trash, OK; the button let go at the first idle':
+        {"bench": (297712, 280634), "bench_shipped": (297712, 279810)},
+}
+ROWS_MADE, SWITCHING = 42, 16           # (slice F2c: +15 rows, 7 of them switching with no door, 5 door users', 3 plain)
 
 
 def _registered_row(name):
@@ -467,10 +544,31 @@ def test_every_flipped_routine_has_a_row_at_an_arrival_and_every_row_that_switch
     import aes_switching
     entries = {da.entry_of(row.name) if hasattr(row, "door") else row[1] for row in ROWS.values()}      # (a plain row is a tuple)
     assert entries == {da.entry_of(name) for name in da.UNIT_B_FLIPPED} and len(ROWS) == ROWS_MADE
-    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door")}
-    assert not any(row.door for row in ROWS.values() if hasattr(row, "door")), "a row that switches through its door"
+    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door") and not row.door}
+    door_users = {aes_switching.row_name(row) for row in ROWS.values() if getattr(row, "door", None)}
+    assert door_users == set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and {
+        name for name, row in ROWS.items() if getattr(row, "door", None)} == DOOR_USERS
     assert set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == switching and len(switching) == SWITCHING
     assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == X_FLAG_DIFFERS and len(X_FLAG_DIFFERS) == 5
+
+
+@pytest.mark.parametrize("name", sorted(REACHES_NO_BINDING))
+def test_an_arrival_of_a_yielding_routine_that_reaches_no_binding_is_a_plain_row(name):
+    """`REACHES_NO_BINDING`, MEASURED: the ROM's own run of the case through its dispatcher enters NO process (no binding
+    reached — nothing changed, nothing drawn), so its row is the plain differential; the act_allchg arrivals that do
+    reach one enter the desk."""
+    each = BY_LABEL[name]
+    assert not da.the_rom_s_run(da.row_of(da.arrival_of(each), da.row_label(each), answered=_answers(each.name))).entered
+    assert not hasattr(ROWS[name], "door")
+
+
+def test_the_act_allchg_arrival_that_reaches_a_binding_enters_the_desk():
+    """...the converse, on the one act_allchg arrival outside `REACHES_NO_BINDING`: its ROM run enters the desk."""
+    (name,) = [name for name, each in BY_LABEL.items() if each.name == "AES_ROM_ACT_ALLCHG" and not each.why
+               and name not in REACHES_NO_BINDING]
+    each = BY_LABEL[name]
+    assert da.the_rom_s_run(da.row_of(da.arrival_of(each), da.row_label(each), answered=_answers(each.name))).entered
+    assert hasattr(ROWS[name], "door")
 
 
 # THE ROUTINES G3'S FLIP LEAVES ENTERED BY NO WALKED CHAIN (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`, group G3's block):

@@ -1,7 +1,7 @@
 """THE DESK'S AES BINDINGS (`src/desk/deskbind.c`; band 6 wave 1a, unit D): the forty routines `$fddde6..$fde4ff` and
-desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F1, FLIPPED but one: the
-Line-F table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (evnt_multi and objc_draw held:
-`aes_deskbind.HELD_AT_F1`; appl_exit, held at F1, flipped at slice F2 with no row — ⚠️ verified-but-unpriced,
+desk_wait `$fe1bdc`, HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F1, FLIPPED: the Line-F
+table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (evnt_multi and objc_draw, held at F1,
+flipped at slice F2c; appl_exit, held at F1, flipped at slice F2 with no row — ⚠️ verified-but-unpriced,
 `aes_deskbind.VERIFIED_UNPRICED_AT_F2`).
 
     binding(arguments):  ret = the AES routine(the same, re-pushed);  dsptch();  return ret
@@ -460,8 +460,8 @@ def _linef_table():
 
 
 def test_the_table_s_entries_for_the_bindings_are_their_thunks_but_the_held_one_s():
-    """...the generator's verdict for each of the 38 flipped is OURS, THROUGH ITS THUNK; the three held bindings' THE ROM'S,
-    held by `LINKED_AND_NOT_FLIPPED` as `HELD_AT_F1` says."""
+    """...the generator's verdict for each binding is OURS, THROUGH ITS THUNK (none held since slice F2c: `HELD_AT_F1`
+    empty, as `LINKED_AND_NOT_FLIPPED` is of them)."""
     linef_table = _linef_table()
     ours = {getattr(addrs, name): name for name in db.BINDINGS}
     verdicts = {ours[entry.target]: (entry.verdict, entry.symbol) for entry in linef_table.entries() if entry.target in ours}
@@ -492,15 +492,11 @@ MASK_WORD_FOUND = ("its companion re-derives its first door call's delivery over
                    "staged where the run leaves it, `$2000` — and the registry over the arrival's own, `$00f8`: the two "
                    "deliveries differ in that one word (`test_tier3.test_every_dropped_row_has_a_differential_…`), a question "
                    "of the switching registrar's (`aes_switching.register_row`), not of the row: Tier 1 holds the case")
-ITS_ROW_AT_F2C = ("this case's C walks the tree (just_draw, `$fe9a88`: form_dial's finish redraws the desktop), which a row "
-                  "that switches with no door was modelled without until slice H2 (`aes_switch._served_with_no_door`; its "
-                  "companion runs the walk since: `test_a_no_door_companion_whose_c_walks_a_tree_is_served_the_walk`) — its "
-                  "row is made with objc_draw's at F2c, so the table moves once. Tier 1 holds the case")
+# (form_dial's finish over Desktop Info — its C walks the tree, just_draw `$fe9a88` — was NOT A ROW until slice F2c, its
+# row made with objc_draw's so the table moved once: since F2c A ROW WITH NO DOOR, `FORM_DIAL_WALKS_A_TREE` below.)
 NOT_A_ROW = {
     **{name: SCREEN_MANAGER_NO_HISTORY_REACHES for name in AT_ITS_OWN_ARRIVAL
        if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("MENU_IENABLE", BOOT, 0)},
-    **{name: ITS_ROW_AT_F2C for name in AT_ITS_OWN_ARRIVAL
-       if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("FORM_DIAL", INFO, 1)},
     **{name: MASK_WORD_FOUND for name in AT_ITS_OWN_ARRIVAL
        if BY_LABEL[name].short == "GRAF_RUBBOX" and BY_LABEL[name].wake in (LET_GO_AT_ONCE, BOX_GROWN)},
 }
@@ -510,10 +506,10 @@ HELD = frozenset(name for name in AT_ITS_OWN_ARRIVAL if db.PREFIX + BY_LABEL[nam
 UNPRICED = frozenset(name for name in AT_ITS_OWN_ARRIVAL if db.PREFIX + BY_LABEL[name].short in db.VERIFIED_UNPRICED_AT_F2)
 # A DOOR USER'S ROW (`aes_switching.SwitchingRow.door`) is one whose run arrives at an entry of the event layer's door
 # — its call open across the switch, priced on two counts and pinned in `test_tier3.py`'s door users. MEASURED: the
-# eleven bindings below arrive there (their AES routine waits: a message, a button, a form, the screen's lock); the
-# other twenty-six yield by their own `dsptch` alone and are rows that switch with no door (`door` None), pinned and
-# held here three ways (`NO_DOOR_PRICED`, below).
-DOOR_USER_BINDINGS = frozenset(("APPL_WRITE", "EVNT_BUTTON", "FORM_ALERT", "FORM_DO", "FORM_ERROR", "GRAF_RUBBOX", "MENU_BAR",
+# twelve bindings below arrive there (their AES routine waits: a message, a button, a form, the screen's lock, and since
+# slice F2c evnt_multi's events — one call of a rebound entry each); the others yield by their own `dsptch` alone and
+# are rows that switch with no door (`door` None), pinned and held here three ways (`NO_DOOR_PRICED`, below).
+DOOR_USER_BINDINGS = frozenset(("APPL_WRITE", "EVNT_BUTTON", "EVNT_MULTI", "FORM_ALERT", "FORM_DO", "FORM_ERROR", "GRAF_RUBBOX", "MENU_BAR",
                                 "WIND_CLOSE", "WIND_OPEN", "WIND_SET", "WIND_UPDATE"))
 
 
@@ -531,7 +527,7 @@ def _registered(name):
 
 
 ROWS = {name: _registered(name) for name in AT_ITS_OWN_ARRIVAL if name not in NOT_A_ROW and name not in HELD | UNPRICED}
-ROWS_MADE = ARRIVALS - 4 - 11 - 2       # the 112 cases at arrivals less NOT_A_ROW's four, the held bindings' eleven, appl_exit's two
+ROWS_MADE = ARRIVALS - 3 - 2          # the 112 cases at arrivals less NOT_A_ROW's three, appl_exit's two (none held since F2c)
 
 
 def test_every_flipped_binding_has_a_row_at_an_arrival_and_every_other_case_at_an_arrival_is_one():
@@ -541,17 +537,19 @@ def test_every_flipped_binding_has_a_row_at_an_arrival_and_every_other_case_at_a
     rows = {name.split(", ", 1)[0] for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)} & CORES
     unpriced = {routines.core_symbol(name) for name in db.VERIFIED_UNPRICED_AT_F2}
     assert rows == FLIPPED - unpriced and unpriced <= FLIPPED
-    assert len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 4 and len(HELD) == 11 and len(UNPRICED) == 2
+    assert len(ROWS) == ROWS_MADE and len(NOT_A_ROW) == 3 and not HELD and len(UNPRICED) == 2
     assert len(X_FLAG_DIFFERS) == 10 and X_FLAG_DIFFERS <= set(ROWS)
 
 
 # ---- band 6 slice H2: THE TWO HARNESS PIECES objc_draw's FLIP WAS HELD FOR (it flips at F2c) ----------------------------------------
 # (P1) A ROW THAT SWITCHES WITH NO DOOR IS SERVED THE WALKED ROUTINES (`aes_switch._served_with_no_door`), as a door child is:
-# a no-door companion whose C walks a tree runs its walk — objc_draw's four (held until F2c) and form_dial's finish over
-# Desktop Info (`ITS_ROW_AT_F2C`). RED before the piece: each refused at just_draw (`$fe9a88`), "where this case staged no
-# routine" (the F1 fix pass's measurement).
+# a no-door companion whose C walks a tree runs its walk — objc_draw's four and form_dial's finish over Desktop Info
+# (`FORM_DIAL_WALKS_A_TREE`; each a row since slice F2c). RED before the piece: each refused at just_draw (`$fe9a88`),
+# "where this case staged no routine" (the F1 fix pass's measurement).
+FORM_DIAL_WALKS_A_TREE = next(name for name in AT_ITS_OWN_ARRIVAL
+                              if (BY_LABEL[name].short, BY_LABEL[name].chain, BY_LABEL[name].nth) == ("FORM_DIAL", INFO, 1))
 WALKS_A_TREE = sorted(name for name in AT_ITS_OWN_ARRIVAL
-                      if BY_LABEL[name].short == "OBJC_DRAW" or NOT_A_ROW.get(name) == ITS_ROW_AT_F2C)
+                      if BY_LABEL[name].short == "OBJC_DRAW" or name == FORM_DIAL_WALKS_A_TREE)
 
 
 @pytest.mark.parametrize("name", WALKS_A_TREE)
@@ -684,6 +682,20 @@ DOOR_USERS_PRICED = {
         ((4084, 6156), (3876, 5790), 1, (0, 0, 0)),
     'aes_desk_wind_update, arrival 2 of A: opened':
         ((4140, 6196), (3914, 5812), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of the boot of the DESKTOP.INF machine; Return at the first idle':
+        ((25494, 39408), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of the boot of the DESKTOP.INF machine; the button pressed at the first idle':
+        ((26800, 41044), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of Desk > Desktop Info, Return':
+        ((7196, 9704), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of window: View > Show as Text':
+        ((12940, 19926), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of file: selected; Return at the first idle':
+        ((25494, 39408), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        ((24376, 36250), (4448, 5996), 1, (0, 0, 0)),
+    'aes_desk_evnt_multi, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        ((28020, 40172), (4448, 5996), 1, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN = {
     "aes_desk_appl_write, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default)":
@@ -740,6 +752,20 @@ DOOR_USERS_WHOLE_RUN = {
         {"bench": (12918, 11002), "bench_shipped": (12918, 11122)},
     'aes_desk_wind_update, arrival 2 of A: opened':
         {"bench": (12958, 11058), "bench_shipped": (12958, 11178)},
+    'aes_desk_evnt_multi, arrival 0 of the boot of the DESKTOP.INF machine; Return at the first idle':
+        {"bench": (67476, 56152), "bench_shipped": (67476, 54966)},
+    'aes_desk_evnt_multi, arrival 0 of the boot of the DESKTOP.INF machine; the button pressed at the first idle':
+        {"bench": (68092, 56436), "bench_shipped": (68092, 55252)},
+    'aes_desk_evnt_multi, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (23228, 21032), "bench_shipped": (23228, 21272)},
+    'aes_desk_evnt_multi, arrival 0 of window: View > Show as Text':
+        {"bench": (33450, 27924), "bench_shipped": (33450, 27224)},
+    'aes_desk_evnt_multi, arrival 0 of file: selected; Return at the first idle':
+        {"bench": (67476, 56152), "bench_shipped": (67476, 54966)},
+    'aes_desk_evnt_multi, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
+        {"bench": (63298, 53794), "bench_shipped": (63298, 52836)},
+    'aes_desk_evnt_multi, arrival 0 of drive A: dragged to the trash, Return; the mouse carried off at the first idle':
+        {"bench": (73274, 63642), "bench_shipped": (73274, 62810)},
 }
 # ...AND THE ROWS WITH NO DOOR, each held here THREE WAYS (`test_aes_switching_rows_held.py`'s rule): its PREMISE on the
 # ROM's own run (the idles and polls its deliveries are taken at, its process, the processes entered, its answer), its
@@ -873,6 +899,16 @@ NO_DOOR_PREMISES = {
         ((), 0, 0xae5e, (0xae5e,), 44, ()),
     'aes_desk_wind_get, arrival 8 of A: opened':
         ((), 0, 0xae5e, (0xae5e,), 48, ()),
+    'aes_desk_objc_draw, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_draw, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_draw, arrival 2 of A: opened':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_objc_draw, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_form_dial, arrival 1 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e,), 0, ()),
 }
 NO_DOOR_PRICED = {
     'aes_desk_evnt_dclick, arrival 0 of file: shown, a key at its end':
@@ -1003,6 +1039,16 @@ NO_DOOR_PRICED = {
         ((4416, 6046), None, None, (0, 0, 0)),
     'aes_desk_wind_get, arrival 8 of A: opened':
         ((4348, 6046), None, None, (0, 0, 0)),
+    'aes_desk_objc_draw, arrival 0 of Desk > Desktop Info, Return':
+        ((94038, 111362), None, None, (0, 0, 0)),
+    'aes_desk_objc_draw, arrival 0 of A: opened':
+        ((37548, 46460), None, None, (0, 0, 0)),
+    'aes_desk_objc_draw, arrival 2 of A: opened':
+        ((27264, 33544), None, None, (0, 0, 0)),
+    'aes_desk_objc_draw, arrival 0 of drive A: selected':
+        ((37548, 46460), None, None, (0, 0, 0)),
+    'aes_desk_form_dial, arrival 1 of Desk > Desktop Info, Return':
+        ((72750, 86638), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_desk_evnt_dclick, arrival 0 of file: shown, a key at its end':
@@ -1133,6 +1179,16 @@ NO_DOOR_WHOLE_RUN = {
         {"bench": (12808, 11334), "bench_shipped": (12808, 11454)},
     'aes_desk_wind_get, arrival 8 of A: opened':
         {"bench": (12808, 11266), "bench_shipped": (12808, 11386)},
+    'aes_desk_objc_draw, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (1115396, 1112202), "bench_shipped": (1115396, 1108448)},
+    'aes_desk_objc_draw, arrival 0 of A: opened':
+        {"bench": (350860, 346890), "bench_shipped": (350860, 345964)},
+    'aes_desk_objc_draw, arrival 2 of A: opened':
+        {"bench": (418522, 415874), "bench_shipped": (418522, 414898)},
+    'aes_desk_objc_draw, arrival 0 of drive A: selected':
+        {"bench": (350860, 346890), "bench_shipped": (350860, 345964)},
+    'aes_desk_form_dial, arrival 1 of Desk > Desktop Info, Return':
+        {"bench": (984526, 982092), "bench_shipped": (984526, 978258)},
 }
 
 

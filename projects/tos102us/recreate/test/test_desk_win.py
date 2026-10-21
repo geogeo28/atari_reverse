@@ -1,6 +1,6 @@
 """THE DESK'S WINDOW OBJECTS AND PROGRAM LEAVES (`src/desk/deskwin.c`; band 6 wave 1b, group G1, unit I), HELD AT TIER 1
-AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but do_wredraw (`aes_deskwin.HELD_AT_F2`): the Line-F
-table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (`ROWS`, below).
+AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED (do_wredraw, which calls the objc_draw binding, since
+slice F2c): the Line-F table's entry for each is its thunk, and its cases at arrivals are Tier 3 rows (`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskwin.arrival`): a chain of the hands stopped at the routine's first
     instruction, the arguments read off the frame the desk's own caller pushed. Where no chain makes the machine an
@@ -212,7 +212,8 @@ def test_the_table_s_entries_are_the_flipped_routines_thunks_and_the_held_one_s_
 #     switch with no door, held here three ways (premise, whole run on both blobs, price).
 #   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`): declared on the rows whose yield parks each build's own.
 # MEASURED (the table's second count: the run made calls of the door): zoom_closed where its window closes (the
-# wind_close binding's wait for the screen's lock) and do_wfull's three (wind_set's) — no other row of the unit's.
+# wind_close binding's wait for the screen's lock) and do_wfull's three (wind_set's) — no other row of the unit's (do_wredraw's
+# four, slice F2c's, none: the objc_draw binding's yield alone).
 DOOR_USERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL
                        if (BY_LABEL[name].name, BY_LABEL[name].chain) in {("AES_ROM_ZOOM_CLOSED", CLOSED)}
                        or BY_LABEL[name].name == "AES_ROM_DO_WFULL")
@@ -289,6 +290,14 @@ NO_DOOR_PREMISES = {
         ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
     'aes_zoom_closed, arrival 1 of folder: File > Close':
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_do_wredraw, arrival 1 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_do_wredraw, arrival 2 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_do_wredraw, arrival 3 of window: A: opened again (two windows)':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_do_wredraw, arrival 1 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
 }
 NO_DOOR_PRICED = {
     'aes_desk_rsrc_load, arrival 1 of file: shown, a key at its end':
@@ -329,6 +338,14 @@ NO_DOOR_PRICED = {
         ((18154, 23520), None, None, (0, 0, 0)),
     'aes_zoom_closed, arrival 1 of folder: File > Close':
         ((192802, 227734), None, None, (0, 0, 0)),
+    'aes_do_wredraw, arrival 1 of drive A: selected':
+        ((59386, 78220), None, None, (0, 0, 0)),
+    'aes_do_wredraw, arrival 2 of A: File > Open':
+        ((50120, 66924), None, None, (0, 0, 0)),
+    'aes_do_wredraw, arrival 3 of window: A: opened again (two windows)':
+        ((49360, 66102), None, None, (0, 0, 0)),
+    'aes_do_wredraw, arrival 1 of a rubber box on the desktop, round the trash':
+        ((58536, 77264), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_desk_rsrc_load, arrival 1 of file: shown, a key at its end':
@@ -369,6 +386,14 @@ NO_DOOR_WHOLE_RUN = {
         {"bench": (60144, 63856), "bench_shipped": (60144, 55770)},
     'aes_zoom_closed, arrival 1 of folder: File > Close':
         {"bench": (1248098, 1241390), "bench_shipped": (1248098, 1239186)},
+    'aes_do_wredraw, arrival 1 of drive A: selected':
+        {"bench": (429524, 416624), "bench_shipped": (429524, 416218)},
+    'aes_do_wredraw, arrival 2 of A: File > Open':
+        {"bench": (503040, 491092), "bench_shipped": (503040, 490556)},
+    'aes_do_wredraw, arrival 3 of window: A: opened again (two windows)':
+        {"bench": (378058, 365940), "bench_shipped": (378058, 365484)},
+    'aes_do_wredraw, arrival 1 of a rubber box on the desktop, round the trash':
+        {"bench": (346418, 333544), "bench_shipped": (346418, 333178)},
 }
 
 
@@ -386,7 +411,7 @@ def test_the_rows_are_the_cases_at_arrivals_of_the_flipped_routines_and_split_by
     assert set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == set(NO_DOOR_PREMISES)
     assert {switching[row] for row in DOOR_USERS_PRICED} == set(DOOR_USERS) - set(NOT_A_ROW) and len(NOT_A_ROW) == 1
     assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS)
-    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (38, 22, 8)
+    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (42, 26, 8)      # (slice F2c: do_wredraw's four, no door)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)

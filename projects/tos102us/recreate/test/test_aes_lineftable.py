@@ -97,6 +97,9 @@ FLIPPED_AT_F2 = {
     # ---- band 6 slice F2b (the five stage artifacts) ----
     "F2b": (4, 4, 2),       # win_icalc, win_bldview, win_shwall, i_find (men_update held); entered but UNENTERED's two
     # ---- end of slice F2b's ----
+    # ---- band 6 slice F2c (wave 1b's last thirteen) ----
+    "F2c": (13, 13, 1),     # objc_draw, evnt_multi, men_update and the ten waiting on them; entered but UNENTERED's twelve
+    # ---- end of slice F2c's ----
 }
 ENTRIES_FLIPPED_AT_F2 = sum(entries for entries, _thunks, _entered in FLIPPED_AT_F2.values())
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_AT_F2,
@@ -665,6 +668,12 @@ UNENTERED = {
     # on our shore instead, `test_aes_desk_ours.py`; win_icalc's and i_find's plain rows enter theirs)
     **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("WIN_BLDVIEW", "WIN_SHWALL")},
     # ---- end of slice F2b's ----
+    # ---- band 6 slice F2c ---- THE TWELVE FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`; act_allchg's three plain rows, `test_desk_act.REACHES_NO_BINDING`, enter its thunk)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
+        "DESK_EVNT_MULTI", "DESK_OBJC_DRAW", "MEN_UPDATE", "DO_WREDRAW", "GR_ISDOWN", "GR_BWAIT", "MOVE_DRVICON", "ACT_CHG",
+        "DESK_DRAW_DIAL", "DESK_SHOW_DIAL", "DESK_DRAW_FLD", "DESK_DO_NAMECON")},
+    # ---- end of slice F2c's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group adds its own entered count on its line of FLIPPED_AT_F2)
@@ -862,21 +871,21 @@ def test_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_the_rom_s_sc
 # 1b adds one line per unit inside its own block, so no two authors edit one line; the pin is their sum.
 LINKED_AND_NOT_FLIPPED_UNITS = {
     # (unit D's forty bindings and desk_wait, unit O's eighteen: FLIPPED at band 6 slice F1 — but three bindings held)
-    ("aes_deskbind", "HELD_AT_F1"): 2,   # unit D: evnt_multi, objc_draw, held (`aes_deskbind.HELD_AT_F1` says why; appl_exit flipped at F2)
+    ("aes_deskbind", "HELD_AT_F1"): 0,   # unit D: none (evnt_multi, objc_draw flipped at slice F2c; appl_exit at F2)
     # ---- band 6 wave 1b, group G1 (units I, L) ----
-    # (units I and L FLIPPED at band 6 slice F2 — but do_wredraw, held until its C callees are: `HELD_AT_F2` says why)
-    ("aes_deskwin", "HELD_AT_F2"): 1,    # unit I: do_wredraw (the objc_draw binding)
+    # (units I and L FLIPPED at band 6 slice F2 — do_wredraw, held for the objc_draw binding, at slice F2c)
+    ("aes_deskwin", "HELD_AT_F2"): 0,    # unit I: none (do_wredraw flipped at slice F2c)
     ("aes_deskview", "HELD_AT_F2"): 0,   # unit L: none (win_icalc, win_bldview, win_shwall flipped at slice F2b)
     # ---- end of group G1's ----
     # ---- band 6 wave 1b, group G2 (units A, K, J) ----
-    # (units A, K and J FLIPPED at band 6 slice F2 — but men_update: `HELD_AT_F2` says why; i_find at slice F2b)
-    ("aes_desktop", "HELD_AT_F2"): 1,    # unit K: men_update (held at slice F2b by a measured reason; i_find flipped there)
+    # (units A, K and J FLIPPED at band 6 slice F2 — i_find at slice F2b, men_update at slice F2c)
+    ("aes_desktop", "HELD_AT_F2"): 0,    # unit K: none (men_update flipped at slice F2c)
     # ---- end of group G2's ----
     # ---- band 6 wave 1b, group G3 (units B, G) ----
-    ("aes_deskact", "UNIT_B_HELD_AT_F2"): 5,     # unit B's five whose C calls a held core; its seven others and unit G flipped at F2
+    ("aes_deskact", "UNIT_B_HELD_AT_F2"): 0,     # unit B: none (its five held at F2 flipped at slice F2c)
     # ---- end of group G3's ----
     # ---- band 6 wave 1b, group G4 (units C, H, E, F) ----
-    ("aes_deskdir", "UNIT_C_HELD_AT_F2"): 4,     # unit C's dialog drawers (objc_draw's callers); units H, E, F and ten of C flipped at F2
+    ("aes_deskdir", "UNIT_C_HELD_AT_F2"): 0,     # unit C: none (its four dialog drawers flipped at slice F2c)
     # ---- end of group G4's ----
     # ---- band 6 wave 2: each unit's WAVE-2 list (`UNIT_<X>_WAVE_2`, its own block of the unit's module) and count,
     # one line per unit inside its group's block — wave 1b's lines above stay as they are ----

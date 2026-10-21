@@ -64,10 +64,9 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_I = tuple(SIGNATURES)
-# ---- band 6 slice F2 ---- FLIPPED but one (`linef_table.LINKED_AND_NOT_FLIPPED` says why the same): do_wredraw, whose C
-# calls the objc_draw binding — held at slice F1 (`aes_deskbind.HELD_AT_F1`): a routine flips once every C callee of it is
-# flipped.
-HELD_AT_F2 = ("AES_ROM_DO_WREDRAW",)
+# ---- band 6 slice F2 ---- FLIPPED but one at stage 1: do_wredraw, whose C calls the objc_draw binding (held at slice F1)
+# — FLIPPED at band 6 slice F2c, with objc_draw: the unit whole.
+HELD_AT_F2 = ()
 # ---- band 6 wave 2, group G3 (unit I) ---- the unit's wave-2 routines: their own signatures and list, so wave
 # 1b's UNIT_I (and its count) stays as it is
 SIGNATURES_WAVE_2 = {

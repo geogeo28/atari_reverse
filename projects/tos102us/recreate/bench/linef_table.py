@@ -135,20 +135,10 @@ ENTERED_BY_OURS_ALONE = {
 # at band 6 slice F1.)
 LINKED_AND_NOT_FLIPPED = {}
 # ---- unit D: FLIPPED at band 6 slice F1 — the desk's forty bindings and desk_wait, each thunked, BUT THREE HELD (the slice's
-# brief holds back a routine whose flip needs what the cut does not have; `aes_deskbind.HELD_AT_F1` says each) — TWO since
-# band 6 slice F2 ----
+# brief holds back a routine whose flip needs what the cut does not have) — NONE since band 6 slice F2c ----
 # (appl_exit, held at F1 for its price alone, FLIPPED at band 6 slice F2 as ⚠️ VERIFIED-BUT-UNPRICED — the user's ruling of
-# 2026-10-17: no row kind reaches its arrivals, whose screen manager stands where no history of ours reaches.)
-LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_DESK_EVNT_MULTI": "unit D: evnt_multi, held at band 6 slice F1 — flipped, ctlmgr's live-frame staging refuses "
-                               "first (our C binding has no `link a6`: the desk's frame chain differs at $a288 / $a2bc), "
-                               "and behind it the answer words it copies out for events that did not occur ($a34e "
-                               "clicks_out, $a350 key_out) are each shore's residue — both harness pieces made at slice H2 "
-                               "(`aes_ctlmgr.the_desk_s_text`, `aes_ctlmgr.ResidueCopies`): it flips at F2c",
-    "AES_ROM_DESK_OBJC_DRAW": "unit D: objc_draw, held at band 6 slice F1 — its C walks the tree (just_draw), and a row that "
-                              "switches with no door was modelled with no walked routine served; the fork's walk made at "
-                              "slice H2 (`aes_switch._served_with_no_door`), its rows priced and measured on both blobs (the "
-                              "F1 probe's refusal was the kit's own bench's): it flips at F2c"})
+# 2026-10-17: no row kind reaches its arrivals, whose screen manager stands where no history of ours reaches. evnt_multi
+# and objc_draw, held for two harness pieces each — made at slice H2 — FLIPPED at band 6 slice F2c.)
 # ---- unit O: FLIPPED at band 6 slice F1 — its seventeen C cores thunked, trp13 a row of the transcribed table (native) ----
 # ---- end of band 6 wave 1a's ----
 # ---- band 6 wave 1b: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----
@@ -157,45 +147,23 @@ LINKED_AND_NOT_FLIPPED.update({
 # made again by this generator, never merged by hand.)
 # ---- band 6 wave 1b, group G1 (units I `src/desk/deskwin.c`, L `src/desk/deskview.c`) ----
 # FLIPPED at band 6 slice F2 (stage 1) but four: a routine flips once every C callee of it is flipped (the cut's rule —
-# flipped alone, a caller of a held core breaks the converse invariant and the unbound pin), so each of these waits for
-# its callee's slice (`aes_deskwin.HELD_AT_F2` says the same). Unit L's three held at stage 1 (win_icalc, win_bldview,
-# win_shwall: stage artifacts of the groups' parallel flips) FLIPPED at slice F2b.
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WREDRAW": "unit I: do_wredraw, held at band 6 slice F2 — its C calls the objc_draw "
-                                                     "binding, held at slice F1 (F2c, after H2)"})
+# flipped alone, a caller of a held core breaks the converse invariant and the unbound pin). Unit L's three held at stage
+# 1 (win_icalc, win_bldview, win_shwall: stage artifacts of the groups' parallel flips) FLIPPED at slice F2b; unit I's
+# do_wredraw (the objc_draw binding's caller) at slice F2c: both units whole.
 # ---- end of group G1's ----
 # ---- band 6 wave 1b, group G2 (units A `src/desk/deskapp.c`, K `src/desk/desktop.c`, J `src/desk/desksupp.c`) ----
 # FLIPPED at band 6 slice F2 (stage 2) but two, i_find and men_update; i_find (a stage artifact of the groups' parallel
-# flips) FLIPPED at slice F2b, men_update HELD there by a measured reason (`aes_desktop.HELD_AT_F2` says the same).
-LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_MEN_UPDATE": "unit K: men_update, held at band 6 slice F2b — MEASURED: flipped, ctlmgr's two desk-turn rows "
-                          "are refused by the desk's live-frames vet (its C leaves other dead bytes than the ROM's at "
-                          "$a2a6..$a2b3, inside the held evnt_multi binding's frame under the desk's wait: that binding's "
-                          "unwritten locals) — out of the compare once the binding flips (slice H2's pieces): it flips with "
-                          "evnt_multi at F2c"})
+# flips) FLIPPED at slice F2b, men_update — held there by a measured reason, the held evnt_multi binding's live frames —
+# with that binding at slice F2c: the three units whole.
 # ---- end of group G2's ----
 # ---- band 6 wave 1b, group G3 (units B `src/desk/deskact.c`, G `src/desk/deskfpd.c`) ----
-# FLIPPED at band 6 slice F2 (stage 2): unit G whole, unit B but five. HELD, unit B's five below: a routine flips once
-# every C callee of it is flipped — gr_isdown's C calls unit D's evnt_multi, still held (`aes_deskbind.HELD_AT_F1`), and
-# gr_bwait calls gr_isdown; act_chg, act_allchg and move_drvicon call unit I's do_wredraw (held for objc_draw) —
-# flipped, each would be a bound referrer of a held core (F2c's, after the harness slice H2;
-# `aes_deskact.UNIT_B_HELD_AT_F2` says the same).
-LINKED_AND_NOT_FLIPPED.update({
-    "AES_ROM_GR_ISDOWN": "unit B: gr_isdown, held at band 6 slice F2 — its C calls unit D's evnt_multi, held at slice F1 (F2c, "
-                         "after H2)",
-    "AES_ROM_GR_BWAIT": "unit B: gr_bwait, held at band 6 slice F2 — its C calls gr_isdown, held (F2c)",
-    "AES_ROM_ACT_CHG": "unit B: act_chg, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw (F2c)",
-    "AES_ROM_ACT_ALLCHG": "unit B: act_allchg, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw (F2c)",
-    "AES_ROM_MOVE_DRVICON": "unit B: move_drvicon, held at band 6 slice F2 — its C calls unit I's do_wredraw, held for objc_draw "
-                            "(F2c)"})
+# FLIPPED at band 6 slice F2 (stage 2): unit G whole, unit B but five — held until every C callee of each was flipped
+# (gr_isdown's C calls unit D's evnt_multi, gr_bwait gr_isdown; act_chg, act_allchg and move_drvicon unit I's do_wredraw)
+# and FLIPPED with them at slice F2c: both units whole.
 # ---- end of group G3's ----
 # ---- band 6 wave 1b, group G4 (units C `src/desk/deskdir.c`, H `deskfun.c`, E `deskusr.c`, F `deskinf.c`) ----
-# (FLIPPED at band 6 slice F2, stage 1: unit C's ten others, units H, E and F whole — eighteen. HELD, unit C's four
-# below: each calls unit D's objc_draw, still the ROM's (`aes_deskbind.HELD_AT_F1`), or a routine that does — a flipped
-# routine whose C calls a held core is a bound referrer of it (`aes_deskbind.bound_referrers`) and breaks the converse
-# invariant on our shore; F2c's, after the harness slice H2.)
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit C: a dialog's drawing, held at band 6 slice F2 — its C calls unit D's "
-                               "objc_draw (held) or a routine that does: flipped, it would be a bound referrer of a held core"
-                               for routine in ("DRAW_DIAL", "DO_NAMECON", "SHOW_DIAL", "DRAW_FLD")})
+# (FLIPPED at band 6 slice F2, stage 1: unit C's ten others, units H, E and F whole — eighteen. Unit C's four dialog
+# drawers — each calls unit D's objc_draw, or a routine that does — held until it was, FLIPPED with it at slice F2c.)
 # ---- end of group G4's ----
 # ---- end of band 6 wave 1b's ----
 # ---- band 6 wave 2: one `.update({...})` PER UNIT inside its group's own block, the group's names only ----

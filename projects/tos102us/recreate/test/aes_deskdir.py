@@ -49,10 +49,9 @@ SIGNATURES = {
 for _name, (_restype, _frame) in SIGNATURES.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_C = tuple(SIGNATURES)
-# ---- band 6 slice F2 (group G4) ---- THE FOUR HELD WHEN THE UNIT FLIPPED (`linef_table.LINKED_AND_NOT_FLIPPED`): draw_dial,
-# show_dial and draw_fld call unit D's objc_draw, still held (`aes_deskbind.HELD_AT_F1`), and do_namecon calls two of
-# them — flipped, each would be a bound referrer of a held core. Their flip is F2c's, after the harness slice H2.
-UNIT_C_HELD_AT_F2 = tuple(PREFIX + short for short in ("DRAW_DIAL", "DO_NAMECON", "SHOW_DIAL", "DRAW_FLD"))
+# ---- band 6 slice F2 (group G4) ---- THE FOUR HELD WHEN THE UNIT FLIPPED: draw_dial, show_dial and draw_fld call unit
+# D's objc_draw, and do_namecon calls two of them — ALL FOUR FLIPPED at band 6 slice F2c, with objc_draw: the unit whole.
+UNIT_C_HELD_AT_F2 = ()
 # ---- band 6 wave 2, group G1 (unit C) ---- the unit's wave-2 routines: their own signatures and list, so wave
 # 1b's UNIT_C (and its count) stays as it is
 SIGNATURES_WAVE_2 = {

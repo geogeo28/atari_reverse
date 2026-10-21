@@ -1,7 +1,7 @@
 """UNIT K, THE DESK'S MAIN LOOP'S HELPERS (`src/desk/desktop.c`; band 6 wave 1b, group G2): HELD AT TIER 1 AT THE
-ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED but men_update (i_find since slice F2b; men_update held there by a
-measured reason: `aes_desktop.HELD_AT_F2`): the Line-F table's entry for each other is its thunk, and every case of theirs
-at an arrival is a Tier 3 row (`ROWS`).
+ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, FLIPPED (i_find since slice F2b; men_update, held there by a measured
+reason, since slice F2c): the Line-F table's entry for each is its thunk, and every case of theirs at an arrival is a
+Tier 3 row (`ROWS`) but men_update's boot arrival (`NOT_A_ROW`).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskapp.arrival`) and A ROW THAT SWITCHES: each routine's menu changes go through
     unit D's bindings, which yield — the C through the host's scheduler held to the ROM's scheduled run, nothing
@@ -149,7 +149,8 @@ def test_no_caller_reads_what_men_update_or_cnx_put_leave_in_d0():
 
 # ---- band 6 slice F2 (group G2): THE UNIT'S ROWS — every case at an arrival of a flipped routine (men_list, do_viewmenu,
 # cnx_put) a row that switches with NO DOOR (`aes_deskapp.register_switching`; MEASURED, the table's second count: none
-# makes a call of the event layer's door); the classes stay Tier 1's (i_find's rows: slice F2b's, below; men_update held). Their pins — DATA, measured
+# makes a call of the event layer's door); the classes stay Tier 1's (i_find's rows: slice F2b's, below; men_update's:
+# slice F2c's). Their pins — DATA, measured
 # by the table's own measurement and each blob's second differential from the rows as registered; re-pinned from a
 # recorded run, never by hand.
 FLIPPED = tuple(name for name in aes_desktop.UNIT_K if name not in aes_desktop.HELD_AT_F2)
@@ -167,9 +168,13 @@ def _registered(routine, chain, nth):
     return da.register_switching(arrived, door_user=False)
 
 
-ROWS = {f"{routine} {chain} {nth}": _registered(routine, chain, nth) for routine, chain, nth in AT_ARRIVALS if routine in FLIPPED}
-# ---- band 6 slice F2b: i_find FLIPPED — its three arrivals PLAIN ROWS (no binding under it). men_update HELD at F2b
-# (`aes_desktop.HELD_AT_F2`, a measured reason): no row.
+# men_update's BOOT ARRIVAL: NOT A ROW, by name — its machine's screen manager stands where no history of ours is known
+# to leave it (the takeover refuses it by name: menu_ienable's own boot arrival's class, `test_desk_bind.NOT_A_ROW`).
+NOT_A_ROW = {(MEN_UPDATE, BOOT, 0): "the boot's screen manager stands where no history of ours reaches (`aes_takeover`)"}
+ROWS = {f"{routine} {chain} {nth}": _registered(routine, chain, nth) for routine, chain, nth in AT_ARRIVALS
+        if routine in FLIPPED and (routine, chain, nth) not in NOT_A_ROW}
+# ---- band 6 slice F2b: i_find FLIPPED — its three arrivals PLAIN ROWS (no binding under it). (men_update, held at F2b,
+# FLIPPED at slice F2c: its rows are `ROWS`' above, rows that switch with no door.)
 ROWS.update({f"{I_FIND} {chain} {nth}": da.register_plain(da.arrival(I_FIND, chain, nth)) for chain, nth in I_FIND_ARRIVALS})
 NO_DOOR_PREMISES = {
     "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
@@ -222,6 +227,12 @@ NO_DOOR_PREMISES = {
         ((), 0, 0xae5e, (0xae5e,), None, ()),
     "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
         ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_men_update, arrival 0 of Desk > Desktop Info, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_men_update, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_men_update, arrival 0 of a rubber box on the desktop, round drive B: and the trash':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
 }
 NO_DOOR_PRICED = {
     "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
@@ -274,6 +285,12 @@ NO_DOOR_PRICED = {
         ((5652, 8276), None, None, (0, 0, 0)),
     "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
         ((22596, 32602), None, None, (0, 0, 0)),
+    'aes_men_update, arrival 0 of Desk > Desktop Info, Return':
+        ((196108, 285288), None, None, (0, 0, 0)),
+    'aes_men_update, arrival 0 of drive A: selected':
+        ((180858, 264318), None, None, (0, 0, 0)),
+    'aes_men_update, arrival 0 of a rubber box on the desktop, round drive B: and the trash':
+        ((237424, 348214), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     "aes_cnx_put, arrival 0 of files: the right arrow clicked, then Options > Save Desktop, Return":
@@ -326,7 +343,29 @@ NO_DOOR_WHOLE_RUN = {
         {"bench": (15038, 12570), "bench_shipped": (15038, 12690)},
     "aes_men_list, arrival 0 of the boot of the DESKTOP.INF machine":
         {"bench": (59650, 50268), "bench_shipped": (59650, 50748)},
+    'aes_men_update, arrival 0 of Desk > Desktop Info, Return':
+        {"bench": (521958, 438238), "bench_shipped": (521958, 442438)},
+    'aes_men_update, arrival 0 of drive A: selected':
+        {"bench": (480702, 402232), "bench_shipped": (480702, 406074)},
+    'aes_men_update, arrival 0 of a rubber box on the desktop, round drive B: and the trash':
+        {"bench": (632218, 527976), "bench_shipped": (632218, 533020)},
 }
+
+
+def test_men_update_s_boot_arrival_alone_runs_the_screen_manager_where_no_history_of_ours_leaves_it(blob):
+    """`NOT_A_ROW`, MEASURED (slice F2c): of men_update's arrivals only the boot's row runs the screen manager (its
+    settled drops name its two spans: `aes_takeover.named_in`) — and the takeover refuses that machine by name, as it
+    refuses menu_ienable's own boot arrival (`test_desk_bind.NOT_A_ROW`); every other arrival names no span of it."""
+    import aes_switching
+    import aes_takeover
+    for routine, chain, nth in AT_ARRIVALS:
+        if routine != MEN_UPDATE:
+            continue
+        made = aes_switching.settled(da.switching_row(da.arrival(routine, chain, nth), door_user=False))
+        assert aes_takeover.named_in(made.drops) == ((routine, chain, nth) in NOT_A_ROW), chain
+        if (routine, chain, nth) in NOT_A_ROW:
+            with pytest.raises(aes_takeover.Refused, match="STANDS PARKED WHERE NO HISTORY OF OURS IS KNOWN TO LEAVE IT"):
+                aes_takeover.prepared(blob, made.pokes)
 
 
 def test_every_case_at_an_arrival_of_a_flipped_routine_is_a_row_and_its_pins_are_the_switching_ones():
@@ -334,7 +373,7 @@ def test_every_case_at_an_arrival_of_a_flipped_routine_is_a_row_and_its_pins_are
     switching = [row for row in ROWS.values() if hasattr(row, "door")]       # (a plain row is a tuple)
     assert {da.entry_of(name) for name in FLIPPED} == {row[1] if not hasattr(row, "door") else da.entry_of(row.name) for row in ROWS.values()}
     plain = len(NO_SWITCH) + len(I_FIND_ARRIVALS)
-    assert (len(ROWS), len(switching)) == (33, 33 - plain) and all(row.door is None for row in switching)
+    assert (len(ROWS), len(switching)) == (36, 36 - plain) and all(row.door is None for row in switching)
     assert {aes_switching.row_name(row) for row in switching} == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
 
 

@@ -4701,7 +4701,7 @@ ROWS_THAT_SWITCH = {
     # band 6 slice F1: THE DESK'S BINDINGS (`test_desk_bind.py`, unit D flipped) — every case at a hands' arrival a row that
     # switches but the held bindings' and NOT_A_ROW's: 91 (27 door users', 64 with no door)
     "aes_desk_appl_write": 2, "aes_desk_evnt_button": 2, "aes_desk_evnt_dclick": 2, "aes_desk_form_alert": 3,
-    "aes_desk_form_center": 3, "aes_desk_form_dial": 2, "aes_desk_form_do": 3, "aes_desk_form_error": 1,
+    "aes_desk_form_center": 3, "aes_desk_form_dial": 3, "aes_desk_form_do": 3, "aes_desk_form_error": 1,
     "aes_desk_graf_growbox": 2, "aes_desk_graf_mkstate": 3, "aes_desk_graf_mouse": 4, "aes_desk_graf_rubbox": 1,
     "aes_desk_graf_shrinkbox": 3, "aes_desk_menu_bar": 2, "aes_desk_menu_icheck": 3, "aes_desk_menu_ienable": 2,
     "aes_desk_menu_tnormal": 2, "aes_desk_objc_add": 3, "aes_desk_objc_change": 2, "aes_desk_objc_find": 4,
@@ -4731,6 +4731,15 @@ ROWS_THAT_SWITCH = {
     # ---- band 6 slice F2b ---- (`test_desk_view.py`: 8, every one a door user's — win_bldview's six, win_shwall's two)
     "aes_win_bldview": 6, "aes_win_shwall": 2,
     # ---- end of slice F2b's ----
+    # ---- band 6 slice F2c ---- the last thirteen of wave 1b flipped, every row at an arrival of each that switches: 42
+    # (`test_desk_bind.py`: evnt_multi's seven door users', objc_draw's four with no door — and form_dial's third, its finish
+    # over Desktop Info, a row since F2c; `test_desk_top.py`: men_update's three; `test_desk_win.py`: do_wredraw's four;
+    # `test_desk_act.py`: gr_isdown's two and gr_bwait's three door users', move_drvicon's, act_chg's and act_allchg's
+    # seven with no door; `test_desk_dir.py`: do_namecon's three door users', draw_dial's, show_dial's, draw_fld's eight)
+    "aes_desk_evnt_multi": 7, "aes_desk_objc_draw": 4, "aes_men_update": 3, "aes_do_wredraw": 4, "aes_gr_isdown": 2,
+    "aes_gr_bwait": 3, "aes_move_drvicon": 1, "aes_act_chg": 5, "aes_act_allchg": 1, "aes_desk_draw_dial": 3,
+    "aes_desk_do_namecon": 3, "aes_desk_show_dial": 3, "aes_desk_draw_fld": 2,
+    # ---- end of slice F2c's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -4802,7 +4811,7 @@ BY_NATURE_CENSUS = {
                            THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 7, "aes_ev_block": 1, "aes_ev_multi": 19,
                                                      "aes_ev_timer": 4, "aes_dispatch": 7},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
-                                             "aes_dispatch": 4, "aes_marshal": 1},
+                                             "aes_dispatch": 4, "aes_marshal": 1, "aes_desk_evnt_multi": 3},
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
                            # ---- band 6 slice F2, group G2 (units A, K, J) ---- app_blddesk's every row, drive_check's three
                            THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4}, THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 3},
@@ -5401,6 +5410,14 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_win_bldview": ("AES_DESK_VIEW_FRAME", "AES_DESK_BIND_FRAME"),
     "aes_win_shwall": ("AES_DESK_BIND_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
     # ---- end of slice F2b's ----
+    # ---- band 6 slice F2c ---- the door users flipped at F2c: unit D's evnt_multi binding its frame and the event layer's
+    # QPB across ev_multi's wait; unit B's gr_isdown that binding's frame and its own answers' words, gr_bwait those and
+    # its own; unit C's do_namecon form_do's frame and its dialog's rectangle (hide_dial's) across form_do's wait
+    "aes_desk_evnt_multi": ("AES_DESK_BIND_FRAME", "AES_EV_MULTI_QPB, process 0"),
+    "aes_gr_isdown": ("AES_DESK_BIND_FRAME", "AES_GR_ISDOWN_ANSWERS"),
+    "aes_gr_bwait": ("AES_GR_BWAIT_ANSWERS", "AES_DESK_BIND_FRAME", "AES_GR_ISDOWN_ANSWERS"),
+    "aes_desk_do_namecon": ("AES_DESK_DIR_RECT", "AES_FM_DO_FRAME"),
+    # ---- end of slice F2c's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

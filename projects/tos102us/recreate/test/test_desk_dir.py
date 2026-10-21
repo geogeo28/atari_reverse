@@ -1,9 +1,9 @@
 """THE COPY ENGINE'S HELPERS (`src/desk/deskdir.c`; band 6 wave 1b, group G4, unit C): fourteen routines of
 `$fdcf04..$fdd917` — the dialogs' drawing, the path editors, the DOS verdict and the delete, the check that a folder is
-not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, TEN OF THEM FLIPPED:
-the Line-F table's entry for each is its thunk, and every case of theirs at an arrival is a Tier 3 row (`ROWS`, below).
-The four dialog drawers that call unit D's objc_draw, still held (draw_dial, show_dial, draw_fld and do_namecon, which
-calls two of them), stay LINKED AND NOT FLIPPED (`aes_deskdir.UNIT_C_HELD_AT_F2`).
+not copied into itself — HELD AT TIER 1 AT THE ARRIVALS OF ROM RUNS — AND, SINCE BAND 6 SLICE F2, TEN OF THEM FLIPPED,
+the four dialog drawers that call unit D's objc_draw (draw_dial, show_dial, draw_fld and do_namecon, which calls two of
+them) SINCE SLICE F2c, with objc_draw: the Line-F table's entry for each is its thunk, and every case of theirs at an
+arrival is a Tier 3 row (`ROWS`, below).
 
   * EVERY CASE IS AN ARRIVAL (`aes_deskarrive.arrival`) — four of the routines only at the chains this wave added
     (`aes_desk`'s group G4 block: the name conflict, a folder copied into a folder, a folder holding a folder deleted)
@@ -254,7 +254,7 @@ def test_the_strings_the_unit_names_are_the_rom_s():
                      "AES_DESK_PAR_CHK_END_SOURCE": b"*.*", "AES_DESK_PAR_CHK_END_DESTINATION": b"*.*"}
 
 
-def test_the_unit_s_ten_are_flipped_and_its_four_dialog_drawers_held_unbound(blob):
+def test_the_unit_s_fourteen_are_flipped_and_none_held_unbound(blob):
     da.flipped(blob, FLIPPED)
     da.unbound(blob, cdir.UNIT_C_HELD_AT_F2)
 
@@ -264,9 +264,13 @@ def test_the_unit_s_ten_are_flipped_and_its_four_dialog_drawers_held_unbound(blo
 # alert answered through form_error's waits; hide_dial's form_dial FINISH, whose desktop redraw reaches the event door —
 # registered with no door, its companion's fork is refused at `recreate_call_event_door`) — and d_dofdel's two over its
 # GEMDOS SCRIPTED (the recording trap answering the ROM's run in place, said in the row's name). The classes stay Tier
-# 1's; the held four have no row. Its door users' pins are read by `test_tier3.py`'s door users.
+# 1's. Its door users' pins are read by `test_tier3.py`'s door users.
+#   * SINCE SLICE F2c the four dialog drawers' rows: do_namecon's three a DOOR USER's (MEASURED, the table's second count:
+#     5 calls of a rebound entry each — its dialog's form_do waits for the Return), draw_dial's, show_dial's and
+#     draw_fld's ROWS THAT SWITCH WITH NO DOOR (objc_draw's yield alone: the walk served, slice H2's P1), held here three
+#     ways (premise, whole run on both blobs, price — `NO_DOOR_*`).
 FLIPPED = tuple(name for name in cdir.UNIT_C if name not in cdir.UNIT_C_HELD_AT_F2)
-DOOR_USERS = frozenset((D_ERRMSG, HIDE_DIAL))
+DOOR_USERS = frozenset((D_ERRMSG, HIDE_DIAL, DO_NAMECON))
 ROWS = {name: da.register_row(each, answered=each.name not in VOID, door=each.name in DOOR_USERS)
         for name, each in da.at_arrivals(CASES).items() if each.name in FLIPPED}
 
@@ -305,6 +309,12 @@ DOOR_USERS_PRICED = {
         ((264628, 353536), (259052, 343992), 1, (0, 0, 0)),
     "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
         ((321042, 423182), (315934, 414274), 1, (0, 0, 0)),
+    'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return; Return at the first idle':
+        ((283862, 376078), (263482, 342976), 5, (0, 0, 0)),
+    "aes_desk_do_namecon, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B); Return at the first idle":
+        ((278798, 371362), (258418, 338260), 5, (0, 0, 0)),
+    'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return; Return at the first idle':
+        ((187042, 255406), (166662, 222304), 5, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN = {
     "aes_desk_d_errmsg, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle":
@@ -315,16 +325,102 @@ DOOR_USERS_WHOLE_RUN = {
         {"bench": (1781540, 1724800), "bench_shipped": (1781540, 1724940)},
     "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
         {"bench": (2091866, 2029264), "bench_shipped": (2091866, 2028234)},
+    'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return; Return at the first idle':
+        {"bench": (1930388, 1885092), "bench_shipped": (1930388, 1867872)},
+    "aes_desk_do_namecon, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B); Return at the first idle":
+        {"bench": (1925672, 1878530), "bench_shipped": (1925672, 1862808)},
+    'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return; Return at the first idle':
+        {"bench": (1129358, 1090698), "bench_shipped": (1129358, 1078350)},
 }
-ROWS_MADE = 29                          # the 27 cases at arrivals of the ten flipped, and d_dofdel's two
+NO_DOOR_PREMISES = {
+    'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_desk_draw_dial, arrival 1 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_desk_draw_dial, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_desk_show_dial, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    "aes_desk_show_dial, arrival 0 of folder: File > New Folder, 'A', Return":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_desk_show_dial, arrival 0 of folder: the file dragged onto it, Return':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_desk_draw_fld, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    'aes_desk_draw_fld, arrival 0 of folder: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED = {
+    'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        ((99242, 123362), None, None, (0, 0, 0)),
+    'aes_desk_draw_dial, arrival 1 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        ((99500, 123790), None, None, (0, 0, 0)),
+    "aes_desk_draw_dial, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)":
+        ((97584, 121756), None, None, (0, 0, 0)),
+    'aes_desk_show_dial, arrival 0 of file: dragged to the trash, OK':
+        ((102592, 128388), None, None, (0, 0, 0)),
+    "aes_desk_show_dial, arrival 0 of folder: File > New Folder, 'A', Return":
+        ((83952, 106466), None, None, (0, 0, 0)),
+    'aes_desk_show_dial, arrival 0 of folder: the file dragged onto it, Return':
+        ((101056, 126632), None, None, (0, 0, 0)),
+    'aes_desk_draw_fld, arrival 0 of file: dragged to the trash, OK':
+        ((29836, 40606), None, None, (0, 0, 0)),
+    'aes_desk_draw_fld, arrival 0 of folder: dragged to the trash, OK':
+        ((30376, 41274), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN = {
+    'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        {"bench": (827982, 821836), "bench_shipped": (827982, 815918)},
+    'aes_desk_draw_dial, arrival 1 of folder: the file dragged onto it again, Return — the name conflict, Return':
+        {"bench": (813244, 806196), "bench_shipped": (813244, 801606)},
+    "aes_desk_draw_dial, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)":
+        {"bench": (826376, 819444), "bench_shipped": (826376, 814260)},
+    'aes_desk_show_dial, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (807250, 798506), "bench_shipped": (807250, 793970)},
+    "aes_desk_show_dial, arrival 0 of folder: File > New Folder, 'A', Return":
+        {"bench": (637806, 627698), "bench_shipped": (637806, 625900)},
+    'aes_desk_show_dial, arrival 0 of folder: the file dragged onto it, Return':
+        {"bench": (801990, 792942), "bench_shipped": (801990, 788778)},
+    'aes_desk_draw_fld, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (334132, 328412), "bench_shipped": (334132, 326214)},
+    'aes_desk_draw_fld, arrival 0 of folder: dragged to the trash, OK':
+        {"bench": (355868, 350140), "bench_shipped": (355868, 347822)},
+}
+ROWS_MADE = 40                          # the 38 cases at arrivals of the fourteen flipped, and d_dofdel's two
+
+
+def _registered_row(name):
+    return aes_event.SWITCHING_ROWS[name].row
 
 
 def test_every_flipped_routine_of_the_unit_has_a_row_at_an_arrival_and_its_pins_are_the_rows():
     import aes_switching
     entries = {da.entry_of(row.name) if hasattr(row, "door") else row[1] for row in ROWS.values()}      # (a plain row is a tuple)
     assert entries == {da.entry_of(name) for name in FLIPPED} and len(ROWS) == ROWS_MADE
-    switching = {aes_switching.row_name(row) for row in ROWS.values() if hasattr(row, "door")}
-    assert set(DOOR_USERS_PRICED) == switching == set(DOOR_USERS_WHOLE_RUN)
+    switching = [row for row in ROWS.values() if hasattr(row, "door")]
+    door_users = {aes_switching.row_name(row) for row in switching if row.door}
+    assert set(DOOR_USERS_PRICED) == door_users == set(DOOR_USERS_WHOLE_RUN)
+    assert set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == {
+        aes_switching.row_name(row) for row in switching if not row.door}
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES)
+def test_a_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    import aes_switching
+    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*NO_DOOR_PREMISES[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
+def test_a_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    import aes_switching
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES[name])
+    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, NO_DOOR_PRICED[name][3], NO_DOOR_WHOLE_RUN[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED)
+def test_a_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    import aes_switching
+    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*NO_DOOR_PRICED[name]))
 
 
 # THE THUNKS G4'S FLIP LEAVES ENTERED BY NO WALKED CHAIN (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`, group G4's block):
