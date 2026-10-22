@@ -739,7 +739,7 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # bytes BOTH builds store, each its own by nature (ct_mouse's re-show under a menu worked with the mouse shown:
 # contrl[3] is the ROM's stack word and the C's named one). Dropped at Tier 3 by name, held to OUR run's ledger as
 # every drop is; LEFT OUT OF THE COMPANION'S COMPARE TOO — the one place a companion leaves a stored byte out beside
-# a QPB's address — each byte required to be one the ROM's run changed (`_its_own_by_nature`), and the battery that
+# a QPB's address — each byte required to be one the ROM's run stored (`_its_own_by_nature`), and the battery that
 # declares it holds what the C stores there.
 # `the_rom_s_screen_manager`: WHY A ROW WHOSE RUN ENTERS THE SCREEN MANAGER STAYS ON THE ROM'S (`settled`: every other
 # such row is run, on our shore, with the screen manager OURS — `aes_takeover`): a reason, said in the row's battery
@@ -840,13 +840,20 @@ def _replayed(row, staged):
     watch, its memory, its write ledger)`."""
     reference = scheduled(row, staged)
     assert reference.ended == aes_switch.RETURNED, f"{row.name}: the ROM's scheduled run does not return ({reference.ended})"
+    return (reference, *_replay_of(row, staged, reference))
+
+
+def _replay_of(row, staged, reference):
+    """THE REPLAY of `reference`, the ROM's scheduled run of `row` over `staged` — one watched run laying its
+    deliveries at no cost, held to have left the memory the scheduled run left: `(its watch, its memory, its write
+    ledger)`."""
     watch = the_rom_s(switches_of(reference), _entry(row))
     final, writes, _regs = rom_bench.watched_original(make_image(staged), _entry(row), watch)
     rom_bench.vet_the_run_just_made(f"the ROM's replay of {row.name} through its dispatcher")
     watch.vet_ended(f"the ROM's replay of {row.name}")
     assert bytes(final[:addrs.ST_RAM_BYTES]) == bytes(reference.memory[:addrs.ST_RAM_BYTES]), (
         f"{row.name}: the replay that lays the deliveries is not the run that took them")
-    return reference, watch, final, writes
+    return watch, final, writes
 
 
 @derived.kept
@@ -1086,7 +1093,7 @@ def companion(row, at_stops_only=()):
         mask = (1 << answer_bits) - 1
         assert ran.answer & mask == reference.d0 & mask, f"{who}: answers {ran.answer & mask:#x}, the ROM's run {reference.d0 & mask:#x}"
     expected = reference.memory
-    left_out = frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image) | _its_own_by_nature(row, reference)
+    left_out = frozenset(case.STACK_BAND) | _vetted_qpbs(row, made, ran.image) | _its_own_by_nature(row, made.pokes, reference)
     differ = aes_event.differing(ran.image, expected, left_out)
     assert not differ, f"{who}: " + aes_event.describe_differences(who, ran.image, expected, differ)
     if _door_of(row):                   # ...and, the END the ROM's: what each call answered and left, and every dispatch
@@ -1096,13 +1103,20 @@ def companion(row, at_stops_only=()):
                         tuple(reference.entered))
 
 
-def _its_own_by_nature(row, reference):
+def _its_own_by_nature(row, staged, reference):
     """The bytes a row names as its own by nature (`SwitchingRow.also_dropped`) — each REQUIRED to be one the ROM's
-    run left changed: a drop over a byte the run never touched excuses a store of the C's alone."""
+    run STORED, read off the write ledger of its replay over `staged` (`_replay_of`): a drop over a byte the run never
+    stores excuses a store of the C's alone. A store of the value the byte already held is the ROM's store all the
+    same (the orchestrator's ruling at band 6 slice F3 stage 2's third fix pass: the BIOS door's park, `$fe1bb2` over
+    the viewer's `$fed7de`, stores `$95af`'s `$fe` again) — so the census asks the ledger, never whether the value
+    changed."""
     named = frozenset(at for lo, hi, _why in row.also_dropped for at in range(lo, hi))
-    untouched = sorted(at for at in named if reference.memory[at] == reference.started[at])
-    assert not untouched, (
-        f"{row_name(row)}: named by nature, and left as it was by the ROM's run: {[f'{at:#x}' for at in untouched]}")
+    if not named:
+        return named
+    _watch, _final, writes = _replay_of(row, staged, reference)
+    unstored = sorted(at for at in named if at not in writes)
+    assert not unstored, (
+        f"{row_name(row)}: named by nature, and never stored by the ROM's run: {[f'{at:#x}' for at in unstored]}")
     return named
 
 

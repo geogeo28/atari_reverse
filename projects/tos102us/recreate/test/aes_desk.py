@@ -1101,6 +1101,24 @@ CHAINS.update({
                             (OPEN_A_DRIVE, addrs.AES_ROM_PN_ACTIVE, addrs.AES_ROM_CART_SFIRST, addrs.AES_ROM_CART_SNEXT)),
 })
 # ---- end of slice F3's fix pass ----
+# ---- band 6 slice F3 stage 2's fix pass: A FOLDER'S ACTS IN A WINDOW THE DESK RESTORED AFTER A SHOW (reviewer B's probe) ----
+# The file viewer's BIOS calls go through trp13's door and leave ITS return in AES_BIOS_RETURN; the desk restarted after
+# the show re-opens its windows through cnx_get, which runs no drive_check. So the first folder act in a restored window —
+# the folder opened (do_fopen), its window closed up a level (fun_close -> close_folder -> do_fopen) — arrives with
+# AES_BIOS_RETURN NOT drive_check's own park, which every chain above holds there (an earlier drive_check left it). Each
+# chain shows its file in its own steps, so the viewer's stops are its own.
+THE_INSIDE_FILE = "INSIDE.TXT"          # the folder AUTO's one file
+SHOWN_THEN_FOLDER_OPENED = "files: the long file shown, then the folder AUTO double-clicked in the restored window"
+SHOWN_THEN_FOLDER_CLOSED = "files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window"
+CHAINS.update({
+    SHOWN_THEN_FOLDER_OPENED: Chain("files: A: opened", (*LONG_FILE_SHOWN, *double_clicked("the folder's icon", icon(THE_FOLDER))),
+                                    (OPEN_SELECTION, SHOW_FILE, OPEN_A_FOLDER)),
+    SHOWN_THEN_FOLDER_CLOSED: Chain(
+        SHOWN_THEN_FOLDER_OPENED, (*clicked("the inside file's icon", icon(THE_INSIDE_FILE)), *item("File", "Open"),
+                                   *shown((VIEWER_AT_THE_FILE_S_END,)), *item("File", "Close")),
+        (OPEN_SELECTION, SHOW_FILE, CLOSE_TO_THE_PARENT, OPEN_A_FOLDER)),
+})
+# ---- end of slice F3 stage 2's fix pass ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK

@@ -98,6 +98,8 @@ import test_desk_act                                       # noqa: E402  (unit B
 # ---- band 6 slice F3, stage 2, author A: its batteries whose door users' rows are pinned there ----
 # ---- end of stage 2 A's ----
 # ---- band 6 slice F3, stage 2, author B: its batteries whose door users' rows are pinned there ----
+import test_desk_supp                                      # noqa: E402  (unit J: its seven's door users, over the replay)
+import test_desk_top                                       # noqa: E402  (unit K: cnx_get's door users, over the replay)
 # ---- end of stage 2 B's ----
 # ---- band 6 slice F3, stage 3: its batteries whose door users' rows are pinned there ----
 # ---- end of stage 3's ----
@@ -3406,8 +3408,10 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     BESIDE THE STACK, as a direct row's: exactly the QPB addresses the vet answered in this run, each dropped by the
     row by name (a wait on a pipe that blocked and was woken, or was cancelled: `_the_qpb_vets_answered`) — AND THE
     BYTES THE ROW DECLARES ITS OWN BY NATURE (`aes_switching.SwitchingRow.also_dropped`: bytes both builds store,
-    each its own — ct_mouse's missing argument under a menu, in three priced rows and one case at Tier 1 only; each required changed by the ROM's run,
-    `aes_switching._its_own_by_nature`, and held where it is declared, `test_aes_gemctrl.py`), exactly those."""
+    each its own — named by 16 registered rows: ct_mouse's missing argument under a menu (hctl_rect's three, and one
+    case at Tier 1 only), the XBIOS door's park (app_blddesk's four) and the BIOS door's park (drive_check's three,
+    do_dopen's two, do_fopen's two, close_folder's and fun_close's folder arm); each required stored by the ROM's run,
+    `aes_switching._its_own_by_nature`, and held where it is declared), exactly those."""
     left_out, differing = [], aes_event.differing
 
     def recorded(image, rom_memory, not_compared=None):
@@ -3565,9 +3569,18 @@ for _battery in (test_desk_view, test_desk_win, test_desk_act):
     DOOR_USERS_PRICED.update(_battery.DOOR_USERS_PRICED_WAVE_2)
     DOOR_USERS_WHOLE_RUN.update(_battery.DOOR_USERS_WHOLE_RUN_WAVE_2)
 # ---- end of stage 1 B's ----
-# ---- band 6 slice F3, stage 2, author A ----
+# ---- band 6 slice F3, stage 2, author A ---- (unit H's drivers' door users — fun_rebld, fun_mkdir, fun_op —,
+# `test_desk_fun.py`, read above, holds them apart from its wave-1b rows)
+DOOR_USERS_PRICED.update(test_desk_fun.DRIVER_DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_fun.DRIVER_DOOR_USERS_WHOLE_RUN)
 # ---- end of stage 2 A's ----
-# ---- band 6 slice F3, stage 2, author B ----
+# ---- band 6 slice F3, stage 2, author B ---- (unit J's door users, `test_desk_supp.py`'s `*_WAVE_2` dicts; do_wopen's
+# new windows, `test_desk_win.py`'s `*_STAGE_2`; cnx_get's, `test_desk_top.py`'s `*_WAVE_2`)
+for _pinned in ((test_desk_supp.DOOR_USERS_PRICED_WAVE_2, test_desk_supp.DOOR_USERS_WHOLE_RUN_WAVE_2),
+                (test_desk_win.DOOR_USERS_PRICED_STAGE_2, test_desk_win.DOOR_USERS_WHOLE_RUN_STAGE_2),
+                (test_desk_top.DOOR_USERS_PRICED_WAVE_2, test_desk_top.DOOR_USERS_WHOLE_RUN_WAVE_2)):
+    DOOR_USERS_PRICED.update(_pinned[0])
+    DOOR_USERS_WHOLE_RUN.update(_pinned[1])
 # ---- end of stage 2 B's ----
 # ---- band 6 slice F3, stage 3 ----
 # ---- end of stage 3's ----

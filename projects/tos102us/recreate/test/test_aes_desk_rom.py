@@ -425,6 +425,9 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 slice F3's fix pass (the cartridge's line a drive: a labelled class of disk) ----
     "band 6 slice F3's fix pass": (1, 1),  # drive 'c' opened on the labelled class's machine (`aes_desk.CARTRIDGE_OPENED`)
     # ---- end of slice F3's fix pass ----
+    # ---- band 6 slice F3 stage 2's fix pass (a folder's acts in a window restored after a show) ----
+    "band 6 slice F3 stage 2's fix pass": (2, 18),     # the long file shown, AUTO opened; INSIDE.TXT shown, File > Close
+    # ---- end of slice F3 stage 2's fix pass ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -535,6 +538,9 @@ REACHED_BY_BLOCK = {
     # ---- band 6 slice F3's fix pass ----
     "band 6 slice F3's fix pass": 2,       # $fed522 cart_sfirst, $fed534 cart_snext (pn_active's cartridge arm, drive 'c')
     # ---- end of slice F3's fix pass ----
+    # ---- band 6 slice F3 stage 2's fix pass ----
+    "band 6 slice F3 stage 2's fix pass": 0,
+    # ---- end of slice F3 stage 2's fix pass ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 
@@ -552,8 +558,9 @@ def test_the_reach_table_has_a_row_for_every_routine_and_is_read_off_each_chain_
     assert set(table[desk.SHOW_FILE]) == {THE_SHOW, "files: the long file shown, a blank at each page's end and at its end",
                                           *(chain for chain in desk.CHAINS if chain.endswith(("then the long file shown",
                                                                                               "then the long file's line shown"))),
-                                          desk.SHOWN_AGAIN}     # (band 6 wave 4's fix pass: the INF shown again)
-    assert len(table[desk.SHOW_FILE]) == 6
+                                          desk.SHOWN_AGAIN,     # (band 6 wave 4's fix pass: the INF shown again)
+                                          desk.SHOWN_THEN_FOLDER_OPENED, desk.SHOWN_THEN_FOLDER_CLOSED}   # (F3 stage 2's fix pass)
+    assert len(table[desk.SHOW_FILE]) == 8
     for name in ("A: opened", THE_SHOW):
         assert {routine for routine, chains in table.items() if name in chains} == desk.entered(name)
     assert desk.reach(("A: opened",))[desk.MAKE_FOLDER] == ()

@@ -340,8 +340,8 @@ def test_the_table_s_entries_are_the_flipped_routines_thunks_and_the_held_ones_t
 #     trp14's `.S` through the shipped blob's glue, whose `jsr` parks THE GLUE'S return there where the ROM's door parks
 #     its caller's; no ROM instruction but trp14's own two reads it (`test_aes_lineftable.py`,
 #     `test_the_xbios_door_s_parked_return_is_named_by_trp14_alone`). Its three low bytes: the high byte is 0 on both
-#     shores, an address under 16 MB, which the ROM's run never changes — a name over it is refused
-#     (`aes_switching._its_own_by_nature`).
+#     shores, an address under 16 MB — equal, so compared, never named (each named byte must be one the ROM's run
+#     stores: `aes_switching._its_own_by_nature`).
 X_FLAG_DIFFERS = frozenset((APP_TRAN, APP_RDICON))
 XBIOS_DOOR_PARKED = ((aes.AES_XBIOS_RETURN + 1, aes.AES_XBIOS_RETURN + aes.LONG_BYTES,
                       "AES_XBIOS_RETURN: the shipped glue parks its own return, the ROM's door its caller's — read by trp14 alone"),)
@@ -665,14 +665,12 @@ def test_app_start_s_answer_is_read_by_deskmain():
     assert db.answer_readers(da.entry_of(APP_START))
 
 
-# ---- FLIPPED (band 6 slice F3, stage 1): app_start; app_save HELD, UNBOUND --------------------------------------------------
-def test_app_start_is_flipped_and_app_save_held_unbound(blob):
-    """THE FLIP PIN of app_start (`aes_deskarrive.flipped`) and THE UNBOUND PIN of app_save (`aes_deskarrive.unbound`: its
-    entry the ROM's, no registry row, no function outside the unbound desk refers to a held core) — held to stage 2
-    (`aes_deskapp.UNIT_A_WAVE_2_HELD_AT_F3`)."""
+# ---- FLIPPED (band 6 slice F3): app_start at stage 1, app_save at stage 2 --------------------------------------------------
+def test_the_unit_s_wave_2_is_flipped(blob):
+    """THE FLIP PIN of app_start and app_save (`aes_deskarrive.flipped`); none held (`aes_deskapp.UNIT_A_WAVE_2_HELD_AT_F3`)."""
     import aes_deskarrive as dar
+    assert not da.UNIT_A_WAVE_2_HELD_AT_F3
     dar.flipped(blob, da.UNIT_A_WAVE_2_FLIPPED)
-    dar.unbound(blob, da.UNIT_A_WAVE_2_HELD_AT_F3)
 
 
 # ---- band 6 slice F3: app_start's ROWS — every arrival registered, A ROW THAT SWITCHES (`aes_deskapp.register_switching`),
@@ -858,6 +856,80 @@ def test_app_save__an_argument_class(which):
     answers = answers_of(arrived) if answers_of else ()
     save_case(arrived, answers, *(layer(arrived) for layer in layers), at_idle=at_idle)
 
+
+# ---- band 6 slice F3, stage 2: app_save's ROWS — every arrival registered, A ROW THAT SWITCHES
+# (`aes_deskapp.register_switching`): Save Desktop's to disk over THIS UNIT'S recording trap (13 entries; its twelve calls
+# outrun band 5's 11 — ruling (c): the wave's own staging, no wider ledger) scripted with the ROM's run in place's answers
+# and the created handle's record laid open as that run left it (`SCRIPTED`, said in the row's name); deskmain's own calls
+# (no trap) over the arrival's megabyte alone. The classes stay Tier 1's.
+SAVE_SCRIPTED = f"{da.SCRIPTED}; the created handle's record the run's"
+
+
+def _save_row(chain):
+    """...a row with no door and no X flag (MEASURED: neither its second count nor its blob differential at `$8995` asks one)."""
+    arrived, staged = da.arrival(APP_SAVE, chain), {}
+    if SAVE_ARRIVALS[chain]:
+        opened = {}
+        answers, _back = da.dos_answers_in_place(arrived, SAVE_ARRIVALS[chain], opened)
+        staged = {"layers": (da.GEMDOS.pokes(answers), opened), "said": SAVE_SCRIPTED}
+    return da.register_switching(arrived, door_user=False, **staged)
+
+
+SAVE_ROWS = {chain: _save_row(chain) for chain in SAVE_ARRIVALS}
+SAVE_NO_DOOR_PREMISES = {
+    "aes_app_save, arrival 0 of Options > Save Desktop, Return; GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers; the created handle's record the run's":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_app_save, arrival 0 of file: shown, a key at its end":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_app_save, arrival 0 of files: the long file shown, a blank at each page's end and at its end":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_app_save, arrival 0 of files: the program double-clicked — launched":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+}
+SAVE_NO_DOOR_PRICED = {
+    "aes_app_save, arrival 0 of Options > Save Desktop, Return; GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers; the created handle's record the run's":
+        ((134128, 222614), None, None, (0, 0, 0)),
+    "aes_app_save, arrival 0 of file: shown, a key at its end":
+        ((129338, 215350), None, None, (0, 0, 0)),
+    "aes_app_save, arrival 0 of files: the long file shown, a blank at each page's end and at its end":
+        ((129338, 215350), None, None, (0, 0, 0)),
+    "aes_app_save, arrival 0 of files: the program double-clicked — launched":
+        ((129338, 215350), None, None, (0, 0, 0)),
+}
+SAVE_NO_DOOR_WHOLE_RUN = {
+    "aes_app_save, arrival 0 of Options > Save Desktop, Return; GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers; the created handle's record the run's":
+        {"bench": (240570, 264140), "bench_shipped": (240570, 153044)},
+    "aes_app_save, arrival 0 of file: shown, a key at its end":
+        {"bench": (228874, 254524), "bench_shipped": (228874, 143730)},
+    "aes_app_save, arrival 0 of files: the long file shown, a blank at each page's end and at its end":
+        {"bench": (228874, 254524), "bench_shipped": (228874, 143730)},
+    "aes_app_save, arrival 0 of files: the program double-clicked — launched":
+        {"bench": (228874, 254524), "bench_shipped": (228874, 143730)},
+}
+
+
+def test_app_save_s_rows_are_its_arrivals_each_a_row_that_switches_with_no_door():
+    """EVERY ARRIVAL A ROW THAT SWITCHES, WITH NO DOOR (MEASURED, the table's second count: no call of a rebound entry),
+    no X flag (MEASURED: each row's blob differential at `$8995` green undeclared), pinned here."""
+    import aes_switching
+    assert all(row.door is None and not row.x_flag_differs for row in SAVE_ROWS.values()) and len(SAVE_ROWS) == len(SAVE_ARRIVALS)
+    names = {aes_switching.row_name(row) for row in SAVE_ROWS.values()}
+    assert names == set(SAVE_NO_DOOR_PREMISES) == set(SAVE_NO_DOOR_PRICED) == set(SAVE_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", SAVE_NO_DOOR_PREMISES)
+def test_app_save_s_row_has_its_premise_on_the_rom_s_run(name):
+    da.vet_the_premise(name, SAVE_NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", SAVE_NO_DOOR_WHOLE_RUN)
+def test_app_save_s_row_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    da.vet_on_a_blob(blob, name, SAVE_NO_DOOR_PREMISES, SAVE_NO_DOOR_PRICED, SAVE_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", SAVE_NO_DOOR_PRICED)
+def test_app_save_s_row_is_priced_as_pinned_and_under_the_bar(name):
+    da.vet_the_price(name, SAVE_NO_DOOR_PRICED)
 
 def test_no_caller_reads_what_app_save_leaves_in_d0():
     """app_save answers nothing in C: the ROM's D0 there (shel_put's, the path's, d_errmsg's 1, fun_rebld's) is read by

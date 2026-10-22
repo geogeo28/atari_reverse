@@ -196,8 +196,10 @@ BAND_6_FLIPPED_AT_F3 = {
     "S1B": 11,              # unit L's wave-2 five, unit B's wave-2 three, desk_clear, desk_verify, app_start
     # ---- end of stage 1 B's ----
     # ---- band 6 slice F3, stage 2, author A ----
+    "S2-A": 10,             # unit H's nine but fun_d2desk, fun_drag (stage 3); app_save
     # ---- end of stage 2 A's ----
     # ---- band 6 slice F3, stage 2, author B ----
+    "S2B": 10,              # unit J's seven, pro_run, do_wopen, cnx_get
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
@@ -319,9 +321,50 @@ NOT_ENTERED_ON_OUR_SHORE = {
     "AES_ROM_PN_SORT": "its every ROM caller flipped (the last at band 6 slice F3, stage 1: pn_active, win_srtall): called by "
                        "our C alone on our shore",
     # ---- end of stage 1 B's ----
-    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- band 6 slice F3, stage 2, author A ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 2 (author A):
+    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
+    # MEASURED by who-ran, which named exactly these) — and fun_msg, whose third ROM caller, unit N's desk_util_error (held,
+    # wave 4), is on no walked chain
+    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2: {callers}): called by our C alone on our shore"
+       for name, callers in {
+           "AES_ROM_APP_GETFH": "app_start, app_save", "AES_ROM_APP_PATH_RESTORE": "app_save", "AES_ROM_APP_PATH_SAVE": "app_save",
+           "AES_ROM_APP_REVIT": "app_save", "AES_ROM_SAVE_STR": "app_save", "AES_ROM_DOS_WRITE": "app_save",
+           "AES_ROM_DESK_SHEL_GET": "app_start, app_save", "AES_ROM_DESK_SHEL_PUT": "app_save",
+           "AES_ROM_DESK_ADD_FNAME": "d_dofcopy, d_doop, dir_op, fun_mkdir", "AES_ROM_DESK_DEL_FNAME": "d_dofcopy, d_doop, dir_op, fun_mkdir",
+           "AES_ROM_DESK_HIDE_DIAL": "dir_op, fun_mkdir", "AES_ROM_DESK_SHOW_DIAL": "do_namecon, dir_op, fun_mkdir",
+           "AES_ROM_DOS_MKDIR": "d_doop, dir_op, fun_mkdir", "AES_ROM_DESK_DIR_OP": "fun_op", "AES_ROM_DESK_PAR_CHK": "fun_op",
+           "AES_ROM_WIN_ITH": "fun_rebld, cnx_put, win_shwall",
+           "AES_ROM_DESK_FUN_OP": "fun_ddst, fun_wdst", "AES_ROM_DESK_FUN_DDST": "fun_win2desk, fun_disk",
+           "AES_ROM_DESK_FUN_WDST": "fun_win2win, fun_disk", "AES_ROM_DESK_FUN_DISK": "fun_desk2win"}.items()},
+    "AES_ROM_DESK_FUN_MSG": "its every ROM caller on a walked chain flipped (the last at band 6 slice F3, stage 2: fun_rebld; "
+                            "win_shwall before it): unit N's desk_util_error, held, is on no walked chain",
     # ---- end of stage 2 A's ----
-    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- band 6 slice F3, stage 2, author B ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 2 (author B):
+    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
+    # MEASURED by who-ran, which named exactly these)
+    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2: {callers}): called by our C alone on our shore"
+       for name, callers in {
+           "AES_ROM_ACT_CHG": "do_wopen", "AES_ROM_CLOSE_FOLDER": "fun_close", "AES_ROM_CLOSE_WINDOW": "fun_close",
+           "AES_ROM_DESK_GRAF_GROWBOX": "do_wopen", "AES_ROM_DESK_WIND_OPEN": "do_wopen", "AES_ROM_DO_WOPEN": "do_diropen, pro_run",
+           "AES_ROM_PRO_EXEC": "pro_run", "AES_ROM_WIN_INAME": "desk_do_format", "AES_ROM_WIN_SNAME": "do_diropen",
+           "AES_ROM_ZOOM_CLOSED": "close_folder, close_window"}.items()},
+    "AES_ROM_WIN_FREE": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: close_window, cnx_get, do_dopen): "
+                        "called by our C alone on our shore",
+    "AES_ROM_DESK_EVNT_DCLICK": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: cnx_get): called by our C "
+                                "alone on our shore",
+    "AES_ROM_WIN_ALLOC": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: cnx_get, do_dopen): called by our "
+                         "C alone on our shore",
+    # ...and STAGE 2 WHOLE's (the merge's, who-ran's on the tree of both stage-2 authors — the pn_sort class): ROM callers
+    # flipped one or more by each author
+    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2, by both authors: {callers}): called by our C "
+             "alone on our shore"
+       for name, callers in {
+           "AES_ROM_DO_DIROPEN": "fun_ddst; cnx_get, do_dopen, do_fopen", "AES_ROM_PN_ACTIVE": "fun_rebld, fun_disk; do_diropen",
+           "AES_ROM_PN_CLOSE": "fun_disk; do_fopen, close_window", "AES_ROM_PN_OPEN": "fun_disk; do_diropen",
+           "AES_ROM_WIN_SINFO": "fun_rebld; do_diropen"}.items()},
+    # ...and one whose last ROM caller is held but never reaches the call on a walked chain (who-ran's): win_top's at `$fe2344`
+    "AES_ROM_WIN_TOP": "its ROM callers flipped (the last at band 6 slice F3, stage 2: do_diropen) but the one at $fe2344, whose "
+                       "walked runs never reach its call: called by our C alone on our shore",
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
@@ -408,7 +451,7 @@ THE_ROM_S_PD0 = {"folder: File > Close": 1398, "folder: opened": 1410, "file: Fi
                  "A: File > Open": 1460, "A: opened": 1446, "two windows: File > Close Window (one left on top)": 1364,
                  desk.FORMAT_UP: 1218, desk.FORMATTED: 816, "A: File > Format, OK, EXIT clicked": 886, desk.COPY_UP: 1212,
                  "file: shown, a key at its end": 1438}
-DEEPEST_PD0 = ("folder: File > Close", 1534)     # (1,504 before units O and D flipped: band 6 slice F1)
+DEEPEST_PD0 = ("A: File > Open", 1536)     # (1,504 before units O and D flipped: band 6 slice F1)
 
 
 def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_gate():
@@ -691,41 +734,41 @@ DEPTHS = {
     'A: Options > Install Disk Drive, Return': (1206, 668, 254, 0),
     'A: Options > Install Disk Drive, Remove pressed': (1206, 668, 254, 0),
     "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1206, 668, 254, 0),
-    'A: File > Open': (1532, 668, 254, 0),
-    'A: File > Format, Return (the warning answered)': (1054, 668, 254, 0),
+    'A: File > Open': (1536, 668, 254, 0),
+    'A: File > Format, Return (the warning answered)': (1066, 668, 254, 0),
     'drive A: dragged to the trash, Return': (1400, 0, 254, 0),
     'a rubber box on the desktop, round the trash': (1280, 0, 254, 0),
-    'A: opened': (1518, 0, 254, 0),
+    'A: opened': (1522, 0, 254, 0),
     'window: View > Show as Text': (1132, 750, 254, 486),
     'window: View > Sort by Size': (1132, 750, 254, 0),
-    'window: File > Close Window': (1414, 668, 254, 0),
-    'window: its closer clicked': (1382, 520, 260, 0),
+    'window: File > Close Window': (1454, 668, 254, 0),
+    'window: its closer clicked': (1422, 520, 260, 0),
     'window: its fuller clicked': (1180, 520, 260, 0),
-    'window: A: opened again (two windows)': (1518, 0, 260, 0),
+    'window: A: opened again (two windows)': (1522, 0, 260, 0),
     'file: selected': (1144, 0, 254, 0),
     'file: File > Show Info, Return': (1428, 668, 254, 0),
     "file: File > Show Info, Backspace, 'A', Return (renamed)": (1428, 668, 254, 0),
     'file: File > Show Info, Read-Only pressed, Return': (1428, 668, 254, 0),
     'file: read-only, dragged to the trash, OK — access denied, Return': (1400, 0, 254, 0),
     'file: File > Open (the Show / Print / Cancel alert)': (1274, 668, 254, 0),
-    'file: shown, a key at its end': (1522, 308, 240, 0),
+    'file: shown, a key at its end': (1536, 308, 240, 0),
     'file: double-clicked (the alert)': (1260, 0, 254, 0),
     "file: dragged to the trash, Return (Cancel, the dialog's default)": (1400, 0, 254, 0),
     'file: dragged to the trash, OK': (1400, 0, 254, 0),
-    "folder: File > New Folder, 'A', Return": (1304, 668, 254, 0),
-    'folder: the file dragged onto it, Return': (1400, 0, 254, 0),
-    'folder: opened': (1494, 0, 254, 0),
-    'folder: File > Close': (1534, 668, 254, 0),
+    "folder: File > New Folder, 'A', Return": (1350, 668, 254, 0),
+    'folder: the file dragged onto it, Return': (1430, 0, 254, 0),
+    'folder: opened': (1514, 0, 254, 0),
+    'folder: File > Close': (1494, 668, 254, 0),
     'folder: selected, File > Show Info, Return': (1464, 668, 254, 0),
     'folder: dragged to the trash, OK': (1400, 0, 254, 0),
-    'text view: A: opened': (1518, 0, 254, 486),
-    'text view: Options > Save Desktop, Return': (1286, 668, 254, 486),
-    'files: A: opened': (1518, 0, 254, 0),
+    'text view: A: opened': (1522, 0, 254, 486),
+    'text view: Options > Save Desktop, Return': (1280, 668, 254, 486),
+    'files: A: opened': (1522, 0, 254, 0),
     "files: the window's down arrow clicked": (658, 706, 260, 0),
     "files: the window's vertical bar clicked under its slider (a page)": (658, 706, 260, 0),
     "files: the window's right arrow clicked": (1152, 404, 260, 0),
-    "files: the long file shown, a blank at each page's end and at its end": (1522, 668, 254, 0),
-    'files: the long file dragged onto the folder, Return': (1400, 0, 254, 0),
+    "files: the long file shown, a blank at each page's end and at its end": (1536, 668, 254, 0),
+    'files: the long file dragged onto the folder, Return': (1430, 0, 254, 0),
     'files: the folder (not empty) dragged to the trash, OK': (1400, 0, 254, 0),
     'files: the window made full': (1180, 520, 260, 0),
     'files: the program selected, File > Show Info, Return': (1428, 668, 254, 0),
@@ -735,34 +778,34 @@ DEPTHS = {
     'files: the right arrow clicked, then the window made full': (1180, 520, 260, 0),
     'files: the right arrow clicked, then View > Sort by Size': (1132, 750, 254, 0),
     'window: View > Show as Icons (the view it has)': (1132, 750, 254, 0),
-    'window: Options > Save Desktop, Return': (1286, 668, 254, 0),
-    'files: the right arrow clicked, then Options > Save Desktop, Return': (1286, 668, 254, 0),
+    'window: Options > Save Desktop, Return': (1280, 668, 254, 0),
+    'files: the right arrow clicked, then Options > Save Desktop, Return': (1280, 668, 254, 0),
     'a rubber box on the desktop, round drive B: and the trash': (1280, 0, 254, 0),
     'drive A: dragged to a bare spot of the desktop': (1268, 0, 254, 0),
     "drive A:'s object clicked at its corner, outside its image and its label": (658, 0, 254, 0),
     'files: View > Sort by Size': (1132, 750, 254, 0),
     'files: View > Sort by Date': (1132, 750, 254, 0),
     'files: View > Sort by Type': (1132, 750, 254, 0),
-    'folder: the file dragged onto it again, Return — the name conflict, Return': (1400, 0, 254, 0),
+    'folder: the file dragged onto it again, Return — the name conflict, Return': (1430, 0, 254, 0),
     "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1400, 0, 254, 0),
-    'folders: B dragged onto A, Return': (1400, 0, 254, 0),
+    'folders: B dragged onto A, Return': (1430, 0, 254, 0),
     'folders: A (holding B) dragged to the trash, OK': (1400, 0, 254, 0),
     'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1198, 668, 254, 0),
-    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1400, 0, 254, 0),
+    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1430, 0, 254, 0),
     "files: View > Show as Text, the long file's line clicked": (996, 0, 254, 486),
     'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1198, 668, 254, 0),
     'folder: deletes unconfirmed — the file dragged to the trash': (1400, 0, 254, 0),
     'folder: deletes unconfirmed — the folder dragged to the trash': (1400, 0, 254, 0),
     "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1400, 0, 254, 0),
     'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1452, 668, 260, 0),
-    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1400, 668, 254, 0),
-    'A: opened, drive A: dragged into its window, Return': (1348, 0, 260, 0),
+    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1430, 668, 254, 0),
+    'A: opened, drive A: dragged into its window, Return': (1388, 0, 260, 0),
     'A: opened, the trash dragged into its window, Return': (1150, 0, 260, 0),
     'drive A: dragged onto drive B:, Return': (1400, 0, 254, 0),
     'the trash dragged onto drive A:, Return': (1400, 0, 254, 0),
     "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1400, 0, 254, 0),
-    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1218, 668, 254, 0),
-    'file: dragged to the trash, OK — then drive A: dragged into its window': (1294, 0, 260, 0),
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1226, 668, 254, 0),
+    'file: dragged to the trash, OK — then drive A: dragged into its window': (1328, 0, 260, 0),
     'files: the right arrow clicked, then the left arrow clicked': (1152, 404, 260, 0),
     "files: the window's sizer pulled up and left (smaller)": (1114, 650, 260, 0),
     'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1152, 404, 260, 0),
@@ -770,29 +813,31 @@ DEPTHS = {
     "files: the window's down arrow gadget itself clicked (a row)": (658, 404, 260, 0),
     "files: the window's up arrow gadget clicked (a row)": (658, 404, 260, 0),
     "files: the window's horizontal slider dragged right": (1188, 706, 260, 0),
-    'window: Esc typed (the top window read again)': (1124, 0, 240, 0),
-    'two windows: File > Close Window (one left on top)': (1418, 668, 254, 0),
+    'window: Esc typed (the top window read again)': (1170, 0, 240, 0),
+    'two windows: File > Close Window (one left on top)': (1458, 668, 254, 0),
     'files: the window sized smaller, then its right arrow clicked': (1152, 404, 260, 0),
-    'files: the right arrow clicked, then the long file shown': (1522, 668, 254, 0),
-    'files: View > Sort by Size, then the long file shown': (1522, 668, 254, 0),
-    "files: View > Show as Text, then the long file's line shown": (1370, 668, 254, 486),
-    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1304, 668, 254, 0),
+    'files: the right arrow clicked, then the long file shown': (1536, 668, 254, 0),
+    'files: View > Sort by Size, then the long file shown': (1536, 668, 254, 0),
+    "files: View > Show as Text, then the long file's line shown": (1384, 668, 254, 486),
+    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1350, 668, 254, 0),
     'two windows: View > Show as Text': (1132, 750, 254, 486),
     'files: a fifth entry, then the down arrow gadget clicked (a row)': (658, 404, 260, 0),
     "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1400, 0, 254, 486),
     'text view: drive A: dragged to a bare spot of the desktop': (1268, 0, 254, 0),
-    "A: File > Format, the warning's OK (the FORMAT dialog)": (1302, 668, 254, 0),
+    "A: File > Format, the warning's OK (the FORMAT dialog)": (1314, 668, 254, 0),
     'A: File > Format, OK, EXIT clicked': (956, 308, 254, 0),
     'A: File > Format, OK, FORMAT clicked (formatted)': (880, 0, 254, 0),
     "A: formatted, the alert's OK, EXIT clicked": (956, 308, 254, 0),
     "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1400, 308, 254, 0),
     'drive A: onto drive B:, OK, then Return (EXIT, the default)': (956, 308, 240, 0),
-    'file: File > Open, Print clicked (the printer not ready)': (1522, 308, 254, 0),
-    'file: the printer not ready, Cancel': (1234, 308, 254, 0),
+    'file: File > Open, Print clicked (the printer not ready)': (1536, 308, 254, 0),
+    'file: the printer not ready, Cancel': (1268, 308, 254, 0),
     'file: the printer not ready, Retry (not ready again)': (822, 0, 254, 0),
-    'file: the printer not ready, five seconds, Retry (printed)': (1234, 308, 254, 0),
-    'file: File > Open, five seconds, Print clicked (printed)': (1522, 308, 254, 0),
-    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1522, 668, 254, 0),
+    'file: the printer not ready, five seconds, Retry (printed)': (1268, 308, 254, 0),
+    'file: File > Open, five seconds, Print clicked (printed)': (1536, 308, 254, 0),
+    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1536, 668, 254, 0),
     'a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)': (1400, 308, 254, 0),
-    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1518, 0, 254, 0),
+    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1522, 0, 254, 0),
+    'files: the long file shown, then the folder AUTO double-clicked in the restored window': (1536, 668, 254, 0),
+    'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1536, 668, 254, 0),
 }

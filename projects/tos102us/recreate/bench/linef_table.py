@@ -178,28 +178,25 @@ LINKED_AND_NOT_FLIPPED = {}
 # ---- band 6 wave 2, group G2 (units H `src/desk/deskfun.c`, G `deskfpd.c`, M `deskutil.c`) ----
 # (unit G's pn_close and pn_active FLIPPED at band 6 slice F3, stage 1)                                         # F3 S1-A
 _UNIT_H = "unit H: an operation's driver, held at Tier 1 at its arrivals"
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_FUN_{routine}": _UNIT_H                                            # F3 S2-A
-                               for routine in ("REBLD", "MKDIR", "OP", "DDST", "WDST", "WIN2WIN", "WIN2DESK", "DISK", "DESK2WIN")})
+# (unit H's nine — fun_rebld, fun_mkdir, fun_op, fun_ddst, fun_wdst, fun_win2win, fun_win2desk, fun_disk,   # F3 S2-A
+# fun_desk2win — FLIPPED at band 6 slice F3, stage 2)                                                          # F3 S2-A
 LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_FUN_{routine}": _UNIT_H for routine in ("D2DESK", "DRAG")})      # F3 S3
 # (unit M's cart_sfirst and cart_snext FLIPPED at band 6 slice F3, stage 1)                                    # F3 S1-A
 # ---- end of group G2's wave-2 ----
 # ---- band 6 wave 2, group G3 (units I `src/desk/deskwin.c`, J `desksupp.c`, K `desktop.c`, L `deskview.c`) ----
-_UNIT_I = "unit I: an opener of the desk's windows, held at Tier 1 at its arrivals"
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_PRO_RUN": _UNIT_I})                                                      # F3 S2-B
+# (pro_run FLIPPED at band 6 slice F3, stage 2, with unit J)                                                    # F3 S2-B
 # (desk_clear, desk_verify FLIPPED at band 6 slice F3, stage 1)                                                  # F3 S1-B
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_DO_WOPEN": _UNIT_I})                                                     # F3 S2-B
+# (do_wopen FLIPPED at band 6 slice F3, stage 2, with unit J)                                                   # F3 S2-B
 # (unit L's five — win_blt, win_slide, win_arrow, win_srtall, win_bdall — FLIPPED at band 6 slice F3, stage 1)  # F3 S1-B
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_{routine}": "unit J: an opener or closer of the desk's windows, held at Tier 1 at its arrivals"
-                               for routine in ("DO_DIROPEN", "DO_DOPEN", "DO_FOPEN", "DESK_DO_FORMAT", "CLOSE_WINDOW",
-                                               "CLOSE_FOLDER", "FUN_CLOSE")})                                   # F3 S2-B
+# (unit J's seven — do_diropen, do_dopen, do_fopen, desk_do_format, close_window, close_folder, fun_close — FLIPPED at
+# band 6 slice F3, stage 2)                                                                                     # F3 S2-B
 _UNIT_K = "unit K: a helper of the desk's main loop, held at Tier 1 at its arrivals"
 LINKED_AND_NOT_FLIPPED.update({"AES_ROM_HNDL_KBD": _UNIT_K})                                                     # F3 S3
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_CNX_GET": _UNIT_K})                                                      # F3 S2-B
+# (cnx_get FLIPPED at band 6 slice F3, stage 2)                                                                 # F3 S2-B
 # ---- end of group G3's wave-2 ----
 # ---- band 6 wave 2, group G4 (units A `src/desk/deskapp.c`, B `deskact.c`) ----
-_UNIT_A = "unit A: DESKTOP.INF parsed and written, held at Tier 1 at their arrivals"
 # (app_start FLIPPED at band 6 slice F3, stage 1)                                                               # F3 S1-B
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_APP_SAVE": _UNIT_A})                                                     # F3 S2-A
+# (app_save FLIPPED at band 6 slice F3, stage 2)                                                                # F3 S2-A
 # (unit B's three — gr_drgplns, act_bsclick, act_bdown — FLIPPED at band 6 slice F3, stage 1)                  # F3 S1-B
 # ---- end of group G4's wave-2 ----
 # ---- end of band 6 wave 2's ----

@@ -28,7 +28,7 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
 
 Exits non-zero if the blob is not flipped (step 4), if a walked chain is over the gate, if a chain is refused that is
 not declared (or for another reason than its declaration reads), or if a declared refusal walks. Run from anywhere:
-`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 116 chains (114 walked unflipped, 108
+`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 118 chains (116 walked unflipped, 108
 on the flipped state); a whole run is minutes (~10-15 at `--jobs 6`, build included); the first copy is ~700 MB.
 """
 import argparse
@@ -80,6 +80,11 @@ REFUSED_ON_THE_FLIPPED_STATE = {name: (VIEWER_STOPS_THE_ROM_S, NO_IDLE_REACHED) 
     "file: shown, a key at its end")}
 REFUSED_ON_THE_FLIPPED_STATE["file: shown, a key at its end — the file clicked, File > Open, shown again"] = (
     "N4: walked from 'file: shown, a key at its end', refused before it", NO_IDLE_REACHED)
+# (band 6 slice F3 stage 2's fix pass) the two chains of a folder's acts in a window restored after a show: each shows
+# its file in its own steps, the first the long file
+REFUSED_ON_THE_FLIPPED_STATE.update({name: (VIEWER_STOPS_THE_ROM_S, NO_IDLE_REACHED) for name in (
+    "files: the long file shown, then the folder AUTO double-clicked in the restored window",
+    "files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window")})
 LEDGER_SATURATED = "a step saturated its write ledger: what it stored is not known"
 
 

@@ -105,13 +105,13 @@ def label_of(arrived):
     return f"arrival {arrived.nth} of {arrived.chain!r} at {arrived.name}"
 
 
-def row_of(arrived, label, answered, at_idle=None, at_calls=None, pokes=None):
+def row_of(arrived, label, answered, at_idle=None, at_calls=None, pokes=None, budget=None):
     """THE ROW THAT SWITCHES a case of a routine that yields is (`aes_event.woken_row`, its door bound, its C's tree
     walks served), over the arrival's machine (or `pokes`) — its wait ended by `at_idle` / `at_calls` — its answer
-    compared where `answered`."""
+    compared where `answered`; `budget` its own derivation budget, declared (`aes_event._budget_of`)."""
     pokes = machine_of(arrived) if pokes is None else pokes
     return aes_event.woken_row(label, arrived.name, arrived.arguments, lambda: pokes, at_idle or {}, at_calls, objects=True,
-                               answered=answered)
+                               answered=answered, budget=budget)
 
 
 def held(row):
@@ -220,7 +220,7 @@ def at_arrivals(cases):
 
 
 def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=None, label_said=None, hook=None,
-                 at_idle=None):
+                 at_idle=None, budget=None):
     """THE CASE `each` (at an arrival) REGISTERED: a plain row, or a row that switches — through its door where
     `door` (a door user: its run arrives at an entry of the event layer's door), with no door else; the X flag
     declared where `x_flag_differs`. `pokes`: the row's machine where the case lays a staging over the arrival's (a
@@ -228,15 +228,19 @@ def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=
     the row's label where it says more than the case's (the staging); `hook`: a plain row's companion's (the
     staging's host twins, `run_function`'s); `at_idle`: the wakes of a row that switches where its case's are more
     than WAKES says (`{idle: interrupt}`: the keys its chain typed). A row with no door keeps its routine's declared
-    child doors (`aes_event.CHILD_DOORS`: the staging's twins in its companion's fork). The row."""
+    child doors (`aes_event.CHILD_DOORS`: the staging's twins in its companion's fork). `budget`: a row that switches
+    whose run is past the default derivation margin DECLARES its own (the user's ruling of 2026-10-21, "rows may
+    declare budget": held both ways by every derivation of the row, `aes_event._vet_the_margin` / `_vet_not_stale`);
+    a plain row declares none (refused by name). The row."""
     arrived = arrival_of(each)
     machine = pokes if pokes is not None else row_machine_of(arrived)
     said = label_said or label(each)
     answered = answered and vdi.ALCYON[each.name].restype is not None
     if not each.yields:
+        assert budget is None, f"{said}: a plain row declares no derivation budget"
         return aes.register(said, each.name, arrived.arguments, machine, hook=hook, answer_compared=answered)
     wake = WAKES.get(each.wake, {}) if at_idle is None else {"at_idle": at_idle}
-    row = row_of(arrived, said, answered, pokes=machine, **wake)._replace(x_flag_differs=x_flag_differs)
+    row = row_of(arrived, said, answered, pokes=machine, budget=budget, **wake)._replace(x_flag_differs=x_flag_differs)
     return aes_event.register_woken(row if door else row._replace(door=None, child_doors=row.door.doors))
 
 

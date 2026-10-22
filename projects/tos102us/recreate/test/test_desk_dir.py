@@ -766,11 +766,8 @@ def test_d_doop_an_argument_class_the_walk_s_file_read_only_with_a_time_scripted
 # USER where its run waits at an alert or a dialog (MEASURED: the table's second count, its door calls), one WITH NO DOOR
 # where its yield is objc_draw's alone (measured: no door call — registered as a door user it has no second count). The
 # LAID case and the classes stay Tier 1's.
-# NOT A ROW, by name: dir_op's seven copies (`ENGINE_NOT_A_ROW`) — each run is past the default derivation margin (the
-# registrar refuses it: "raise the budget, from this run"; Tier 1 declares each its own budget), and a registered row
-# declares one only on a session's slice (`test_aes_event`): do_wfull's class, the user's question (AWAITING 24).
-ENGINE_NOT_A_ROW = {engine_label(each): f"its run is past the default derivation margin (Tier 1's budget {each.budget:,})"
-                    for each in ENGINE_CASES if each.budget and not each.laid}
+# dir_op's seven copies, each run past the default derivation margin, DECLARE THEIR OWN BUDGET — Tier 1's, measured
+# (the user's ruling of 2026-10-21, "rows may declare budget"; band 6 slice F3, stage 2: NOT A ROW until then).
 
 
 def engine_row_label(each):
@@ -784,12 +781,12 @@ def _engine_row(each):
     pokes = case.merge_pokes(da.row_machine_of(arrived), cdir.replayed(replay))
     at_idle = {idle: aes_event.key(scancode) for idle, scancode in enumerate(each.wakes)}
     return da.register_row(da.Case(each.name, each.chain, each.nth, yields=each.yields), pokes=pokes,
-                           label_said=engine_row_label(each), hook=cdir.engine_hook, at_idle=at_idle, door=bool(each.wakes))
+                           label_said=engine_row_label(each), hook=cdir.engine_hook, at_idle=at_idle, door=bool(each.wakes),
+                           budget=each.budget)
 
 
-ENGINE_ROWS = {engine_label(each): _engine_row(each) for each in ENGINE_CASES
-               if not each.laid and engine_label(each) not in ENGINE_NOT_A_ROW}
-ENGINE_ROWS_MADE, ENGINE_NOT_ROWS = 23, 7       # of the 30 engine cases at arrivals (the thirty-first is the LAID one)
+ENGINE_ROWS = {engine_label(each): _engine_row(each) for each in ENGINE_CASES if not each.laid}
+ENGINE_ROWS_MADE, ENGINE_BUDGETED = 30, 7       # the 30 engine cases at arrivals (the thirty-first is the LAID one); dir_op's copies
 ENGINE_DOOR_USERS_PRICED = {
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
         ((305330, 408642), (284950, 375540), 5, (0, 0, 0)),
@@ -799,6 +796,20 @@ ENGINE_DOOR_USERS_PRICED = {
         ((480238, 659488), (424362, 571226), 7, (0, 0, 0)),
     "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
         ((469502, 625872), (444014, 583862), 6, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((519710, 697380), (494222, 655370), 6, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 2 key(s) typed at its idles":
+        ((815836, 1093568), (769968, 1018456), 11, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((534708, 719042), (509220, 677032), 6, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((514282, 689022), (488794, 647012), 6, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
+        ((933124, 1271930), (851760, 1141658), 13, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
+        ((977828, 1333686), (896464, 1203414), 13, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 2 of file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((519710, 697380), (494222, 655370), 6, (0, 0, 0)),
 }
 ENGINE_DOOR_USERS_WHOLE_RUN = {
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
@@ -809,6 +820,20 @@ ENGINE_DOOR_USERS_WHOLE_RUN = {
         {"bench": (2592834, 2494104), "bench_shipped": (2592834, 2456264)},
     "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
         {"bench": (3068076, 2971322), "bench_shipped": (3068076, 2965814)},
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (3444594, 3335312), "bench_shipped": (3444594, 3325548)},
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 2 key(s) typed at its idles":
+        {"bench": (5419150, 5260584), "bench_shipped": (5419150, 5230918)},
+    "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (3292882, 3185010), "bench_shipped": (3292882, 3166508)},
+    "aes_desk_dir_op, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (3459812, 3351510), "bench_shipped": (3459812, 3343328)},
+    "aes_desk_dir_op, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
+        {"bench": (5883642, 5678738), "bench_shipped": (5883642, 5642532)},
+    "aes_desk_dir_op, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
+        {"bench": (6228946, 6014544), "bench_shipped": (6228946, 5974464)},
+    "aes_desk_dir_op, arrival 2 of file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (3444594, 3335312), "bench_shipped": (3444594, 3325548)},
 }
 ENGINE_NO_DOOR_PREMISES = {
     "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
@@ -854,12 +879,13 @@ ENGINE_NO_DOOR_WHOLE_RUN = {
 }
 
 
-def test_every_engine_case_at_an_arrival_is_a_row_or_not_a_row_by_name_and_its_pins_are_the_rows():
+def test_every_engine_case_at_an_arrival_is_a_row_and_its_pins_are_the_rows():
     import aes_switching
     at_arrivals = [engine_label(each) for each in ENGINE_CASES if not each.laid]
-    assert sorted(at_arrivals) == sorted([*ENGINE_ROWS, *ENGINE_NOT_A_ROW])
-    assert (len(ENGINE_ROWS), len(ENGINE_NOT_A_ROW)) == (ENGINE_ROWS_MADE, ENGINE_NOT_ROWS)
-    assert {each.name for each in ENGINE_CASES if engine_label(each) in ENGINE_NOT_A_ROW} == {DIR_OP}
+    assert sorted(at_arrivals) == sorted(ENGINE_ROWS)
+    budgeted = {engine_label(each) for each in ENGINE_CASES if each.budget and not each.laid}
+    assert (len(ENGINE_ROWS), len(budgeted)) == (ENGINE_ROWS_MADE, ENGINE_BUDGETED)
+    assert {ENGINE_ROWS[name].name for name in budgeted} == {DIR_OP} and all(ENGINE_ROWS[name].budget for name in budgeted)
     assert {da.entry_of(each.name) for each in ENGINE_CASES if engine_label(each) in ENGINE_ROWS} == {
         da.entry_of(name) for name in cdir.UNIT_C_WAVE_2}
     switching = [row for row in ENGINE_ROWS.values() if hasattr(row, "door")]
@@ -867,6 +893,14 @@ def test_every_engine_case_at_an_arrival_is_a_row_or_not_a_row_by_name_and_its_p
         aes_switching.row_name(row) for row in switching if row.door}
     assert set(ENGINE_NO_DOOR_PREMISES) == set(ENGINE_NO_DOOR_PRICED) == set(ENGINE_NO_DOOR_WHOLE_RUN) == {
         aes_switching.row_name(row) for row in switching if not row.door}
+
+
+def test_an_engine_row_s_declared_budget_is_its_tier_1_case_s_own():
+    """EACH ENGINE ROW DECLARES ITS TIER 1 CASE'S OWN BUDGET (dir_op's seven copies), and none where its case declares
+    none — a plain row has no budget to declare."""
+    at_arrivals = {engine_label(each): each for each in ENGINE_CASES if not each.laid}
+    assert {name: getattr(ENGINE_ROWS[name], "budget", None) for name in at_arrivals} == {
+        name: each.budget for name, each in at_arrivals.items()}
 
 
 @pytest.mark.parametrize("name", ENGINE_NO_DOOR_PREMISES)

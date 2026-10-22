@@ -449,10 +449,53 @@ def test_cnx_get_is_gem_s_void_one_and_no_rom_caller_reads_what_it_leaves():
     assert db.calls_of(da.entry_of("AES_ROM_CNX_GET")) and not db.answer_readers(da.entry_of("AES_ROM_CNX_GET"))
 
 
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit K's wave-2 routines."""
-    assert not db.bound_referrers(blob, dt.UNIT_K_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 2): cnx_get; hndl_kbd HELD, UNBOUND (stage 3) -----------------------------------------
+def test_cnx_get_is_flipped_and_hndl_kbd_held_unbound(blob):
+    """THE FLIP PIN of cnx_get (`aes_deskarrive.flipped`) and THE UNBOUND PIN of hndl_kbd (`aes_deskarrive.unbound`: its
+    entry the ROM's, no registry row, no function outside the unbound desk refers to a held core) — held to stage 3
+    (`aes_desktop.UNIT_K_WAVE_2_HELD_AT_F3`)."""
+    import aes_deskarrive as dar
+    dar.flipped(blob, dt.UNIT_K_WAVE_2_FLIPPED)
+    dar.unbound(blob, dt.UNIT_K_WAVE_2_HELD_AT_F3)
 
 
-def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
-    assert w.verdicts_not_the_rom_s(dt.UNIT_K_WAVE_2) == (set(), [])
+# ---- band 6 slice F3, stage 2: cnx_get's ROWS — every case at an arrival registered as A ROW THAT SWITCHES OVER ITS GEMDOS
+# REPLAYED (`aes_desksupp.registered_row`, the replay its Tier 1 case runs, said in the row's name). Each restart opens the
+# INF's window anew (do_diropen: its path read, its window drawn) — a run past the default derivation margin
+# (440,733–450,410 instructions), so each DECLARES ITS OWN BUDGET, its Tier 1 case's (the user's ruling of 2026-10-21,
+# "rows may declare budget"). DOOR USERS, every one (MEASURED, the table's second count: 16 calls of a rebound entry),
+# pinned in `DOOR_USERS_*_WAVE_2` and read by `test_tier3.py`.
+CNX_GET_AT_ARRIVALS = [name for name, each in BY_LABEL_WAVE_2.items() if each.name == "AES_ROM_CNX_GET"]
+ROWS_WAVE_2 = {name: ds.registered_row(BY_LABEL_WAVE_2[name], replayed=True, door_user=True, budget=BY_LABEL_WAVE_2[name].budget)
+               for name in CNX_GET_AT_ARRIVALS}
+DOOR_USERS_PRICED_WAVE_2 = {
+    "aes_cnx_get, arrival 1 of file: shown, a key at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((928818, 1372278), (920080, 1356202), 16, (0, 0, 0)),
+    "aes_cnx_get, arrival 1 of files: the long file shown, a blank at each page's end and at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((974844, 1438002), (966106, 1421926), 16, (0, 0, 0)),
+    "aes_cnx_get, arrival 1 of files: the right arrow clicked, then the long file shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((966264, 1425218), (957526, 1409142), 16, (0, 0, 0)),
+    "aes_cnx_get, arrival 1 of files: View > Sort by Size, then the long file shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((986796, 1455402), (978058, 1439326), 16, (0, 0, 0)),
+    "aes_cnx_get, arrival 1 of files: View > Show as Text, then the long file's line shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((982864, 1449492), (974126, 1433416), 16, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_WAVE_2 = {
+    "aes_cnx_get, arrival 1 of file: shown, a key at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (5212378, 4869862), "bench_shipped": (5212378, 4872494)},
+    "aes_cnx_get, arrival 1 of files: the long file shown, a blank at each page's end and at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (5309940, 4953660), "bench_shipped": (5309940, 4954178)},
+    "aes_cnx_get, arrival 1 of files: the right arrow clicked, then the long file shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (5290394, 4936888), "bench_shipped": (5290394, 4938192)},
+    "aes_cnx_get, arrival 1 of files: View > Sort by Size, then the long file shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (5340864, 4979250), "bench_shipped": (5340864, 4979930)},
+    "aes_cnx_get, arrival 1 of files: View > Show as Text, then the long file's line shown; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (5344058, 4980236), "bench_shipped": (5344058, 4984854)},
+}
+
+
+def test_every_arrival_of_cnx_get_is_a_door_user_s_row_under_its_case_s_budget():
+    import aes_switching
+    assert all(row.door and row.budget == BY_LABEL_WAVE_2[name].budget for name, row in ROWS_WAVE_2.items())
+    names = {aes_switching.row_name(row) for row in ROWS_WAVE_2.values()}
+    assert names == set(DOOR_USERS_PRICED_WAVE_2) == set(DOOR_USERS_WHOLE_RUN_WAVE_2) and len(names) == 5

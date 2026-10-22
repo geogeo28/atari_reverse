@@ -475,7 +475,238 @@ def test_fun_disk_s_emptied_arrival_finds_no_file():
     assert replay.functions[-1] == fun._dd.FSFIRST and replay.answers[-1] == EFILNF & aes.LONG_MASK
 
 
-def test_the_drivers_are_linked_and_unbound(blob):
-    """UNBOUND (`aes_deskarrive.unbound`): every core linked, nothing of the blob outside the unbound desk refers to a
-    held core, their table entries the ROM's, no registry names one."""
-    da.unbound(blob, fun.UNIT_H_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 2, author A): the drivers but fun_d2desk and fun_drag, HELD UNBOUND to stage 3 ----
+def test_the_drivers_are_flipped_and_two_held_unbound(blob):
+    """THE FLIP PIN of the nine (`aes_deskarrive.flipped`: each core called by its own thunk of the table, its entry
+    ours through it) and THE UNBOUND PIN of fun_d2desk and fun_drag (`aes_deskarrive.unbound`: their entries the ROM's,
+    no registry row, no function outside the unbound desk refers to a held core) — held to stage 3
+    (`aes_deskfun.UNIT_H_WAVE_2_HELD_AT_F3`)."""
+    da.flipped(blob, fun.UNIT_H_WAVE_2_FLIPPED)
+    da.unbound(blob, fun.UNIT_H_WAVE_2_HELD_AT_F3)
+
+
+# ---- band 6 slice F3, stage 2: THE DRIVERS' ROWS -------------------------------------------------------------------------
+# EVERY CASE AT AN ARRIVAL OF A FLIPPED DRIVER REGISTERED (`aes_deskarrive.register_row`) OVER ITS OWN STAGING — the
+# orchestrator's ruling (c), stage 1's row kind: the arrival's megabyte whole but the harness's window, where GEMDOS is
+# reached the ROM's own run in place laid over it as the copy engine's recorder's script (`aes_deskdir.replayed`,
+# `REPLAYED` in the row's name; its 24 entries, not band 5's 11), the case's wake at the row's idles (`at_idle`), the
+# recorder's twins bound in the row's child (`aes_deskfun.REACH_GEMDOS`'s declared child doors). Every one SWITCHES: A
+# DOOR USER where its run calls a rebound entry of the event layer (MEASURED: the table's second count), one WITH NO DOOR
+# else. A row whose run is past the default derivation margin DECLARES ITS OWN BUDGET — its case's, measured at Tier 1
+# (the user's ruling of 2026-10-21, "rows may declare budget": held both ways by every derivation of the row). The
+# classes stay Tier 1's.
+AT_ARRIVALS_WAVE_2 = [each for each in CASES_WAVE_2 if not each.why and each.name in fun.UNIT_H_WAVE_2_FLIPPED]
+
+
+def driver_row_label(each):
+    """A row's label: the arrival, the staging, the wake (the routine is its name's core)."""
+    said = f"arrival {each.nth} of {each.chain}" + (f" [{fun._dd.REPLAYED}]" if each.replayed else "")
+    return said + (f"; {WAKE_NAMED[each.wake]}" if each.wake else "")
+
+
+def _driver_row_pokes(each):
+    arrived = _arrival2(each)
+    replayed = [fun.engine_replayed(each.wake)[1](arrived)] if each.replayed else []
+    return case.merge_pokes(da.row_machine_of(arrived), *replayed)
+
+
+def _driver_row(each):
+    at_idle = each.wake.at_idle(each.chain) if each.wake else {}
+    return da.register_row(da.Case(each.name, each.chain, each.nth, yields=each.yields), pokes=_driver_row_pokes(each),
+                           label_said=driver_row_label(each), at_idle=at_idle, budget=each.budget,
+                           door=label2(each) not in DRIVER_ROWS_WITH_NO_DOOR)
+
+
+# MEASURED (the table's second count): every driver row calls a rebound entry — the alerts', form_do's, the rebuilt
+# window's bindings — but these.
+DRIVER_ROWS_WITH_NO_DOOR = frozenset((label2(Case2(fun.FUN_DISK, EMPTIED_INTO_A, replayed=True)),))   # its search finds no file
+DRIVER_ROWS = {label2(each): _driver_row(each) for each in AT_ARRIVALS_WAVE_2}
+DRIVER_DOOR_USERS_PRICED = {
+    "aes_desk_fun_rebld, arrival 0 of file: File > Show Info, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((345398, 604938), (338560, 592690), 11, (0, 0, 0)),
+    "aes_desk_fun_rebld, arrival 0 of files: the program selected, File > Show Info, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((391440, 670850), (384602, 658602), 11, (0, 0, 0)),
+    "aes_desk_fun_rebld, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((323680, 577956), (316364, 565062), 11, (0, 0, 0)),
+    "aes_desk_fun_rebld, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((355212, 620530), (347896, 607636), 11, (0, 0, 0)),
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return":
+        ((871984, 1339074), (821442, 1256600), 18, (0, 0, 0)),
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder again, 'A', Return — the name taken, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return, Return at the alert":
+        ((705942, 1001060), (641970, 897690), 14, (0, 0, 0)),
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; Return":
+        ((437834, 600410), (412346, 558400), 6, (0, 0, 0)),
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; the dialog's Cancel clicked":
+        ((466304, 643286), (410216, 555584), 8, (0, 0, 0)),
+    "aes_desk_fun_op, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((525924, 704158), (500436, 662148), 6, (0, 0, 0)),
+    "aes_desk_fun_op, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((472120, 628662), (446632, 586652), 6, (0, 0, 0)),
+    "aes_desk_fun_op, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        ((548448, 742182), (493874, 656210), 8, (0, 0, 0)),
+    "aes_desk_fun_ddst, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        ((548526, 742746), (493952, 656774), 8, (0, 0, 0)),
+    "aes_desk_fun_ddst, arrival 0 of file: dragged onto drive A:'s icon, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        ((818926, 1095430), (773058, 1020318), 11, (0, 0, 0)),
+    "aes_desk_fun_wdst, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((527132, 706032), (501644, 664022), 6, (0, 0, 0)),
+    "aes_desk_fun_wdst, arrival 0 of files: the long file dragged onto the folder, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((528700, 707722), (503212, 665712), 6, (0, 0, 0)),
+    "aes_desk_fun_wdst, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        ((819328, 1095666), (773460, 1020554), 11, (0, 0, 0)),
+    "aes_desk_fun_win2win, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((885668, 1332970), (852864, 1278066), 17, (0, 0, 0)),
+    "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        ((873526, 1323502), (811636, 1224636), 19, (0, 0, 0)),
+    "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((818518, 1236692), (785714, 1181788), 17, (0, 0, 0)),
+    "aes_desk_fun_disk, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        ((960040, 1285376), (914172, 1210264), 11, (0, 0, 0)),
+    "aes_desk_fun_desk2win, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
+        ((144998, 230448), (124262, 196668), 7, (0, 0, 0)),
+    "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        ((1309510, 1898632), (1256326, 1810626), 22, (0, 0, 0)),
+}
+DRIVER_DOOR_USERS_WHOLE_RUN = {
+    "aes_desk_fun_rebld, arrival 0 of file: File > Show Info, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (1833908, 1600222), "bench_shipped": (1833908, 1603052)},
+    "aes_desk_fun_rebld, arrival 0 of files: the program selected, File > Show Info, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (2085436, 1837678), "bench_shipped": (2085436, 1838438)},
+    "aes_desk_fun_rebld, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (1775252, 1547274), "bench_shipped": (1775252, 1548208)},
+    "aes_desk_fun_rebld, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (1850344, 1613086), "bench_shipped": (1850344, 1614498)},
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return":
+        {"bench": (4910250, 4540000), "bench_shipped": (4910250, 4527624)},
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder again, 'A', Return — the name taken, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return, Return at the alert":
+        {"bench": (4755536, 4554718), "bench_shipped": (4755536, 4532234)},
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; Return":
+        {"bench": (2773604, 2667240), "bench_shipped": (2773604, 2660176)},
+    "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; the dialog's Cancel clicked":
+        {"bench": (2817738, 2699972), "bench_shipped": (2817738, 2691392)},
+    "aes_desk_fun_op, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (3451372, 3342016), "bench_shipped": (3451372, 3331946)},
+    "aes_desk_fun_op, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (3070866, 2974184), "bench_shipped": (3070866, 2968524)},
+    "aes_desk_fun_op, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        {"bench": (3544284, 3421194), "bench_shipped": (3544284, 3410962)},
+    "aes_desk_fun_ddst, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        {"bench": (3544848, 3421272), "bench_shipped": (3544848, 3411040)},
+    "aes_desk_fun_ddst, arrival 0 of file: dragged onto drive A:'s icon, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        {"bench": (5422940, 5265426), "bench_shipped": (5422940, 5235996)},
+    "aes_desk_fun_wdst, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (3453246, 3343752), "bench_shipped": (3453246, 3333430)},
+    "aes_desk_fun_wdst, arrival 0 of files: the long file dragged onto the folder, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (3466526, 3356964), "bench_shipped": (3466526, 3346588)},
+    "aes_desk_fun_wdst, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        {"bench": (5425204, 5268068), "bench_shipped": (5425204, 5238558)},
+    "aes_desk_fun_win2win, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (5309998, 4960490), "bench_shipped": (5309998, 4951528)},
+    "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        {"bench": (5322900, 4969940), "bench_shipped": (5322900, 4960660)},
+    "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (4902574, 4570190), "bench_shipped": (4902574, 4567412)},
+    "aes_desk_fun_disk, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        {"bench": (5965870, 5773002), "bench_shipped": (5965870, 5743326)},
+    "aes_desk_fun_desk2win, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
+        {"bench": (1319720, 1253584), "bench_shipped": (1319720, 1247230)},
+    "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
+        {"bench": (7802976, 7372224), "bench_shipped": (7802976, 7345458)},
+}
+DRIVER_NO_DOOR_PREMISES = {
+    "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 0x0, ()),
+}
+DRIVER_NO_DOOR_PRICED = {
+    "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((137234, 184920), None, None, (0, 0, 0)),
+}
+DRIVER_NO_DOOR_WHOLE_RUN = {
+    "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (530436, 495000), "bench_shipped": (530436, 495538)},
+}
+DRIVER_ROWS_MADE, DRIVER_BUDGETED = 23, 14      # every case at an arrival of the nine flipped (none LAID); those past the margin
+
+
+def test_every_driver_case_at_an_arrival_is_a_row_and_its_pins_are_the_rows():
+    """EVERY CASE AT AN ARRIVAL OF A FLIPPED DRIVER A ROW (those past the margin under their declared budget), every
+    flipped driver with a row; the door users' pins (read by `test_tier3.py`) and the no-door rows' exactly the rows of
+    each kind."""
+    import aes_switching
+    assert {BY_LABEL_WAVE_2[name].name for name in DRIVER_ROWS} == set(fun.UNIT_H_WAVE_2_FLIPPED)
+    assert (len(DRIVER_ROWS), sum(bool(row.budget) for row in DRIVER_ROWS.values())) == (DRIVER_ROWS_MADE, DRIVER_BUDGETED)
+    door_users = {aes_switching.row_name(row) for row in DRIVER_ROWS.values() if row.door}
+    assert set(DRIVER_DOOR_USERS_PRICED) == set(DRIVER_DOOR_USERS_WHOLE_RUN) == door_users
+    assert set(DRIVER_NO_DOOR_PREMISES) == set(DRIVER_NO_DOOR_PRICED) == set(DRIVER_NO_DOOR_WHOLE_RUN) == {
+        aes_switching.row_name(row) for row in DRIVER_ROWS.values() if not row.door}
+
+
+def test_a_driver_row_s_declared_budget_is_its_tier_1_case_s_own():
+    """EACH DRIVER ROW DECLARES ITS TIER 1 CASE'S OWN BUDGET — not merely one the rule admits (a budget copied from
+    another case would fit it too) — and none where its case declares none."""
+    assert {name: row.budget for name, row in DRIVER_ROWS.items()} == {name: BY_LABEL_WAVE_2[name].budget for name in DRIVER_ROWS}
+
+
+def test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive():
+    """A PLAIN ROW DECLARES NO BUDGET (`aes_deskarrive.register_row`): its path forwards none to `aes.register`, so a
+    declaration there would be dropped in silence — it is refused by name, before anything is registered."""
+    with pytest.raises(AssertionError, match="a plain row declares no derivation budget"):
+        da.register_row(da.Case(*SHORT_CASE, yields=False), budget=aes_event.DERIVATION_INSNS + 1)
+
+
+@pytest.mark.parametrize("name", DRIVER_NO_DOOR_PREMISES)
+def test_a_driver_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    import aes_deskapp
+    aes_deskapp.vet_the_premise(name, DRIVER_NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", DRIVER_NO_DOOR_WHOLE_RUN)
+def test_a_driver_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    import aes_deskapp
+    aes_deskapp.vet_on_a_blob(blob, name, DRIVER_NO_DOOR_PREMISES, DRIVER_NO_DOOR_PRICED, DRIVER_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", DRIVER_NO_DOOR_PRICED)
+def test_a_driver_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    import aes_deskapp
+    aes_deskapp.vet_the_price(name, DRIVER_NO_DOOR_PRICED)
+
+
+# ---- A NAMED ROW'S DECLARED BUDGET, HELD BOTH WAYS (the user's ruling of 2026-10-21): over fun_win2win's copy (its run
+# measured LONG_RUN instructions) and fun_rebld's Show Info (a run the default admits), each declaration the rule
+# refuses is refused by name at the row's derivation — not fitted, stale, undeclared, unneeded.
+LONG_RUN, LONG_CASE = 493_673, (fun.FUN_WIN2WIN, COPIED)
+SHORT_CASE = (fun.FUN_REBLD, FILE_INFO)
+
+
+def _derived_with(case_key, budget):
+    import aes_switching
+    each = next(each for each in AT_ARRIVALS_WAVE_2 if (each.name, each.chain) == case_key)
+    at_idle = each.wake.at_idle(each.chain) if each.wake else {}
+    pokes = _driver_row_pokes(each)
+    row = da.row_of(_arrival2(each), "a budget probed", True, at_idle=at_idle, pokes=pokes, budget=budget)
+    return aes_switching.settled(row)
+
+
+BUDGET_REFUSED = {
+    "not fitted (under five times the run)": (LONG_CASE, LONG_RUN * aes_event.DERIVATION_MARGIN - 1,
+                                              r"inside its declared budget's .* margin of 5: raise the row's budget"),
+    "stale (over ten times the run)": (LONG_CASE, LONG_RUN * aes_event.DERIVATION_MARGIN * aes_event.DERIVATION_STALE + 1,
+                                       r"the declaration is stale — .* a declared budget may be at most"),
+    "undeclared on a long row": (LONG_CASE, None, r"inside DERIVATION_INSNS' margin of 5: raise the budget"),
+    "declared on a short row (not needed)": (SHORT_CASE, aes_event.DERIVATION_INSNS + 1,
+                                             r"the declaration is stale — DERIVATION_INSNS .* admits this run"),
+}
+
+
+@pytest.mark.parametrize("which", BUDGET_REFUSED)
+def test_a_named_row_s_budget_is_refused_by_name_where_the_rule_refuses_it(which):
+    case_key, budget, said = BUDGET_REFUSED[which]
+    with pytest.raises(AssertionError, match=said):
+        _derived_with(case_key, budget)
+
+
+def test_a_named_row_s_budget_is_admitted_exactly_where_it_fits_and_is_not_stale():
+    """GREEN at both ends of the window: five times the run, and ten."""
+    for budget in (LONG_RUN * aes_event.DERIVATION_MARGIN, LONG_RUN * aes_event.DERIVATION_MARGIN * aes_event.DERIVATION_STALE):
+        _derived_with(LONG_CASE, budget)

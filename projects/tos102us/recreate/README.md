@@ -477,6 +477,19 @@ campaign the band's rows will be arrivals of.
   `aes_desk.box` refuses by name an object of a dialog laid inside another's tree boxed from the outer root
   (`aes_objects.Unrooted`, raised where the climb reaches NIL: the DISKCOPY dialog is the utility tree's objects
   11..16, rooted at 11 — `dialog_button` finds its COPY as that root's 5).
+- A FOLDER'S ACTS IN A WINDOW THE DESK RESTORED AFTER A SHOW (band 6 slice F3 stage 2's fix pass, reviewer B's probe:
+  `aes_desk.SHOWN_THEN_FOLDER_OPENED` / `SHOWN_THEN_FOLDER_CLOSED`, on the files machine). The file viewer's BIOS calls
+  go through trp13's door and leave ITS return (`$fed7de`) in AES_BIOS_RETURN; the desk restarted after the show
+  re-opens its windows through cnx_get, which runs no drive_check. So the first folder act in a restored window — the
+  folder opened (do_fopen), its window closed up a level (fun_close → close_folder → do_fopen) — arrives NOT holding
+  drive_check's own park (`$fe1bb2`), which every other chain holds there. Each chain shows its file in its own steps
+  (so the flipped state's N4 declaration names both). The four arrivals are ROWS that switch (`test_desk_supp.py`, door
+  users over drive_check's floppy and GEMDOS replayed), the BIOS park named by nature (`aes_desksupp.BIOS_DOOR_PARKED`,
+  `$95af..$95b1`): do_fopen 0.66 / 0.61, close_folder 0.66, fun_close's folder arm 0.66 own, whole runs 0.90–0.93 on
+  both blobs. Their byte `$95af` is `$fe` in the viewer's `$fed7de` and in the park alike — a byte the ROM's run stores
+  with the value it held, which the census admits since it reads stores (A ROW'S OWN BY-NATURE BYTES ARE CENSUSED, below);
+  `test_the_rows_in_a_window_restored_after_a_show_name_the_park_over_a_byte_the_rom_stores_unchanged` reads that class
+  off each arrival.
 
 ### THE HANDS ON OUR SHORE — the same chains over the bound table (`test/aes_desk.py`'s last block, `test_aes_desk_ours.py`, band 6 slice H)
 
@@ -491,7 +504,7 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   table); `walked_ours(name)` walks a chain from its predecessor's machine of ours. Named stops per shore
   (`our_stop`): the rubber box's poll is our C gr_stilldn's entry; the viewer's two waits stay the ROM's until unit M
   flips (F4 adds their C-side stops).
-- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 114 of 116 chains): the screen and the desk's block
+- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 116 of 118 chains): the screen and the desk's block
   (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
   and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
   EVERY inventory start, `aes_desk.charged`) but THE ONE CLASS `RUN_UNDER_BANDS_0_TO_5`: three spans a band-5 routine
@@ -1012,11 +1025,34 @@ foreign window, the ROM's own code on both shores. What that taught, each held b
   (`ctrl.c`'s MISSING ARGUMENT) — the last VDI call of four of hctl_rect's cases (three priced rows, one at Tier 1
   only); each is held to NEED its drop (its companion red in that word without it). Dropped at Tier 3 by name (and held
   to our run's ledger, as every drop is); left out of the companion's end compare AND of its images at every stop
-  (`aes_switch.scheduled` / `modelled`, `left_out_beside`), each byte required to be one the ROM's run changed; the
+  (`aes_switch.scheduled` / `modelled`, `left_out_beside`), each byte required to be one the ROM's run stored (the next item); the
   battery that declares it holds the C's value there, and both censuses count it (`test_aes_event.A_ROW_S_OWN`,
   `test_tier3`'s companion test). Reach for it only where nothing can be staged: the word is written DURING the run.
   `companion(at_stops_only=)` is its narrower sibling for a word a later call of both builds overwrites before the
   run ends (left out of the images at the stops, compared at the end) — REFUSED where the row passes without it.
+- A ROW'S OWN BY-NATURE BYTES ARE CENSUSED BY THE ROM RUN'S STORES (since band 6 slice F3 stage 2's third fix pass, the
+  orchestrator's ruling (a)). A row that names bytes of its own by nature (`also_dropped`: ct_mouse's stale count, the
+  XBIOS and BIOS doors' parked returns) has them left out of its companion's compare and dropped at Tier 3 — so each
+  must be a byte the ROM's run STORED, or the name would excuse a store of the C's alone.
+  `aes_switching._its_own_by_nature` reads that off the WRITE LEDGER of the ROM's run — its replay over the row's
+  settled machine (`_replay_of`, the same replay every settling makes, held to leave the scheduled run's memory) — and
+  refuses by name ("named by nature, and never stored by the ROM's run") any named byte the ledger lacks. Until that
+  pass it asked whether the byte's VALUE changed, which refused a byte the ROM's run stores again with the value it held
+  (the BIOS door's park over `$95af`, `$fe` before and after). MEASURED NARROWNESS: of the 530 registered rows that
+  switch, the 16 that name bytes (drive_check's 3, app_blddesk's 4, hctl_rect's 3, do_dopen's 2, the four new) and the
+  one Tier-1-only stale-count case have the same excused set under both censuses but the four new rows; the 514 others
+  name none. The same reading admits the seven arrivals that hold drive_check's own park (`test_desk_supp.NOT_A_ROW`,
+  `PARKED_NOT_A_ROW_WAVE_2`: the ROM's run stores the park again; measured, each companion and both blobs pass) — held
+  unregistered, by name, for a slice of their own (the orchestrator's ruling). A mutant that turns the census back to
+  value-change reddens the four rows; one that makes the C store a named byte the ROM's run never stores is refused by
+  the census. THE REFUSAL STANDS IN THE SUITE (the fourth fix pass): every registered name is honest, so
+  `test_desk_supp.test_the_census_refuses_a_park_name_widened_onto_a_byte_the_rom_s_run_never_stores` takes
+  drive_check's registered row, widens its park name one byte down onto `$95ad` (a byte its ROM run never stores) and
+  holds the companion to refuse it by name — a census that excuses every name, or reads its "stores" off the staged
+  machine, now goes red. WHAT THE CENSUS CANNOT SEE: the ledger is address-only, so a wrong VALUE the C stores in a
+  named byte the ROM's run stores (`$95af..$95b1`) passes the row's companion and its Tier 3 row, and is caught by the
+  Tier 1 cases alone, which compare those bytes whole (measured: close_folder's C storing `$5a` at `$95af` reddens only
+  its two Tier 1 cases) — each of the four rows has one.
 - A ROW REGISTERED FROM A CAPTURED MACHINE MAKES THAT CAPTURE AN INPUT OF THE REGISTRY'S IMPORT — and so of every
   make target whose recipe imports it (`shipped-glue`, `derived`, the table), not of the suites alone. A tree that
   was ever built hides a missing prerequisite for ever; an empty one dies at the first importer. The Makefile names
@@ -2552,6 +2588,27 @@ it, from its measured run of N instructions, and the declaration is held both wa
   the margin by `stopped_at`.
 A registered row records its budget (`INTERRUPTED_ROWS[row].budget`), so the noise sweep's re-derivation and the row's
 Tier 3 companion run under it.
+
+A NAMED REGISTERED ROW MAY DECLARE ITS OWN BUDGET (since band 6 slice F3's stage 2, THE USER'S RULING of 2026-10-21,
+"rows may declare budget"). A registered row that switches and whose run is past the default derivation margin (a desk
+routine's copy or open, 300,000–730,000 instructions) declares `budget=` as a case and a session's slice do — on
+`aes_deskarrive.row_of` / `register_row`, `aes_deskwin.switching_row` / `register_row`, and
+`aes_desksupp.registered_row` (through `aes_event.woken_row`). Its value is ITS TIER 1 CASE'S OWN, and that is pinned by
+identity, not by the rule's range alone (a budget copied from another case fits the rule too): `test_desk_supp`,
+`test_desk_win` (stage 2's and do_wfull's rows), `test_desk_top`, `test_desk_fun`
+(`test_a_driver_row_s_declared_budget_is_its_tier_1_case_s_own`) and `test_desk_dir`
+(`test_an_engine_row_s_declared_budget_is_its_tier_1_case_s_own`) each hold `row.budget ==` its case's. It is held both
+ways by EVERY derivation of the row, by the same three rules: NEEDED (`5 N > DERIVATION_INSNS`), FITTED (`5 N <= B`),
+NOT STALE (`B <= 10 N`); the four refusals are red by name on a real row (`test_desk_fun.BUDGET_REFUSED`: 5N − 1 not
+fitted, 10N + 1 stale, none the default's margin, a short row's not needed). The registry keeps the budget
+(`SwitchingRow.budget`), so every later derivation — the snapshot's sweeps — runs under it:
+`test_aes_event._named_rows_declaring_a_budget` reads the named rows off their batteries,
+`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (43 since F3 stage 2's third fix pass), and each is derived again under
+its own budget to the switches it settled. A PLAIN row declares none: its path forwards no budget to `aes.register`, so
+a declaration there would be dropped in silence — `aes_deskarrive` and `aes_deskwin` refuse it by name, each pinned by a
+refusal test (`test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive` in `test_desk_fun`,
+`..._by_aes_deskwin` in `test_desk_win`; `aes_desksupp.registered_row` has no plain path). The default
+(`DERIVATION_INSNS`, 1.5 M) is unchanged.
 
 A SESSION PRICED BY ITS SLICES. A long interactive routine — the file selector listing a directory, scrolled, clicked
 and typed into — is one call no single row prices honestly: it is past the bench's cap, and one ratio over all of it

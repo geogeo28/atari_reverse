@@ -78,10 +78,10 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_I_WAVE_2 = tuple(SIGNATURES_WAVE_2)
-# FLIPPED at band 6 slice F3 (stage 1) but two: desk_clear and desk_verify flipped; pro_run and do_wopen HELD to stage 2,
-# with unit J (the cut: do_wopen flipped under the ROM's do_dopen / do_diropen takes "A: File > Open" to 1,560 > 1,548).
-UNIT_I_WAVE_2_HELD_AT_F3 = ("AES_ROM_PRO_RUN", "AES_ROM_DO_WOPEN")
-UNIT_I_WAVE_2_FLIPPED = tuple(name for name in UNIT_I_WAVE_2 if name not in UNIT_I_WAVE_2_HELD_AT_F3)
+# FLIPPED at band 6 slice F3: desk_clear and desk_verify at stage 1; pro_run and do_wopen at stage 2, with unit J (the cut:
+# do_wopen flipped under the ROM's do_dopen / do_diropen takes "A: File > Open" to 1,560 > 1,548) — the unit whole.
+UNIT_I_WAVE_2_HELD_AT_F3 = ()
+UNIT_I_WAVE_2_AT_STAGE_1 = ("AES_ROM_DESK_CLEAR", "AES_ROM_DESK_VERIFY")
 # ---- end of group G3's wave-2 ----
 # The routines whose run reaches the dispatcher — through a binding of unit D's — on every arm a case takes: rows that
 # switch.
@@ -258,21 +258,23 @@ def row_machine(each):
     return merge_pokes(pokes, shell.scripted_pokes(answers_of(each))) if each.traps else pokes
 
 
-def switching_row(each, *, door_user, x_flag_differs):
+def switching_row(each, *, door_user, x_flag_differs, budget=None):
     """The case's ROW THAT SWITCHES: a door user's (its run arrives at an entry of the event layer's door) or one with no
-    door, the X flag declared where its yield parks the two builds' own (`aes_switching.THE_X_FLAG_ALONE`)."""
+    door, the X flag declared where its yield parks the two builds' own (`aes_switching.THE_X_FLAG_ALONE`); `budget`
+    its own derivation budget where its run is past the default's margin (the user's ruling of 2026-10-21)."""
     pokes, signature = row_machine(each), vdi.ALCYON[each.name]
-    # (no budget: a registered row declares one only where it is a session's slice — a Tier 1 case's own is its alone)
-    the_row = row(row_label(each), each.name, arrival_of(each).arguments, pokes, signature.restype is not None)
+    the_row = row(row_label(each), each.name, arrival_of(each).arguments, pokes, signature.restype is not None, budget)
     doors = SHELL_CHILD_DOORS if each.traps else the_row.door.doors
     door = the_row.door._replace(doors=doors) if door_user else None
     return the_row._replace(door=door, child_doors="" if door_user else doors, x_flag_differs=x_flag_differs)
 
 
-def register_row(each, yields, *, door_user=False, x_flag_differs=False):
-    """THE CASE REGISTERED: its row that switches where the routine `yields`, else a plain row (`aes.register`)."""
+def register_row(each, yields, *, door_user=False, x_flag_differs=False, budget=None):
+    """THE CASE REGISTERED: its row that switches where the routine `yields` (under `budget`, declared), else a plain
+    row (`aes.register`)."""
     if yields:
-        return aes_event.register_woken(switching_row(each, door_user=door_user, x_flag_differs=x_flag_differs))
+        return aes_event.register_woken(switching_row(each, door_user=door_user, x_flag_differs=x_flag_differs, budget=budget))
+    assert budget is None, f"{row_label(each)}: a plain row declares no derivation budget"
     hook = shell.scripted_hook if each.traps else None
     return aes.register(row_label(each), each.name, arrival_of(each).arguments, row_machine(each), hook=hook,
                         answer_compared=vdi.ALCYON[each.name].restype is not None)

@@ -112,8 +112,10 @@ FLIPPED_AT_F3 = {
     "S1B": (11, 11, 4),     # units L's and B's wave-2 five and three, desk_clear, desk_verify, app_start; entered but UNENTERED's seven
     # ---- end of stage 1 B's ----
     # ---- band 6 slice F3, stage 2, author A (unit H but fun_d2desk, fun_drag; app_save) ----
+    "S2-A": (10, 10, 0),    # unit H's nine but fun_d2desk, fun_drag; app_save — every one UNENTERED (every row switches)
     # ---- end of stage 2 A's ----
     # ---- band 6 slice F3, stage 2, author B (unit J; pro_run, do_wopen; cnx_get) ----
+    "S2B": (10, 10, 0),     # unit J's seven, pro_run, do_wopen, cnx_get; none entered (UNENTERED's ten)
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 (fun_d2desk, fun_drag, hndl_kbd) ----
     # ---- end of stage 3's ----
@@ -701,9 +703,18 @@ UNENTERED = {
     **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
         "WIN_SLIDE", "WIN_BDALL", "DESK_CLEAR", "APP_START", "GR_DRGPLNS", "ACT_BSCLICK", "ACT_BDOWN")},
     # ---- end of stage 1 B's ----
-    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- band 6 slice F3, stage 2, author A ---- THE TEN FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
+        *(f"DESK_FUN_{driver}" for driver in ("REBLD", "MKDIR", "OP", "DDST", "WDST", "WIN2WIN", "WIN2DESK", "DISK", "DESK2WIN")),
+        "APP_SAVE")},
     # ---- end of stage 2 A's ----
-    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- band 6 slice F3, stage 2, author B ---- THE NINE FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`) — do_fopen and close_folder among them since the stage's third fix pass (their rows in a
+    # window the desk restored after a show, `test_desk_supp.py`)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
+        "DO_DIROPEN", "DO_DOPEN", "DO_FOPEN", "DESK_DO_FORMAT", "CLOSE_WINDOW", "CLOSE_FOLDER", "FUN_CLOSE", "PRO_RUN", "DO_WOPEN",
+        "CNX_GET")},
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
@@ -926,17 +937,17 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     # (units C, F, E: FLIPPED at band 6 slice F3, stage 1 — `$fde844` with them, by its operand: N18)
     # ---- end of group G1's wave-2 ----
     # ---- band 6 wave 2, group G2 (units H, G, M) ----
-    ("aes_deskfun", "UNIT_H_WAVE_2"): 11,
+    ("aes_deskfun", "UNIT_H_WAVE_2_HELD_AT_F3"): 2,       # fun_d2desk, fun_drag (stage 3); the nine flipped at F3 stage 2
     # (units G, M: FLIPPED at band 6 slice F3, stage 1)
     # ---- end of group G2's wave-2 ----
     # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
-    ("aes_deskwin", "UNIT_I_WAVE_2_HELD_AT_F3"): 2,      # pro_run, do_wopen (stage 2); desk_clear, desk_verify flipped at F3 stage 1
-    ("aes_desksupp", "UNIT_J_WAVE_2"): 7,
-    ("aes_desktop", "UNIT_K_WAVE_2"): 2,
+    ("aes_deskwin", "UNIT_I_WAVE_2_HELD_AT_F3"): 0,      # none: desk_clear, desk_verify flipped at F3 stage 1, pro_run, do_wopen at stage 2
+    ("aes_desksupp", "UNIT_J_WAVE_2_HELD_AT_F3"): 0,     # none: the seven flipped at F3 stage 2
+    ("aes_desktop", "UNIT_K_WAVE_2_HELD_AT_F3"): 1,      # hndl_kbd (stage 3); cnx_get flipped at F3 stage 2
     ("aes_deskview", "UNIT_L_WAVE_2_HELD_AT_F3"): 0,     # none: the five flipped at F3 stage 1
     # ---- end of group G3's wave-2 ----
     # ---- band 6 wave 2, group G4 (units A, B) ----
-    ("aes_deskapp", "UNIT_A_WAVE_2_HELD_AT_F3"): 1,      # app_save (stage 2); app_start flipped at F3 stage 1
+    ("aes_deskapp", "UNIT_A_WAVE_2_HELD_AT_F3"): 0,      # none: app_start flipped at F3 stage 1, app_save at stage 2
     ("aes_deskact", "UNIT_B_WAVE_2_HELD_AT_F3"): 0,      # none: the three flipped at F3 stage 1
     # ---- end of group G4's wave-2 ----
     # ---- band 6 wave 4: each unit's WAVE-4 list (`UNIT_<X>_WAVE_4`, its own block of the unit's module) and count ----

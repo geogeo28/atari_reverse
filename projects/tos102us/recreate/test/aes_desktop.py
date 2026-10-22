@@ -36,6 +36,10 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_K_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# FLIPPED at band 6 slice F3 (stage 2) but one: cnx_get flipped; hndl_kbd HELD to stage 3 (the cut's split: no unit shared
+# by the two authors of a stage).
+UNIT_K_WAVE_2_HELD_AT_F3 = ("AES_ROM_HNDL_KBD",)
+UNIT_K_WAVE_2_FLIPPED = tuple(name for name in UNIT_K_WAVE_2 if name not in UNIT_K_WAVE_2_HELD_AT_F3)
 # ---- end of group G3's wave-2 ----
 # men_update both SWITCHES (menu_ienable) and, where a window is on top, TRAPS (G1's win_ontop makes its drive and path
 # current: Dsetdrv, Dsetpath through the glue): its C's child binds band 5's scripted trap's twins.

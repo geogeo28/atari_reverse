@@ -68,9 +68,9 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_A_WAVE_2 = tuple(SIGNATURES_WAVE_2)
-# FLIPPED at band 6 slice F3 (stage 1) but one: app_start flipped; app_save HELD to stage 2 (its C calls unit H's
-# fun_rebld, flipped there — the cut's split).
-UNIT_A_WAVE_2_HELD_AT_F3 = ("AES_ROM_APP_SAVE",)
+# FLIPPED at band 6 slice F3: app_start at stage 1, app_save at stage 2 (its C calls unit H's fun_rebld, flipped
+# there — the cut's split).
+UNIT_A_WAVE_2_HELD_AT_F3 = ()
 UNIT_A_WAVE_2_FLIPPED = tuple(name for name in UNIT_A_WAVE_2 if name not in UNIT_A_WAVE_2_HELD_AT_F3)
 # app_start TRAPS (isdrive's Dgetdrv / Dsetdrv for each drive line, app_rdicon's two Mallocs; DESKTOP.INF's Fopen,
 # Fread, Fclose where the shell's buffer holds no INF) and SWITCHES (shel_get's binding, app_tran's): THIS UNIT'S

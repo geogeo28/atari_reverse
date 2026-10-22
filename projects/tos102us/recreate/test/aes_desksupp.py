@@ -22,8 +22,10 @@ import sys
 
 import aes
 import aes_boot
+import aes_desk
 import aes_deskapp as da
 import aes_deskwin as w
+import aes_event
 import aes_fslib as fsl
 import aes_gemdosif as gd
 import aes_loader as ld
@@ -55,6 +57,8 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_J_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# FLIPPED at band 6 slice F3 (stage 2): the seven whole — none held.
+UNIT_J_WAVE_2_HELD_AT_F3 = ()
 # ---- end of group G3's wave-2 ----
 DRIVER_REPLAYED = "THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged"
 
@@ -174,7 +178,8 @@ def row_of(arrived, replay, label=None, laid=()):
 # trp13's `.S` through the shipped blob's glue, whose `jsr` parks THE GLUE'S return there where the ROM's door parks its
 # caller's — F1's declared divergence (R9's kind, `test_the_bios_door_s_parked_return_is_named_by_trp13_alone`: no ROM
 # instruction but trp13's own two reads it). Its three low bytes: the high byte is 0 on both shores, an address under
-# 16 MB, which the ROM's run never changes — a name over it is refused (`aes_switching._its_own_by_nature`).
+# 16 MB — equal, so compared, never named (each named byte must be one the ROM's run stores: the census,
+# `aes_switching._its_own_by_nature`, which reads its write ledger since band 6 slice F3 stage 2's third fix pass).
 BIOS_DOOR_PARKED = ((aes.AES_BIOS_RETURN + 1, aes.AES_BIOS_RETURN + aes.LONG_BYTES,
                      "AES_BIOS_RETURN: the shipped glue parks its own return, the ROM's door its caller's — read by trp13 alone"),)
 
@@ -285,11 +290,8 @@ def floppy_replay(chain, nth=1):
     return in_place(arrived), arrived.arguments[0] - ord("A")
 
 
-def replayed_row(each, floppy=None, script=None):
-    """THE CASE (an `aes_deskwin.Case`) of a routine of the group's that traps: its row that switches over the arrival's
-    megabyte with GEMDOS replayed — and, `floppy` (drive_check's `(chain, nth)`), the floppy replayed too. `script`:
-    a labelled staging's own script in place of the run in place's (said in the case's id)."""
-    arrived = w.arrival_of(each)
+def _replay_staged(each, floppy, script):
+    """`(the replay's layers, its child's doors)` for the case: GEMDOS replayed — and the floppy where `floppy`."""
     layers = [replay_pokes(script or gemdos_script(each.name, each.chain, each.nth))]
     doors = GEMDOS_REPLAY_DOORS
     if floppy:
@@ -297,6 +299,41 @@ def replayed_row(each, floppy=None, script=None):
         layers.append(floppy_staged(replay))
         doors += (f"aes_desksupp.bind_replay_in_a_child(lib, {aes.signed(replay.floprd)}, {aes.signed(replay.rwabs, bits=32)}, "
                   f"{read_frame(replay, drive)!r}, {change_frame(drive)!r}); ")
+    return layers, doors
+
+
+def replayed_row(each, floppy=None, script=None):
+    """THE CASE (an `aes_deskwin.Case`) of a routine of the group's that traps: its row that switches over the arrival's
+    megabyte with GEMDOS replayed — and, `floppy` (drive_check's `(chain, nth)`), the floppy replayed too. `script`:
+    a labelled staging's own script in place of the run in place's (said in the case's id)."""
+    arrived = w.arrival_of(each)
+    layers, doors = _replay_staged(each, floppy, script)
     pokes = case.merge_pokes(w.megabyte(arrived), *layers)
     the_row = w.row(w.label(each), each.name, arrived.arguments, pokes, vdi.ALCYON[each.name].restype is not None, each.budget)
     return the_row._replace(door=aes_switch.DoorUser(True, doors))
+
+
+# ---- band 6 slice F3 (stage 2): A FLIPPED ROUTINE'S ROW ------------------------------------------------------------------------
+# A case at an arrival of a flipped routine of the windows' openers and closers (units J, K), REGISTERED as its row that
+# switches over `aes_deskwin`'s row machine (the arrival's megabyte whole but the harness's window,
+# `aes_desk.arrival_s_machine`) — where its run traps, OVER THE SAME REPLAY its Tier 1 case runs (the orchestrator's
+# ruling (c): the wave's own recorder — fslib's ledger and script, and drive_check's floppy where it runs, AES_BIOS_RETURN
+# then named by nature as drive_check's own rows name it, `BIOS_DOOR_PARKED` — not band 5's 11-entry trap), said in the
+# row's name; its wait ended by `at_idle`; a door user's door, else the replay's twins its companion's child doors; under
+# `budget`, its case's own, where its run is past the default derivation margin (the user's ruling of 2026-10-21, "rows
+# may declare budget": held both ways by every derivation of the row).
+def registered_row(each, *, replayed, floppy=None, at_idle=None, door_user=False, x_flag_differs=False, budget=None):
+    """THE CASE REGISTERED (above): the row."""
+    arrived = w.arrival_of(each)
+    pokes, label = aes_desk.arrival_s_machine(arrived.boot.ram), w.row_label(each)
+    the_row = aes_event.woken_row(label, each.name, arrived.arguments, lambda: pokes, at_idle or {}, None, objects=True,
+                                  answered=vdi.ALCYON[each.name].restype is not None, budget=budget)
+    doors, parked = the_row.door.doors, ()
+    if replayed:
+        layers, doors = _replay_staged(each, floppy, None)
+        staged = case.merge_pokes(pokes, *layers)
+        said, parked = (REPLAYED_WITH_THE_FLOPPY, BIOS_DOOR_PARKED) if floppy else (REPLAYED, ())
+        the_row = the_row._replace(label=f"{label}; {said}", machine=lambda: staged)
+    door = aes_switch.DoorUser(True, doors) if door_user else None
+    return aes_event.register_woken(the_row._replace(door=door, child_doors="" if door_user else doors,
+                                                     x_flag_differs=x_flag_differs, also_dropped=parked))

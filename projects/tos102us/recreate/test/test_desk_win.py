@@ -223,14 +223,12 @@ DOOR_USERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL
 X_FLAG_DIFFERS = frozenset(name for name in AT_ITS_OWN_ARRIVAL
                            if BY_LABEL[name].name in ("AES_ROM_INI_TREE", "AES_ROM_INI_STR", "AES_ROM_DESK_RSRC_LOAD")
                            or (BY_LABEL[name].name, BY_LABEL[name].chain) == ("AES_ROM_PRO_EXEC", "files: the program double-clicked — launched"))
-#   * NO ROW, by name (`NOT_A_ROW`): the case at an arrival no row can be made at — said.
-NOT_A_ROW = {name: ("its run (the window back to its size: a box shrunk and the window redrawn, 403,178 instructions) is past "
-                    "the derivation's margin, and a registered row declares a budget only where it is a session's slice "
-                    "(`test_aes_event`'s rule): Tier 1 holds the case, under its own budget; do_wfull's two other arrivals are rows")
-             for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].budget}
+#   * do_wfull's "back to its size" (a box shrunk and the window redrawn, 403,178 instructions — past the default
+#     derivation margin) DECLARES ITS OWN BUDGET, its case's (the user's ruling of 2026-10-21, "rows may declare budget";
+#     NOT A ROW until band 6 slice F3's stage 2).
 ROWS = {name: w.register_row(BY_LABEL[name], BY_LABEL[name].name in w.YIELDS_I, door_user=name in DOOR_USERS,
-                             x_flag_differs=name in X_FLAG_DIFFERS)
-        for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name in FLIPPED and name not in NOT_A_ROW}
+                             x_flag_differs=name in X_FLAG_DIFFERS, budget=BY_LABEL[name].budget)
+        for name in AT_ITS_OWN_ARRIVAL if BY_LABEL[name].name in FLIPPED}
 
 # ---- THE ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by each
 # blob's second differential (`aes_switching.measured_on`), from the rows as registered; re-pinned from a recorded run
@@ -242,6 +240,8 @@ DOOR_USERS_PRICED = {
         ((493412, 641236), (486810, 629228), 4, (0, 0, 0)),
     'aes_zoom_closed, arrival 1 of window: File > Close Window':
         ((338654, 417390), (337160, 414290), 3, (0, 0, 0)),
+    "aes_do_wfull, arrival 1 of window: its fuller clicked again (back to its size)":
+        ((638606, 819096), (632004, 807088), 4, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN = {
     'aes_do_wfull, arrival 1 of files: the window made full':
@@ -250,6 +250,8 @@ DOOR_USERS_WHOLE_RUN = {
         {"bench": (3468378, 3386770), "bench_shipped": (3468378, 3384318)},
     'aes_zoom_closed, arrival 1 of window: File > Close Window':
         {"bench": (2613394, 2587154), "bench_shipped": (2613394, 2580538)},
+    "aes_do_wfull, arrival 1 of window: its fuller clicked again (back to its size)":
+        {"bench": (4496832, 4402700), "bench_shipped": (4496832, 4396226)},
 }
 NO_DOOR_PREMISES = {
     'aes_desk_rsrc_load, arrival 1 of file: shown, a key at its end':
@@ -409,9 +411,19 @@ def test_the_rows_are_the_cases_at_arrivals_of_the_flipped_routines_and_split_by
     switching = {aes_switching.row_name(row): name for name, row in ROWS.items() if hasattr(row, "door")}
     assert set(DOOR_USERS_PRICED) | set(NO_DOOR_PRICED) == set(switching) and not set(DOOR_USERS_PRICED) & set(NO_DOOR_PRICED)
     assert set(DOOR_USERS_PRICED) == set(DOOR_USERS_WHOLE_RUN) and set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN) == set(NO_DOOR_PREMISES)
-    assert {switching[row] for row in DOOR_USERS_PRICED} == set(DOOR_USERS) - set(NOT_A_ROW) and len(NOT_A_ROW) == 1
+    assert {switching[row] for row in DOOR_USERS_PRICED} == set(DOOR_USERS)
+    assert {name: getattr(row, "budget", None) for name, row in ROWS.items()} == {name: BY_LABEL[name].budget for name in ROWS}
     assert {name for name, row in ROWS.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS)
-    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (42, 26, 8)      # (slice F2c: do_wredraw's four, no door)
+    assert (len(ROWS), len(switching), len(X_FLAG_DIFFERS)) == (43, 27, 8)      # (F3 stage 2: do_wfull's shrink, its budget)
+
+
+def test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskwin():
+    """A PLAIN ROW DECLARES NO BUDGET (`aes_deskwin.register_row`): its path forwards none to `aes.register`, so a
+    declaration there would be dropped in silence — it is refused by name, before anything is registered."""
+    plain = w.Case("AES_ROM_GET_XYWH", OPEN)
+    assert plain.name not in w.YIELDS_I
+    with pytest.raises(AssertionError, match="a plain row declares no derivation budget"):
+        w.register_row(plain, False, budget=aes_event.DERIVATION_INSNS + 1)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)
@@ -532,14 +544,13 @@ def test_the_wave_2_answers_that_are_not_the_rom_s_are_counted_by_name():
     assert Counter(BY_LABEL_WAVE_2[name].name in VOID_IN_C_WAVE_2 for name in BY_LABEL_WAVE_2)[True] == 13
 
 
-# ---- FLIPPED (band 6 slice F3, stage 1): desk_clear and desk_verify; pro_run and do_wopen HELD, UNBOUND ------------------
-def test_the_wave_2_two_are_flipped_and_the_other_two_held_unbound(blob):
-    """THE FLIP PIN of desk_clear and desk_verify (`aes_deskarrive.flipped`) and THE UNBOUND PIN of pro_run and do_wopen
-    (`aes_deskarrive.unbound`: their entries the ROM's, no registry row, no function outside the unbound desk refers to a
-    held core) — held to stage 2 with unit J (`aes_deskwin.UNIT_I_WAVE_2_HELD_AT_F3`)."""
+# ---- FLIPPED (band 6 slice F3): desk_clear and desk_verify at stage 1, pro_run and do_wopen at stage 2 with unit J ---------
+def test_the_wave_2_four_are_flipped(blob):
+    """THE FLIP PIN of the four (`aes_deskarrive.flipped`): each core called by its own thunk of the table, each entry OURS
+    THROUGH THAT THUNK, none held (`aes_deskwin.UNIT_I_WAVE_2_HELD_AT_F3`)."""
     import aes_deskarrive as dar
-    dar.flipped(blob, w.UNIT_I_WAVE_2_FLIPPED)
-    dar.unbound(blob, w.UNIT_I_WAVE_2_HELD_AT_F3)
+    assert not w.UNIT_I_WAVE_2_HELD_AT_F3
+    dar.flipped(blob, w.UNIT_I_WAVE_2)
 
 
 # ---- band 6 slice F3: THE TWO'S ROWS — every case at an arrival of desk_clear and desk_verify registered
@@ -553,7 +564,7 @@ DOOR_USERS_WAVE_2 = frozenset(name for name in AT_ITS_OWN_ARRIVAL_WAVE_2
 X_FLAG_DIFFERS_WAVE_2 = frozenset()
 ROWS_WAVE_2 = {name: w.register_row(BY_LABEL_WAVE_2[name], yields_wave_2(BY_LABEL_WAVE_2[name]), door_user=name in DOOR_USERS_WAVE_2,
                                     x_flag_differs=name in X_FLAG_DIFFERS_WAVE_2)
-               for name in AT_ITS_OWN_ARRIVAL_WAVE_2 if BY_LABEL_WAVE_2[name].name in w.UNIT_I_WAVE_2_FLIPPED}
+               for name in AT_ITS_OWN_ARRIVAL_WAVE_2 if BY_LABEL_WAVE_2[name].name in w.UNIT_I_WAVE_2_AT_STAGE_1}
 PLAIN_WAVE_2 = frozenset(name for name in ROWS_WAVE_2 if not yields_wave_2(BY_LABEL_WAVE_2[name]))
 
 # ---- THE WAVE-2 ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by
@@ -626,3 +637,103 @@ def test_a_wave_2_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both
 @pytest.mark.parametrize("name", NO_DOOR_PRICED_WAVE_2)
 def test_a_wave_2_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
     aes_switching.vet_the_table_s_price(aes_event.SWITCHING_ROWS[name].row, aes_switching.Priced(*NO_DOOR_PRICED_WAVE_2[name]))
+
+
+# ---- band 6 slice F3, stage 2: pro_run's and do_wopen's ROWS — every case at an arrival of each registered as A ROW THAT
+# SWITCHES (`aes_deskwin.register_row`; every one reaches a binding that yields), the classes Tier 1's.
+#   * DO_WOPEN'S TWO NEW WINDOWS ("A: File > Open", two windows): runs past the default derivation margin (346,795 and
+#     427,943 instructions), each DECLARING ITS OWN BUDGET, its Tier 1 case's (the user's ruling of 2026-10-21, "rows may
+#     declare budget") — DOOR USERS (MEASURED, the table's second count: 4 calls of a rebound entry, wind_open's), pinned
+#     in `DOOR_USERS_*_STAGE_2` and read by `test_tier3.py`.
+#   * NO DOOR (MEASURED: no call of a rebound entry) — every other row of the two.
+STAGE_2 = ("AES_ROM_PRO_RUN", "AES_ROM_DO_WOPEN")
+AT_ARRIVALS_STAGE_2 = [name for name in AT_ITS_OWN_ARRIVAL_WAVE_2 if BY_LABEL_WAVE_2[name].name in STAGE_2]
+DOOR_USERS_STAGE_2 = frozenset(name for name in AT_ARRIVALS_STAGE_2 if BY_LABEL_WAVE_2[name].budget)
+ROWS_STAGE_2 = {name: w.register_row(BY_LABEL_WAVE_2[name], yields_wave_2(BY_LABEL_WAVE_2[name]), door_user=name in DOOR_USERS_STAGE_2,
+                                     budget=BY_LABEL_WAVE_2[name].budget)
+                for name in AT_ARRIVALS_STAGE_2}
+DOOR_USERS_PRICED_STAGE_2 = {
+    'aes_do_wopen, arrival 1 of A: File > Open':
+        ((637244, 822376), (630642, 810368), 4, (0, 0, 0)),
+    'aes_do_wopen, arrival 1 of window: A: opened again (two windows)':
+        ((889500, 1152680), (882898, 1140672), 4, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_STAGE_2 = {
+    'aes_do_wopen, arrival 1 of A: File > Open':
+        {"bench": (4158070, 4058526), "bench_shipped": (4158070, 4054674)},
+    'aes_do_wopen, arrival 1 of window: A: opened again (two windows)':
+        {"bench": (5090864, 4940612), "bench_shipped": (5090864, 4937304)},
+}
+NO_DOOR_PREMISES_STAGE_2 = {
+    'aes_pro_run, arrival 1 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    "aes_pro_run, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_pro_run, arrival 1 of files: the program double-clicked — launched':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), 1, ()),
+    'aes_do_wopen, arrival 1 of file: shown, a key at its end':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_do_wopen, arrival 1 of folder: opened':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_do_wopen, arrival 1 of files: the program double-clicked — launched':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED_STAGE_2 = {
+    'aes_pro_run, arrival 1 of file: shown, a key at its end':
+        ((372798, 457712), None, None, (0, 0, 0)),
+    "aes_pro_run, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        ((379658, 464118), None, None, (0, 0, 0)),
+    'aes_pro_run, arrival 1 of files: the program double-clicked — launched':
+        ((390568, 477992), None, None, (0, 0, 0)),
+    'aes_do_wopen, arrival 1 of file: shown, a key at its end':
+        ((353936, 433344), None, None, (0, 0, 0)),
+    'aes_do_wopen, arrival 1 of folder: opened':
+        ((321272, 394586), None, None, (0, 0, 0)),
+    'aes_do_wopen, arrival 1 of files: the program double-clicked — launched':
+        ((371492, 453328), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN_STAGE_2 = {
+    'aes_pro_run, arrival 1 of file: shown, a key at its end':
+        {"bench": (2412526, 2388912), "bench_shipped": (2412526, 2375768)},
+    "aes_pro_run, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
+        {"bench": (2372742, 2350214), "bench_shipped": (2372742, 2336242)},
+    'aes_pro_run, arrival 1 of files: the program double-clicked — launched':
+        {"bench": (2459458, 2436292), "bench_shipped": (2459458, 2421906)},
+    'aes_do_wopen, arrival 1 of file: shown, a key at its end':
+        {"bench": (2352068, 2324886), "bench_shipped": (2352068, 2319824)},
+    'aes_do_wopen, arrival 1 of folder: opened':
+        {"bench": (2016038, 1988894), "bench_shipped": (2016038, 1984920)},
+    'aes_do_wopen, arrival 1 of files: the program double-clicked — launched':
+        {"bench": (2398170, 2371472), "bench_shipped": (2398170, 2365146)},
+}
+
+
+def test_the_stage_2_rows_are_the_cases_at_arrivals_and_every_one_is_pinned_by_its_door():
+    """EVERY CASE AT AN ARRIVAL OF pro_run AND do_wopen A ROW THAT SWITCHES — a door user's (do_wopen's new windows, each
+    under its Tier 1 case's budget) pinned in `DOOR_USERS_*_STAGE_2`, any other with no door, here."""
+    import aes_switching
+    assert sorted(ROWS_STAGE_2) == sorted(AT_ARRIVALS_STAGE_2) and not any(row.x_flag_differs for row in ROWS_STAGE_2.values())
+    assert {name for name, row in ROWS_STAGE_2.items() if row.door} == set(DOOR_USERS_STAGE_2)
+    assert all(row.budget == BY_LABEL_WAVE_2[name].budget for name, row in ROWS_STAGE_2.items())
+    door, no_door = ({aes_switching.row_name(row) for name, row in ROWS_STAGE_2.items() if (name in DOOR_USERS_STAGE_2) == side}
+                     for side in (True, False))
+    assert door == set(DOOR_USERS_PRICED_STAGE_2) == set(DOOR_USERS_WHOLE_RUN_STAGE_2)
+    assert no_door == set(NO_DOOR_PREMISES_STAGE_2) == set(NO_DOOR_PRICED_STAGE_2) == set(NO_DOOR_WHOLE_RUN_STAGE_2)
+    assert (len(ROWS_STAGE_2), len(DOOR_USERS_STAGE_2)) == (8, 2)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES_STAGE_2)
+def test_a_stage_2_row_has_its_premise_on_the_rom_s_run(name):
+    aes_switching.vet_the_premise(aes_event.SWITCHING_ROWS[name].row, aes_switching.Premise(*NO_DOOR_PREMISES_STAGE_2[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN_STAGE_2)
+def test_a_stage_2_row_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES_STAGE_2[name])
+    aes_switching.vet_on_a_blob(blob, aes_event.SWITCHING_ROWS[name].row, premise, NO_DOOR_PRICED_STAGE_2[name][3],
+                                NO_DOOR_WHOLE_RUN_STAGE_2[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED_STAGE_2)
+def test_a_stage_2_row_is_priced_as_pinned_and_under_the_bar(name):
+    aes_switching.vet_the_table_s_price(aes_event.SWITCHING_ROWS[name].row, aes_switching.Priced(*NO_DOOR_PRICED_STAGE_2[name]))

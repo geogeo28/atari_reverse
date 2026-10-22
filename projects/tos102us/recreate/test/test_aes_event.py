@@ -2193,21 +2193,55 @@ def test_an_in_process_door_case_s_declared_budget_is_held_from_above_too():
         fmdo.door_run(fmdo.DO, FM_DO_ARGUMENTS, fmdo.in_the_ring(aes_event.RETURN_KEY), budget=fmdo.SESSION_INSNS)
 
 
+# ...AND SINCE THE USER'S RULING OF 2026-10-21 ("rows may declare budget"), A NAMED ROW THAT SWITCHES, past the default's
+# margin, declares one too — held both ways as a case's (every derivation of the row: `aes_event._vet_the_margin`,
+# `_vet_not_stale`; the four refusals by name in `test_desk_fun.py`). Each battery's, by name: unit H's drivers past
+# the margin (14), dir_op's seven copies, do_wfull's shrink arm.
+def _named_rows_declaring_a_budget():
+    import test_desk_dir
+    import test_desk_fun
+    import test_desk_supp
+    import test_desk_top
+    import test_desk_win
+    import aes_switching
+    rows = [*(row for row in test_desk_fun.DRIVER_ROWS.values() if row.budget),
+            *(row for row in test_desk_dir.ENGINE_ROWS.values() if getattr(row, "budget", None)),
+            *(row for row in test_desk_win.ROWS.values() if getattr(row, "budget", None)),
+            # (band 6 slice F3, stage 2, author B: unit J's openers and closers, do_wopen's new windows, cnx_get's restarts)
+            *(row for battery in (test_desk_supp.ROWS_WAVE_2, test_desk_win.ROWS_STAGE_2, test_desk_top.ROWS_WAVE_2)
+              for row in battery.values() if row.budget)]
+    return {aes_switching.row_name(row) for row in rows}
+
+
+NAMED_ROWS_DECLARING_A_BUDGET = 43      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
+
+
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
     """A sliced row's deliveries are derived again (`rederived`, the snapshot's noise sweep) under the budget its
-    registration declared — recorded with the row; every other registered row declares none. (The sliced rows are
-    fm_do's long typing session's and the file selector's sessions', each session with its own budget — the sessions
-    that SWITCH among them, whose record is the registrar's: `SwitchingRow.budget`.)"""
+    registration declared — recorded with the row; every other registered row declares none but the NAMED rows past the
+    margin (the user's ruling of 2026-10-21), each derived again under its own. (The sliced rows are fm_do's long typing
+    session's and the file selector's sessions', each session with its own budget — the sessions that SWITCH among
+    them, whose record is the registrar's: `SwitchingRow.budget`.)"""
     import test_boot_snapshot  # noqa: F401  (every battery registered: the three registries read here are theirs)
     declared = {row_name: row.budget for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget}
     declared.update({row_name: held.row.budget for row_name, held in aes_event.SWITCHING_ROWS.items() if held.row.budget})
-    assert set(declared) == set(aes_event.SLICED_ROWS)
-    switching = {name for name in declared if name in aes_event.SWITCHING_ROWS}
+    named = _named_rows_declaring_a_budget()
+    assert len(named) == NAMED_ROWS_DECLARING_A_BUDGET and not named & set(aes_event.SLICED_ROWS)
+    assert set(declared) == set(aes_event.SLICED_ROWS) | named
+    switching = {name for name in declared if name in aes_event.SWITCHING_ROWS and name in aes_event.SLICED_ROWS}
     assert switching and all(aes_event.session_of(name) is aes_event.SWITCHING_ROWS[name] for name in switching)
     fm_do_s = {row_name: budget for row_name, budget in declared.items() if row_name.startswith("aes_fm_do, ")}
     assert fm_do_s and set(fm_do_s.values()) == {fmdo.SESSION_INSNS}
     row_name = next(iter(fm_do_s))
     assert aes_event.rederived(row_name) == aes_event.INTERRUPTED_ROWS[row_name].delivered
+
+
+@pytest.mark.parametrize("row_name", sorted(_named_rows_declaring_a_budget()))
+def test_a_named_row_s_declared_budget_serves_its_every_later_derivation(row_name):
+    """...each NAMED row past the margin derived again under its own budget (the run past the default's margin would
+    be refused by name without it) — the same switches its registration settled."""
+    held = aes_event.SWITCHING_ROWS[row_name]
+    assert held.row.budget and aes_event.rederived(row_name) == held.switches
 
 
 # ---- A SESSION PRICED BY ITS SLICES: the ROM's own fs_input, the oracle on both shores ------------------------------------
@@ -4712,8 +4746,9 @@ ROWS_THAT_SWITCH = {
     # band 6 slice F2: wave 1b's routines that yield through a binding of unit D — every row at an arrival of each,
     # one block a group
     # ---- band 6 slice F2, group G1 (units I, L) ----
-    # units I and L flipped (`test_desk_win.py`, `test_desk_view.py`): 32 rows that switch (3 door users', 29 with no door)
-    "aes_desk_rsrc_load": 2, "aes_do_wfull": 2, "aes_do_xyfix": 3, "aes_ini_str": 2, "aes_ini_tree": 3, "aes_obj_ialloc": 4,
+    # units I and L flipped (`test_desk_win.py`, `test_desk_view.py`): 33 rows that switch (4 door users', 29 with no door —
+    # do_wfull's shrink arm since F3 stage 2, its budget)
+    "aes_desk_rsrc_load": 2, "aes_do_wfull": 3, "aes_do_xyfix": 3, "aes_ini_str": 2, "aes_ini_tree": 3, "aes_obj_ialloc": 4,
     "aes_obj_init": 2, "aes_pro_exec": 2, "aes_win_alloc": 2, "aes_win_free": 2, "aes_win_sinfo": 2, "aes_win_start": 2,
     "aes_win_top": 2, "aes_zoom_closed": 2,
     # ---- end of group G1's ----
@@ -4743,7 +4778,7 @@ ROWS_THAT_SWITCH = {
     # band 6 slice F3: wave 2's routines that yield — every row at an arrival of each, one block a stage-author
     # ---- band 6 slice F3, stage 1, author A ---- (`test_desk_dir.py`'s engine: 10 over its GEMDOS replayed — d_dofcopy's
     # three and dir_op's one door users', d_doop's six with no door)
-    "aes_desk_d_dofcopy": 3, "aes_desk_d_doop": 6, "aes_desk_dir_op": 1,
+    "aes_desk_d_dofcopy": 3, "aes_desk_d_doop": 6, "aes_desk_dir_op": 8,   # (dir_op's seven copies since F3 stage 2: their budgets)
     # ---- end of stage 1 A's ----
     # ---- band 6 slice F3, stage 1, author B ---- (`test_desk_view.py`, `test_desk_win.py`, `test_desk_act.py`,
     # `test_desk_app.py`: 53 — 38 door users', 15 with no door; win_blt's, win_arrow's, win_srtall's and desk_verify's
@@ -4751,9 +4786,21 @@ ROWS_THAT_SWITCH = {
     "aes_win_blt": 4, "aes_win_slide": 2, "aes_win_arrow": 4, "aes_win_bdall": 4, "aes_desk_clear": 3, "aes_desk_verify": 2,
     "aes_act_bsclick": 7, "aes_act_bdown": 11, "aes_gr_drgplns": 12, "aes_app_start": 4,
     # ---- end of stage 1 B's ----
-    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- band 6 slice F3, stage 2, author A ---- (`test_desk_fun.py`'s drivers: 23 — 22 door users', fun_disk's emptied
+    # drive with no door, fourteen under their declared budgets (the user's ruling of 2026-10-21); `test_desk_app.py`:
+    # app_save's four with no door. And the rows that ruling admits that were NOT A ROW: dir_op's seven copies and
+    # do_wfull's shrink arm, counted on their routines' lines above)
+    "aes_desk_fun_rebld": 4, "aes_desk_fun_mkdir": 4, "aes_desk_fun_op": 3, "aes_desk_fun_ddst": 2, "aes_desk_fun_wdst": 3,
+    "aes_desk_fun_win2win": 1, "aes_desk_fun_win2desk": 2, "aes_desk_fun_disk": 2, "aes_desk_fun_desk2win": 2, "aes_app_save": 4,
     # ---- end of stage 2 A's ----
-    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- band 6 slice F3, stage 2, author B ---- (`test_desk_supp.py`: unit J's 17 door users', over GEMDOS replayed but the
+    # format's and the cartridge's, 14 under their declared budgets — the parked class NOT A ROW; since the stage's third
+    # fix pass do_fopen's two, close_folder's and fun_close's folder arm in a window restored after a show, the BIOS
+    # park named by nature where the ROM's run stores it; `test_desk_win.py`: pro_run's and do_wopen's 8,
+    # do_wopen's 2 door users under their budgets, 6 with no
+    # door; `test_desk_top.py`: cnx_get's 5 door users under their budgets)
+    "aes_do_diropen": 7, "aes_do_dopen": 3, "aes_desk_do_format": 1, "aes_close_window": 3, "aes_fun_close": 4, "aes_pro_run": 3,
+    "aes_do_wopen": 5, "aes_cnx_get": 5, "aes_do_fopen": 2, "aes_close_folder": 1,
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
@@ -4843,7 +4890,11 @@ BY_NATURE_CENSUS = {
                                              "aes_dispatch": 4, "aes_marshal": 1, "aes_desk_evnt_multi": 3},
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
                            # ---- band 6 slice F2, group G2 (units A, K, J) ---- app_blddesk's every row, drive_check's three
-                           THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4}, THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 3},
+                           # — and (band 6 slice F3, stage 2, author B) do_dopen's two under drive_check's floppy replayed;
+                           # (its third fix pass) do_fopen's two, close_folder's and fun_close's folder arm after a show
+                           THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4},
+                           THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 3, "aes_do_dopen": 2, "aes_do_fopen": 2, "aes_close_folder": 1,
+                                                  "aes_fun_close": 1},
                            # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
@@ -5466,9 +5517,42 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_gr_drgplns": ("AES_GR_DRGPLNS_FRAME", "AES_GR_BWAIT_ANSWERS", "AES_DESK_BIND_FRAME", "AES_GR_ISDOWN_ANSWERS",
                        "AES_ACT_CHG_RECT", "AES_DESK_WIN_FRAME"),
     # ---- end of stage 1 B's ----
-    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- band 6 slice F3, stage 2, author A ---- (MEASURED by the audit below: unit H's frames held across their waits —
+    # each driver's own and those of the drivers it calls, fun_rebld's across the rebuilt window's bindings and fun_msg's
+    # appl_write, the copy engine's dialog under form_do, fm_button's watch where a button is clicked)
+    "aes_desk_fun_rebld": ("AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
+    "aes_desk_fun_mkdir": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_MKDIR_FRAME", "AES_FM_DO_FRAME", "AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME",
+                           "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG", "AES_FM_ALERT_FRAME", *STILLDN_S,
+                           "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
+    "aes_desk_fun_op": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
+    "aes_desk_fun_ddst": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
+    "aes_desk_fun_wdst": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_FM_DO_FRAME"),
+    "aes_desk_fun_win2win": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_DESK_FUN_WIN2WIN_FRAME", "AES_FM_DO_FRAME",
+                             "AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
+    "aes_desk_fun_win2desk": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT",
+                              "AES_FM_BUTTON_FRAME", "AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME",
+                              "AES_DESK_FUN_MSG"),
+    "aes_desk_fun_disk": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_FM_DO_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME",
+                          "AES_DESK_WIN_FRAME", "AES_ACT_ALLCHG_RECTS"),
+    "aes_desk_fun_desk2win": ("AES_DESK_FUN_DESK2WIN_FRAME", "AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", "AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME",
+                              "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_WIN_FRAME", "AES_ACT_ALLCHG_RECTS", "AES_DESK_FUN_REBLD_FRAME",
+                              "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
     # ---- end of stage 2 A's ----
-    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- band 6 slice F3, stage 2, author B ---- (MEASURED by the audit below: the union over each door user's rows of the
+    # slots held where its process was parked — unit J's openers' and closers' window frames, the format's alert, do_wopen's
+    # new windows, cnx_get's restarts)
+    **{f"aes_{routine}": ("AES_DESK_VIEW_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME", "AES_ACT_CHG_RECT")
+       for routine in ("do_diropen", "do_dopen")},
+    "aes_desk_do_format": ("AES_DESK_SUPP_FRAME", "AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_close_window": ("AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME"),
+    "aes_fun_close": ("AES_DESK_FUN_CLOSE_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME",
+                      "AES_DESK_VIEW_FRAME"),
+    "aes_cnx_get": ("AES_DESK_CNX_GET_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_OPEN_FRAME"),
+    "aes_do_wopen": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME", "AES_ACT_CHG_RECT"),
+    # (the stage's third fix pass: do_fopen's and close_folder's rows in a window restored after a show)
+    "aes_do_fopen": ("AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME",
+                     "AES_ACT_CHG_RECT"),
+    "aes_close_folder": ("AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_OPEN_FRAME"),
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
