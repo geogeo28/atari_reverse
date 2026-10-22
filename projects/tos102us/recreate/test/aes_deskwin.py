@@ -125,10 +125,10 @@ def _in_place(routine, chain, nth, traps):
     arrived = arrival(routine, chain, nth)
     boot, stands_at, answers = arrived.boot, getattr(addrs, routine), []
     for _trap in range(traps):
-        boot = aes_boot.continued.derive(boot, (), dl.ARRIVAL_INSNS, dl.GEM_DOS_BACK, stands_at)
+        boot = aes_boot.continued(boot, (), dl.ARRIVAL_INSNS, dl.GEM_DOS_BACK, stands_at)
         stands_at = dl.GEM_DOS_BACK
         answers.append(boot.registers["d0"])
-    boot = aes_boot.continued.derive(boot, (), dl.ARRIVAL_INSNS, arrived.return_site, stands_at)
+    boot = aes_boot.continued(boot, (), dl.ARRIVAL_INSNS, arrived.return_site, stands_at)
     called_at = db.stack_pointer(arrived.boot)
     if db.stack_pointer(boot) != called_at + aes.LONG_BYTES:
         raise aes_boot.Refused(f"{routine}: the run reached {arrived.return_site:#x} on another frame than its own return")

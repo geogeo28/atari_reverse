@@ -3,6 +3,7 @@ same base image, the same deriving function, the same arguments by value — and
 below changes ONE of those and requires the derivation made again. Over a cache directory of the test's own.
 """
 import functools
+import hashlib
 import os
 import pickle
 import signal
@@ -141,6 +142,9 @@ CHANGED_INPUTS = {
         ({0x100: bytearray(b"\x01\x02\x03"), 0x101: bytearray(b"\xff")},),
         ({0x101: bytearray(b"\xff"), 0x100: bytearray(b"\x01\x02\x03")},)),
     "what an object says it is asked about": ((_Schedule({0: "a key"}, counted=0),), (_Schedule({0: "a press"}, counted=0),)),
+    # ...a string of bytes large enough to be read through the memo (`derived._of_large_bytes`), its LAST byte:
+    "the last byte of a large string of bytes": ((bytes(derived._MEMOISED_FROM_BYTES),),
+                                                 (bytes(derived._MEMOISED_FROM_BYTES - 1) + b"\x01",)),
 }
 
 
@@ -171,6 +175,24 @@ def test_equal_inputs_made_apart_are_one_question():
                            ((_Schedule({0: "a key"}, counted=0),), (_Schedule({0: "a key"}, counted=7),)),
                            ((Shape("A:\\", _closing_over(b"x")),), (Shape("A:\\", _closing_over(b"x")),))):
         assert derived.fingerprint(one) == derived.fingerprint(the_other)
+
+
+def test_a_large_string_of_bytes_is_read_once_per_content_and_to_the_digest_it_always_had():
+    """THE MEMO OF A LARGE `bytes` (`derived._of_large_bytes`) changes no key: what it answers is the digest `repr`
+    makes of the same bytes, at its first ask and when it is found again — by content, so a copy made apart is
+    found; and a value below the bound, or of a subclass of `bytes`, is read as it always was."""
+    large = bytes(range(256)) * (derived._MEMOISED_FROM_BYTES // 256)
+    by_repr = derived._digest(b"bytes", repr(large).encode())
+    asks = len(derived._LARGE_BYTES_DIGESTS)
+    assert derived.fingerprint(large) == by_repr == derived.fingerprint(bytes(bytearray(large)))
+    assert len(derived._LARGE_BYTES_DIGESTS) <= asks + 1, "two asks of one content: one digest made"
+    assert hashlib.sha256(large).digest() in derived._LARGE_BYTES_DIGESTS, "the content is kept in the memo"
+
+    class _Bytes(bytes):
+        pass
+    for small_or_other in (large[:-1], _Bytes(large)):
+        assert derived.fingerprint(small_or_other) == derived._digest(type(small_or_other).__name__.encode(),
+                                                                      repr(small_or_other).encode())
 
 
 def test_overlapping_pokes_are_read_as_the_image_they_make_laid_in_their_own_order():

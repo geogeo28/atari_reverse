@@ -7617,10 +7617,16 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (band 6 slice F3's stage 2's fourth fix pass, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **33,844 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (SPEED slice 1, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **33,846 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- SPEED SLICE 1 (2026-10-22, alone in the shared tree; content-neutral, no object moved): two levers on the registry's
+  collection — L2 memoises a large `bytes`' digest by content (every key byte-identical), L1 keeps the desk's arrival
+  and in-place continuations (`aes_boot.continued` in place of `.derive`, as their siblings). Collection 91.8 → 32.7 s
+  a worker at `-n 8`; `make test PYTEST_ARGS="-n 8"` 582 → 480 s warm, 934 → 761 s cold (`AES_DERIVED_ROOT` empty).
+  Collected 33,854 (+2, `test_derived.py`: the memo's pin and one more changed-input case); the orchestrator's
+  from-empty gate is this commit's figure.
 - BAND 6 SLICE F3, STAGE 2's FOURTH FIX PASS (2026-10-22, alone in the shared tree — the wave log's entry; no object
   moved, the table 8,472 lines): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside
   first: **33,833 passed / 8 skipped, 11 FAILED — all `test_status`**, which this text clears

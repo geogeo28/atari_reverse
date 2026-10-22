@@ -517,11 +517,33 @@ def _of_pokes(pokes):
     return digest.digest()[:_DIGEST_BYTES]
 
 
+def _of_scalar(value):
+    return _digest(type(value).__name__.encode(), repr(value).encode())
+
+
+# A LARGE STRING OF BYTES — a machine's megabyte, a disk — is asked about again and again, as the same content made
+# apart: `repr` over it was a third of a worker's registry import (26.9 of 79 s at 7.9 ms a megabyte; 6,822 asks of
+# 1,114 contents — reviewer A, 2026-10-22). So its digest is made ONCE PER CONTENT a process and found again by the
+# raw bytes' sha256 (0.44 ms a megabyte). The digest is `_of_scalar`'s own: every key stays what it was.
+_MEMOISED_FROM_BYTES = 1 << 16
+_LARGE_BYTES_DIGESTS = {}               # {sha256 of a large `bytes`' content: its `_of_scalar` digest}
+
+
+def _of_large_bytes(value):
+    content = hashlib.sha256(value).digest()
+    digest = _LARGE_BYTES_DIGESTS.get(content)
+    if digest is None:
+        digest = _LARGE_BYTES_DIGESTS[content] = _of_scalar(value)
+    return digest
+
+
 def _of(value, seen):
     """`value`'s canonical bytes: its kind, then its content — `seen` the containers and functions on the way down (a
     function whose closure reaches itself is named by its place, not walked for ever)."""
+    if type(value) is bytes and len(value) >= _MEMOISED_FROM_BYTES:     # exactly `bytes`: a subclass may repr otherwise
+        return _of_large_bytes(value)
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
-        return _digest(type(value).__name__.encode(), repr(value).encode())
+        return _of_scalar(value)
     if isinstance(value, (bytearray, memoryview)):
         return _digest(b"bytes-like", bytes(value))
     if isinstance(value, (struct.Struct, range)):

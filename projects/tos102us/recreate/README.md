@@ -3636,6 +3636,12 @@ A STALE ANSWER CANNOT BE SERVED, because "the same question" is CONTENT. WHAT KE
    the image they make — runs that do not overlap in address order, runs that OVERLAP in the order they are laid
    (`make_image`'s: the same runs laid the other way round are another image, and another question). An argument
    of any other kind is REFUSED by name.
+   A LARGE STRING OF BYTES (64 KiB or more, exactly `bytes`: a machine's megabyte, a disk) is read through a memo of
+   the process (`derived._of_large_bytes`): its digest is the one `repr` always made of it, made ONCE PER CONTENT
+   and found again by the raw bytes' sha256 — `repr` over them was a third of a worker's registry import (6,822 asks
+   of 1,114 contents, 7.9 ms a megabyte). The memo changes no key: the 6,129 keys a collection asks were
+   byte-identical before and after it (SPEED slice 1, 2026-10-22). `test_derived.py` pins it: the memo's digest is
+   `repr`'s, a large string's last byte is another question, and a subclass of `bytes` is read as before.
 
 THE KEY NAMES THE TREE THE PROCESS IS MADE OF — the part no digest gives, because agents edit this tree while runs
 are in flight and a process is the files it has ALREADY read (measured before this rule: an edit 0.3 s into a
@@ -3660,6 +3666,11 @@ Beyond the key:
   pointer's was found by processes that each derived for themselves); one that is not what the ROM derives now ends
   the process that found it, BY NAME. The run's last lines say how many were made again
   (`derived: N kept answers made again and found equal, in M processes`);
+- THE DESK'S ARRIVALS ARE KEPT CONTINUATIONS (`aes_deskleaves.arrival` and `in_place`, `aes_deskwin._in_place`), as
+  every sibling module's were: each hop is `aes_boot.continued`, keyed by the `Boot` it continues (every field, the
+  blob included), the reception, the budget and the stops. Made afresh with `continued.derive` they were about 260 ROM
+  runs and 24 s of every process's import (SPEED slice 1, 2026-10-22). `aes_desk.stepped` / `stepped_ours` keep
+  `.derive`: their profile is the run's own;
 - THE MONKEYPATCH RULE: a test that takes `monkeypatch` DERIVES EVERYTHING ITSELF AND MAKES ITS OWN FORKS
   (`conftest.py`, autouse) — a patch can change what no key sees (a module's budget, a counter on the runs made),
   and the zygote froze every module as the session started, so a patch on the fork's side is never its fork's
@@ -3703,7 +3714,7 @@ HOW IT IS RUN:
   over every core, fewest-imports first, so the bench and every worker are served: 17 s for a new tree, a tenth of
   a second for one already made. A bare `pytest` with nothing made first derives in every worker. A fork of the
   pass that DIES ends it by name (`test/fork_pool.py`), and `make` with it — it does not wait for ever.
-- `make clean` removes `build/`, the cache with it. It holds 16 MB a tree; the six most lately used trees are kept
+- `make clean` removes `build/`, the cache with it. It holds about 400 MB a tree (396 MB measured 2026-10-22); the six most lately used trees are kept
   and one unused for two days goes.
 - THE SWITCHES, all environment variables: `AES_DERIVED_OFF=1` (nothing read or written: the cold shore of any
   A/B); `AES_NO_ZYGOTE=1` (no process forks a zygote: every guard's fork is its worker's own, the other A/B);
@@ -3712,9 +3723,9 @@ HOW IT IS RUN:
   interpreters — THE ZYGOTE, above); `AES_STEERED_FOR_NOTHING=1` (the on-demand sweep of the steering reasons:
   THE EVENT DOOR, above); `RUN_SLOW=1` (the placement search and the other tests gated as slow). INTERNAL, never set
   by hand: `AES_DERIVED_TREE`, a process's tree key and the record it was made with, handed to its children.
-- TELLING A COLD RUN FROM A WARM ONE: collection is 36–40 s a worker cold and about 10 s warm (pytest's own wall,
-  ten workers, quiet at the start: 209 s and 1,560 CPU-s for a bare cold `pytest`, 146 s and 1,288 CPU-s warm —
-  22,681 tests, 2026-10-07; before the kit read images in place and the zygote's lazy-cache fix: 231 / 170 s). A
+- TELLING A COLD RUN FROM A WARM ONE: the registry's collection is 33 s a worker at `-n 8`, cold or warm alike (`make
+  derived` makes everything first; 91.8 s before SPEED slice 1). `make test PYTEST_ARGS="-n 8"` takes 480 s warm and
+  761 s with `AES_DERIVED_ROOT` empty (582 / 934 s before it; 33,854 tests, 2026-10-22). A
   timing quoted without saying which is not a timing; for a cold figure point `AES_DERIVED_ROOT` at an empty directory or set
   `AES_DERIVED_OFF=1`, and remember that ANY edit under the keyed tree makes the next run cold.
 - WHAT MUST STAY EQUAL cold, warm and off (the content-neutrality check of any change here): the collected case ids

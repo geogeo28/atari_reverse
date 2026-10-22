@@ -259,11 +259,13 @@ def as_arrival(routine, boot):
 def arrival(at):
     """THE ARRIVAL `at` (an `At`): the chain's step run from the machine the steps before it left, stopped at the
     routine's entry — at its first arrival, then on from there to the next, `at.nth` times."""
+    # Each hop here and in the runs in place is the KEPT continuation, keyed by the boot it continues: made afresh,
+    # they were about 260 ROM runs and 24 s of every process's registry import (SPEED slice 1, 2026-10-22).
     machine, stands_at, step = _before(at.chain, at.step)
     entry = getattr(addrs, at.routine)
-    boot = aes_boot.continued.derive(machine.boot, tuple(step.hand(machine)), step.budget, entry, stands_at)
+    boot = aes_boot.continued(machine.boot, tuple(step.hand(machine)), step.budget, entry, stands_at)
     for _again in range(at.nth - 1):
-        boot = aes_boot.continued.derive(boot, (), ARRIVAL_INSNS, entry, entry)
+        boot = aes_boot.continued(boot, (), ARRIVAL_INSNS, entry, entry)
     return as_arrival(at.routine, boot)
 
 
@@ -282,11 +284,11 @@ def in_place(arrived):
     TO ITS CALLER — the stack pointer one return address above the one it was called at."""
     boot, stands_at, traps = arrived.boot, arrived.boot.registers["pc"] & BUS, []
     for back in TRAP_RETURNS[arrived.routine]:
-        boot = aes_boot.continued.derive(boot, (), ARRIVAL_INSNS, back, stands_at)
+        boot = aes_boot.continued(boot, (), ARRIVAL_INSNS, back, stands_at)
         sp, stands_at = _stack_pointer(boot), back
         traps.append(Trap(case.word_in(boot.ram, sp), bytes(boot.ram[sp + WORD_BYTES:sp + WORD_BYTES + TRAP_FRAME_SHOWN]),
                           boot.registers["d0"], boot))
-    boot = aes_boot.continued.derive(boot, (), ARRIVAL_INSNS, arrived.return_site, stands_at)
+    boot = aes_boot.continued(boot, (), ARRIVAL_INSNS, arrived.return_site, stands_at)
     called_at = _stack_pointer(arrived.boot)
     if _stack_pointer(boot) != called_at + LONG_BYTES:
         raise aes_boot.Refused(f"the run arrived at {arrived.return_site:#x} with the stack pointer at {_stack_pointer(boot):#x}: "
