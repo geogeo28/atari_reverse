@@ -404,23 +404,35 @@ def test_every_flipped_routine_of_the_unit_has_a_row_at_an_arrival_and_its_pins_
         aes_switching.row_name(row) for row in switching if not row.door}
 
 
+def _vet_the_premise(name, premises):
+    import aes_switching
+    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*premises[name]))
+
+
+def _vet_on_a_blob(name, blob, premises, priced, whole):
+    import aes_switching
+    premise = aes_switching.Premise(*premises[name])
+    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, priced[name][3], whole[name])
+
+
+def _vet_the_price(name, priced):
+    import aes_switching
+    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*priced[name]))
+
+
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)
 def test_a_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
-    import aes_switching
-    aes_switching.vet_the_premise(_registered_row(name), aes_switching.Premise(*NO_DOOR_PREMISES[name]))
+    _vet_the_premise(name, NO_DOOR_PREMISES)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN)
 def test_a_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
-    import aes_switching
-    premise = aes_switching.Premise(*NO_DOOR_PREMISES[name])
-    aes_switching.vet_on_a_blob(blob, _registered_row(name), premise, NO_DOOR_PRICED[name][3], NO_DOOR_WHOLE_RUN[name])
+    _vet_on_a_blob(name, blob, NO_DOOR_PREMISES, NO_DOOR_PRICED, NO_DOOR_WHOLE_RUN)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PRICED)
 def test_a_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
-    import aes_switching
-    aes_switching.vet_the_table_s_price(_registered_row(name), aes_switching.Priced(*NO_DOOR_PRICED[name]))
+    _vet_the_price(name, NO_DOOR_PRICED)
 
 
 # THE THUNKS G4'S FLIP LEAVES ENTERED BY NO WALKED CHAIN (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`, group G4's block):
@@ -611,8 +623,10 @@ def test_d_dofcopy_s_name_conflict_skipped_by_a_click_is_the_rom_s():
     assert tuple(function for function, _frame in cdir.engine_calls(ran.image)) == replay.functions
 
 
-def test_the_copy_engine_is_linked_and_unbound(blob):
-    da.unbound(blob, cdir.UNIT_C_WAVE_2)
+def test_the_copy_engine_is_flipped(blob):
+    """FLIPPED at band 6 slice F3, stage 1 (`aes_deskarrive.flipped`): each core called by its own thunk of the table,
+    each entry ours through it."""
+    da.flipped(blob, cdir.UNIT_C_WAVE_2)
 
 
 # ---- d_dofcopy's arms no chain's GEMDOS reaches: LABELLED ARGUMENT CLASSES, GEMDOS SCRIPTED ------------------------------
@@ -741,3 +755,130 @@ def test_d_doop_an_argument_class_the_walk_s_file_read_only_with_a_time_scripted
     assert tuple(function for function, _frame in calls) == replay.functions
     created = [frame for function, frame in calls if function == FCREATE]
     assert created and created[0][aes.LONG_BYTES:aes.LONG_BYTES + aes.WORD_BYTES] == struct.pack(">H", READ_ONLY_ARCHIVED_ATTRIBUTES & ~1)
+
+
+# ---- band 6 slice F3, stage 1: THE ENGINE'S ROWS ----------------------------------------------------------------------------
+# EVERY CASE AT AN ARRIVAL REGISTERED OVER ITS OWN STAGING (the orchestrator's ruling (c): the wave's own recorder as a row
+# kind — no wider ledger; `aes_deskdir.ENGINE`'s 24 entries, not band 5's 11): the arrival's megabyte whole but the
+# harness's window with the ROM's own run in place laid over it as the recorder's script (`aes_deskdir.replayed`, `REPLAYED`
+# in the row's name), its chain's keys at its idles, the replay's twins its companion's (`aes_deskarrive.register_row`'s
+# `pokes`, `hook`, `at_idle`). A plain row where the case reaches no binding; a row that switches where it does — A DOOR
+# USER where its run waits at an alert or a dialog (MEASURED: the table's second count, its door calls), one WITH NO DOOR
+# where its yield is objc_draw's alone (measured: no door call — registered as a door user it has no second count). The
+# LAID case and the classes stay Tier 1's.
+# NOT A ROW, by name: dir_op's seven copies (`ENGINE_NOT_A_ROW`) — each run is past the default derivation margin (the
+# registrar refuses it: "raise the budget, from this run"; Tier 1 declares each its own budget), and a registered row
+# declares one only on a session's slice (`test_aes_event`): do_wfull's class, the user's question (AWAITING 24).
+ENGINE_NOT_A_ROW = {engine_label(each): f"its run is past the default derivation margin (Tier 1's budget {each.budget:,})"
+                    for each in ENGINE_CASES if each.budget and not each.laid}
+
+
+def engine_row_label(each):
+    """A row's label: the arrival, the staging, the keys (the routine is its name's core)."""
+    typed = f"; {len(each.wakes)} key(s) typed at its idles" if each.wakes else ""
+    return f"arrival {each.nth} of {each.chain} [{cdir.REPLAYED}]{typed}"
+
+
+def _engine_row(each):
+    arrived, replay = engine_replay(each)
+    pokes = case.merge_pokes(da.row_machine_of(arrived), cdir.replayed(replay))
+    at_idle = {idle: aes_event.key(scancode) for idle, scancode in enumerate(each.wakes)}
+    return da.register_row(da.Case(each.name, each.chain, each.nth, yields=each.yields), pokes=pokes,
+                           label_said=engine_row_label(each), hook=cdir.engine_hook, at_idle=at_idle, door=bool(each.wakes))
+
+
+ENGINE_ROWS = {engine_label(each): _engine_row(each) for each in ENGINE_CASES
+               if not each.laid and engine_label(each) not in ENGINE_NOT_A_ROW}
+ENGINE_ROWS_MADE, ENGINE_NOT_ROWS = 23, 7       # of the 30 engine cases at arrivals (the thirty-first is the LAID one)
+ENGINE_DOOR_USERS_PRICED = {
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((305330, 408642), (284950, 375540), 5, (0, 0, 0)),
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((208510, 287970), (188130, 254868), 5, (0, 0, 0)),
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 3 key(s) typed at its idles":
+        ((480238, 659488), (424362, 571226), 7, (0, 0, 0)),
+    "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        ((469502, 625872), (444014, 583862), 6, (0, 0, 0)),
+}
+ENGINE_DOOR_USERS_WHOLE_RUN = {
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (1997048, 1946398), "bench_shipped": (1997048, 1925132)},
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (1196018, 1152004), "bench_shipped": (1196018, 1135610)},
+    "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 3 key(s) typed at its idles":
+        {"bench": (2592834, 2494104), "bench_shipped": (2592834, 2456264)},
+    "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
+        {"bench": (3068076, 2971322), "bench_shipped": (3068076, 2965814)},
+}
+ENGINE_NO_DOOR_PREMISES = {
+    "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0x1, ()),
+    "aes_desk_d_doop, arrival 1 of files: the folder (not empty) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), 0x1, ()),
+    "aes_desk_d_doop, arrival 1 of folders: A (holding B) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), 0x1, ()),
+    "aes_desk_d_doop, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0x1, ()),
+    "aes_desk_d_doop, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 0x1, ()),
+    "aes_desk_d_doop, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e), 0x1, ()),
+}
+ENGINE_NO_DOOR_PRICED = {
+    "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((34672, 47862), None, None, (0, 0, 0)),
+    "aes_desk_d_doop, arrival 1 of files: the folder (not empty) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((67864, 94486), None, None, (0, 0, 0)),
+    "aes_desk_d_doop, arrival 1 of folders: A (holding B) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((71540, 98946), None, None, (0, 0, 0)),
+    "aes_desk_d_doop, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((33376, 46058), None, None, (0, 0, 0)),
+    "aes_desk_d_doop, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((32576, 45106), None, None, (0, 0, 0)),
+    "aes_desk_d_doop, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        ((75216, 104760), None, None, (0, 0, 0)),
+}
+ENGINE_NO_DOOR_WHOLE_RUN = {
+    "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (368444, 360992), "bench_shipped": (368444, 358442)},
+    "aes_desk_d_doop, arrival 1 of files: the folder (not empty) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (705908, 690744), "bench_shipped": (705908, 685602)},
+    "aes_desk_d_doop, arrival 1 of folders: A (holding B) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (737014, 720754), "bench_shipped": (737014, 716108)},
+    "aes_desk_d_doop, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (342396, 335042), "bench_shipped": (342396, 332810)},
+    "aes_desk_d_doop, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (336720, 329286), "bench_shipped": (336720, 327134)},
+    "aes_desk_d_doop, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
+        {"bench": (668332, 651522), "bench_shipped": (668332, 645412)},
+}
+
+
+def test_every_engine_case_at_an_arrival_is_a_row_or_not_a_row_by_name_and_its_pins_are_the_rows():
+    import aes_switching
+    at_arrivals = [engine_label(each) for each in ENGINE_CASES if not each.laid]
+    assert sorted(at_arrivals) == sorted([*ENGINE_ROWS, *ENGINE_NOT_A_ROW])
+    assert (len(ENGINE_ROWS), len(ENGINE_NOT_A_ROW)) == (ENGINE_ROWS_MADE, ENGINE_NOT_ROWS)
+    assert {each.name for each in ENGINE_CASES if engine_label(each) in ENGINE_NOT_A_ROW} == {DIR_OP}
+    assert {da.entry_of(each.name) for each in ENGINE_CASES if engine_label(each) in ENGINE_ROWS} == {
+        da.entry_of(name) for name in cdir.UNIT_C_WAVE_2}
+    switching = [row for row in ENGINE_ROWS.values() if hasattr(row, "door")]
+    assert set(ENGINE_DOOR_USERS_PRICED) == set(ENGINE_DOOR_USERS_WHOLE_RUN) == {
+        aes_switching.row_name(row) for row in switching if row.door}
+    assert set(ENGINE_NO_DOOR_PREMISES) == set(ENGINE_NO_DOOR_PRICED) == set(ENGINE_NO_DOOR_WHOLE_RUN) == {
+        aes_switching.row_name(row) for row in switching if not row.door}
+
+
+@pytest.mark.parametrize("name", ENGINE_NO_DOOR_PREMISES)
+def test_an_engine_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    _vet_the_premise(name, ENGINE_NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", ENGINE_NO_DOOR_WHOLE_RUN)
+def test_an_engine_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    _vet_on_a_blob(name, blob, ENGINE_NO_DOOR_PREMISES, ENGINE_NO_DOOR_PRICED, ENGINE_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", ENGINE_NO_DOOR_PRICED)
+def test_an_engine_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    _vet_the_price(name, ENGINE_NO_DOOR_PRICED)

@@ -166,12 +166,14 @@ def test_a_row_is_priced_as_pinned_and_under_the_bar(name):
 # dropped). A routine whose run traps runs over GEMDOS REPLAYED — and, under drive_check, the floppy too
 # (`aes_desksupp.replayed_row`: the ROM's run in place's answers, DTAs and driver, A LABELLED STAGING said in the id).
 import aes_deskwin as w                 # noqa: E402 — wave 2's, kept with its section
+import aes_desk                         # noqa: E402
 import case                             # noqa: E402
 from harness import addrs               # noqa: E402
 
 Case = w.Case
 OPEN, OPENED, TWO_WINDOWS = "A: File > Open", "A: opened", "window: A: opened again (two windows)"
 FILES, SHOWN = "files: A: opened", "file: shown, a key at its end"
+CARTRIDGE_OPENED = aes_desk.CARTRIDGE_OPENED                 # drive 'c' opened: the labelled class of disk's chain
 FOLDER_OPENED, FOLDER_CLOSED = "folder: opened", "folder: File > Close"
 CLOSE_WINDOW, CLOSER = "window: File > Close Window", "window: its closer clicked"
 FORMAT_RETURN = "A: File > Format, Return (the warning answered)"
@@ -205,6 +207,11 @@ CASES_WAVE_2 = (
     # (the two arms no chain makes: each a labelled staging over an arrival's own machine, said in the id)
     Case("AES_ROM_DO_DIROPEN", OPEN, arguments=lambda a: a.arguments, why=NO_PATH_NODE),
     Case("AES_ROM_DO_FOPEN", FOLDER_OPENED, arguments=lambda a: a.arguments, why=PATH_REFUSED, budget=2_250_000),
+    # (band 6 slice F3's fix pass) THE CARTRIDGE'S ICON OPENED, on the labelled class of disk whose cartridge line is a
+    # drive's (`aes_desk.CARTRIDGE_OPENED`): do_dopen's arm for 'c' — no drive_check, no chdir: the ROM's quirk AS IT
+    # SHIPS (`desksupp.c` aes_do_dopen) — and do_diropen's, its window named the cartridge's; no GEMDOS call, nothing
+    # replayed (measured: both held with no replay)
+    Case("AES_ROM_DO_DOPEN", CARTRIDGE_OPENED, budget=3_000_000), Case("AES_ROM_DO_DIROPEN", CARTRIDGE_OPENED, budget=3_000_000),
 )
 WAITS_J = {("AES_ROM_DESK_DO_FORMAT", FORMAT_RETURN): RETURN_AT_THE_FIRST_IDLE, ("AES_ROM_DO_DIROPEN", OPEN, NO_PATH_NODE): RETURN_AT_THE_FIRST_IDLE}
 
@@ -220,7 +227,7 @@ def _path_refused(each):
 
 def _waits(each):
     return WAITS_J.get((each.name, each.chain) if not each.why else (each.name, each.chain, each.why), {})
-TRAPS_J_CASE = lambda each: each.name in TRAPS_J and each.why != NO_PATH_NODE      # noqa: E731
+TRAPS_J_CASE = lambda each: each.name in TRAPS_J and each.why != NO_PATH_NODE and each.chain != CARTRIDGE_OPENED  # noqa: E731
 BY_LABEL_WAVE_2 = {w.label(each) + (f"; {ds.REPLAYED}" if TRAPS_J_CASE(each) else "") + (" [LAID]" if each.why else ""): each
                    for each in CASES_WAVE_2}
 assert len(BY_LABEL_WAVE_2) == len(CASES_WAVE_2), "two cases of one name"
@@ -250,7 +257,7 @@ def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
     assert bool(w.the_rom_s_run(the_row).idles) == bool(_waits(each))
 
 
-ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 20, 2
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 22, 2
 
 
 def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
@@ -263,10 +270,10 @@ def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
 
 
 UNPINNED_WAVE_2 = {
-    "AES_ROM_DO_DIROPEN": "the cartridge's drive 'c' (its window named \"Cartridge\", the name kept as the root's): no cartridge "
-                          "in the model (W6-R8)",
+    "AES_ROM_DO_DIROPEN": "a cartridge in the port (W6-R8: the model's port reads 0 — its drive 'c' opened is pinned, empty, on "
+                          "the labelled class's chain)",
     "AES_ROM_DO_DOPEN": "no window free (a fifth: four open — no chain opens four); the drive's check failing (a read error, "
-                        "W3-R7; every icon's drive is in the map); the cartridge's icon (W6-R8)",
+                        "W3-R7; every icon's drive is in the map)",
     "AES_ROM_DO_FOPEN": "the drive's check failing (as do_dopen's)",
     "AES_ROM_DESK_DO_FORMAT": "a window current (selecting a desktop icon makes none current); an icon not a disk (Format is "
                               "enabled for disks alone)",

@@ -888,11 +888,210 @@ def test_no_caller_reads_what_gr_drgplns_or_act_bsclick_leave_in_d0_and_act_bdow
 NO_WORD_IN_C_WAVE_2 = 27
 
 
-def test_the_wave_2_routines_are_linked_unbound_and_the_rom_s(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, asked of every held core); the table's entries the ROM's; no
-    registry row."""
-    assert not db.bound_referrers(blob, da.UNIT_B_WAVE_2)
-    verdicts, linef_table = da.table_verdicts(da.UNIT_B_WAVE_2)
-    assert verdicts == {name: linef_table.THE_ROM_S for name in da.UNIT_B_WAVE_2}
-    assert set(da.UNIT_B_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    assert not da.registered(da.UNIT_B_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 1): the three whole ------------------------------------------------------------------
+def test_the_wave_2_routines_are_flipped(blob):
+    """THE FLIP PIN (`aes_deskarrive.flipped`): each core called by its own thunk of the table, each entry OURS THROUGH
+    THAT THUNK, none held — and no function outside the unbound desk refers to a core still held."""
+    dar.flipped(blob, da.UNIT_B_WAVE_2)
+
+
+# ---- band 6 slice F3: THE THREE'S ROWS — every case at an arrival registered (`aes_deskact.register_row`), each A ROW THAT
+# SWITCHES (every one reaches a binding that yields), its wait ended by the case's own wake (`WAKES_WAVE_2`: the drags'
+# idles, the rubber box's door calls). The classes stay Tier 1's.
+#   * DOOR USERS (`DOOR_USERS_WAVE_2`, MEASURED, the table's second count: 2 to 5 calls of a rebound entry — the drags'
+#     waits, the rubber box's polls), pinned in `DOOR_USERS_*_WAVE_2` and read by `test_tier3.py`: every row of act_bdown
+#     and gr_drgplns. act_bsclick's make no such call — rows that switch with no door.
+#   * THE X FLAG (`aes_switching.THE_X_FLAG_ALONE`), MEASURED (each row's blob differential at `$8995`, `$00` ours / `$10`
+#     the ROM's): act_bsclick's on a selected icon (act_chg alone) and on the corner (act_allchg alone), gr_drgplns's let
+#     go where it was pressed and over the program (a file: no drop).
+DOOR_USERS_WAVE_2 = frozenset(name for name, each in BY_LABEL_WAVE_2.items() if each.name in (BDOWN, DRGPLNS) and not each.why)
+X_FLAG_DIFFERS_WAVE_2 = frozenset(name for name, each in BY_LABEL_WAVE_2.items() if not each.why and (
+    (each.name == BSCLICK and each.chain in (FILE_TRASHED, CORNER))
+    or (each.name == DRGPLNS and (each.chain, each.wake) in ((DRAGGED, LET_GO_WHERE_PRESSED),
+                                                             (FILE_ON_FOLDER, "carried to the program (a file: no drop), let go")))))
+ROWS_WAVE_2 = {name: da.register_row(each, answered=SIGNATURES_WAVE_2[each.name][0] is not None, door_user=name in DOOR_USERS_WAVE_2,
+                                     x_flag_differs=name in X_FLAG_DIFFERS_WAVE_2,
+                                     **(WAKES_WAVE_2[each.wake](da.arrival_of(each)) if each.wake else {}))
+               for name, each in da.at_arrivals(BY_LABEL_WAVE_2, da.UNIT_B_WAVE_2).items()}
+
+# ---- THE WAVE-2 ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by
+# each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
+DOOR_USERS_PRICED_WAVE_2 = {
+    'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
+        ((333056, 465346), (286916, 395166), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
+        ((108926, 159502), (84914, 121860), 2, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        ((305700, 431592), (258116, 359774), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
+        ((371766, 525942), (327186, 457540), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; the button let go where it was pressed':
+        ((108920, 160122), (84908, 122480), 2, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
+        ((341806, 480664), (295752, 410584), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to a bare spot, let go':
+        ((197330, 286322), (151220, 216182), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of a rubber box on the desktop, round the trash; the box let go at its first door call':
+        ((50736, 72554), (41354, 57870), 4, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of a rubber box on the desktop, round drive B: and the trash; the box grown at its first door call, let go at its third':
+        ((136006, 183514), (118480, 158378), 5, (0, 0, 0)),
+    "aes_act_bdown, arrival 0 of text view: A: opened, the file's line dragged to the trash, Return (Cancel); carried to the trash, let go":
+        ((354780, 504366), (308726, 434286), 3, (0, 0, 0)),
+    'aes_act_bdown, arrival 0 of text view: drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        ((305700, 431592), (258116, 359774), 3, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
+        ((88592, 127040), (68664, 96786), 1, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
+        ((312722, 432884), (270666, 370092), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to drive B:, let go':
+        ((536146, 736890), (473490, 643314), 3, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to a bare spot, let go':
+        ((401794, 559002), (336190, 462070), 3, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, a bare spot, the trash again, let go':
+        ((627324, 866414), (538204, 735366), 4, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then a pixel on inside it, let go':
+        ((317124, 438740), (270666, 370092), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        ((177434, 252856), (133934, 188426), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
+        ((352044, 494468), (311548, 433454), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
+        ((320584, 446288), (278614, 383596), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the program (a file: no drop), let go':
+        ((183476, 262446), (142924, 201372), 2, (0, 0, 0)),
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried over the menu bar, let go':
+        ((177404, 252790), (133928, 188396), 2, (0, 0, 0)),
+    "aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried onto the window's title bar, let go":
+        ((172376, 246078), (131848, 185040), 2, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_WAVE_2 = {
+    'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
+        {"bench": (1530048, 1428084), "bench_shipped": (1530048, 1426634)},
+    'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
+        {"bench": (410188, 369250), "bench_shipped": (410188, 368692)},
+    'aes_act_bdown, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        {"bench": (1380316, 1281310), "bench_shipped": (1380316, 1280736)},
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
+        {"bench": (1627272, 1505112), "bench_shipped": (1627272, 1504816)},
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; the button let go where it was pressed':
+        {"bench": (409416, 368068), "bench_shipped": (409416, 367362)},
+    'aes_act_bdown, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
+        {"bench": (1482988, 1375482), "bench_shipped": (1482988, 1373866)},
+    'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to a bare spot, let go':
+        {"bench": (770300, 699760), "bench_shipped": (770300, 698088)},
+    'aes_act_bdown, arrival 0 of a rubber box on the desktop, round the trash; the box let go at its first door call':
+        {"bench": (202274, 185766), "bench_shipped": (202274, 185012)},
+    'aes_act_bdown, arrival 0 of a rubber box on the desktop, round drive B: and the trash; the box grown at its first door call, let go at its third':
+        {"bench": (806530, 773644), "bench_shipped": (806530, 772482)},
+    "aes_act_bdown, arrival 0 of text view: A: opened, the file's line dragged to the trash, Return (Cancel); carried to the trash, let go":
+        {"bench": (1490200, 1370038), "bench_shipped": (1490200, 1369750)},
+    'aes_act_bdown, arrival 0 of text view: drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        {"bench": (1380316, 1281310), "bench_shipped": (1380316, 1280736)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
+        {"bench": (364202, 333828), "bench_shipped": (364202, 333630)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
+        {"bench": (1484062, 1392662), "bench_shipped": (1484062, 1391572)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to drive B:, let go':
+        {"bench": (2743448, 2592116), "bench_shipped": (2743448, 2590052)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to a bare spot, let go':
+        {"bench": (1848478, 1728458), "bench_shipped": (1848478, 1726598)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, a bare spot, the trash again, let go':
+        {"bench": (2972918, 2791754), "bench_shipped": (2972918, 2789044)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then a pixel on inside it, let go':
+        {"bench": (1499466, 1406816), "bench_shipped": (1499466, 1405890)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
+        {"bench": (727254, 668314), "bench_shipped": (727254, 667324)},
+    'aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
+        {"bench": (1582274, 1470302), "bench_shipped": (1582274, 1470366)},
+    'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
+        {"bench": (1435088, 1338932), "bench_shipped": (1435088, 1337808)},
+    'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the program (a file: no drop), let go':
+        {"bench": (732856, 670576), "bench_shipped": (732856, 670150)},
+    'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried over the menu bar, let go':
+        {"bench": (727628, 668728), "bench_shipped": (727628, 667734)},
+    "aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried onto the window's title bar, let go":
+        {"bench": (716888, 659314), "bench_shipped": (716888, 658346)},
+}
+NO_DOOR_PREMISES_WAVE_2 = {
+    'aes_act_bsclick, arrival 0 of drive A: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_act_bsclick, arrival 0 of A: opened':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_act_bsclick, arrival 0 of file: dragged to the trash, OK':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_act_bsclick, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_act_bsclick, arrival 0 of a rubber box on the desktop, round the trash':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_act_bsclick, arrival 0 of file: selected':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+    'aes_act_bsclick, arrival 0 of file: double-clicked (the alert)':
+        ((), 0, 0xae5e, (0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e, 0xae5e), None, ()),
+}
+NO_DOOR_PRICED_WAVE_2 = {
+    'aes_act_bsclick, arrival 0 of drive A: selected':
+        ((84844, 115178), None, None, (0, 0, 0)),
+    'aes_act_bsclick, arrival 0 of A: opened':
+        ((84824, 115156), None, None, (0, 0, 0)),
+    'aes_act_bsclick, arrival 0 of file: dragged to the trash, OK':
+        ((10940, 17730), None, None, (0, 0, 0)),
+    "aes_act_bsclick, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        ((19976, 29756), None, None, (0, 0, 0)),
+    'aes_act_bsclick, arrival 0 of a rubber box on the desktop, round the trash':
+        ((20284, 31666), None, None, (0, 0, 0)),
+    'aes_act_bsclick, arrival 0 of file: selected':
+        ((73374, 100544), None, None, (0, 0, 0)),
+    'aes_act_bsclick, arrival 0 of file: double-clicked (the alert)':
+        ((73354, 100522), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN_WAVE_2 = {
+    'aes_act_bsclick, arrival 0 of drive A: selected':
+        {"bench": (482664, 459558), "bench_shipped": (482664, 460002)},
+    'aes_act_bsclick, arrival 0 of A: opened':
+        {"bench": (482642, 459538), "bench_shipped": (482642, 459982)},
+    'aes_act_bsclick, arrival 0 of file: dragged to the trash, OK':
+        {"bench": (24492, 18488), "bench_shipped": (24492, 18622)},
+    "aes_act_bsclick, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
+        {"bench": (36518, 27952), "bench_shipped": (36518, 28850)},
+    'aes_act_bsclick, arrival 0 of a rubber box on the desktop, round the trash':
+        {"bench": (38428, 28616), "bench_shipped": (38428, 29038)},
+    'aes_act_bsclick, arrival 0 of file: selected':
+        {"bench": (457106, 436594), "bench_shipped": (457106, 436272)},
+    'aes_act_bsclick, arrival 0 of file: double-clicked (the alert)':
+        {"bench": (457084, 436574), "bench_shipped": (457084, 436252)},
+}
+
+
+def test_the_wave_2_rows_are_the_cases_at_arrivals_and_every_one_that_switches_is_pinned_by_its_door():
+    """EVERY CASE AT AN ARRIVAL OF A FLIPPED ROUTINE A ROW; the plain ones exactly those named; EVERY ROW THAT SWITCHES
+    PINNED ONCE — a door user's in `DOOR_USERS_*_WAVE_2` (read by `test_tier3.py`), any other here; the X flag declared
+    on exactly the rows named."""
+    import aes_switching
+    switching = {aes_switching.row_name(row): name for name, row in ROWS_WAVE_2.items() if hasattr(row, "door")}
+    assert {name for name, row in ROWS_WAVE_2.items() if not hasattr(row, "door")} == set()
+    door_users = {row for row, name in switching.items() if ROWS_WAVE_2[name].door}
+    assert {switching[row] for row in door_users} == set(DOOR_USERS_WAVE_2)
+    assert set(DOOR_USERS_PRICED_WAVE_2) == set(DOOR_USERS_WHOLE_RUN_WAVE_2) == door_users
+    assert set(NO_DOOR_PREMISES_WAVE_2) == set(NO_DOOR_PRICED_WAVE_2) == set(NO_DOOR_WHOLE_RUN_WAVE_2) == set(switching) - door_users
+    assert {name for name, row in ROWS_WAVE_2.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS_WAVE_2)
+    assert (len(ROWS_WAVE_2), len(switching), len(door_users), len(X_FLAG_DIFFERS_WAVE_2)) == (30, 30, 23, 4)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES_WAVE_2)
+def test_a_wave_2_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    import aes_switching
+    aes_switching.vet_the_premise(aes_event.SWITCHING_ROWS[name].row, aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    import aes_switching
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name])
+    aes_switching.vet_on_a_blob(blob, aes_event.SWITCHING_ROWS[name].row, premise, NO_DOOR_PRICED_WAVE_2[name][3],
+                                NO_DOOR_WHOLE_RUN_WAVE_2[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    import aes_switching
+    aes_switching.vet_the_table_s_price(aes_event.SWITCHING_ROWS[name].row, aes_switching.Priced(*NO_DOOR_PRICED_WAVE_2[name]))

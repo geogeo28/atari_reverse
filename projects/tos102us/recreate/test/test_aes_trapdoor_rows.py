@@ -544,8 +544,9 @@ def test_the_vdi_arm_goes_on_to_the_handler_gem_found_with_nothing_changed(blob_
 @pytest.mark.parametrize("blob_name", isr.BLOBS)
 def test_ub_trampoline_calls_the_desk_s_draw_code_on_the_desk_s_own_stack_and_comes_back(blob_name):
     """ub_trampoline — LABELLED (a staged call over the desk's booted machine; the desk's draw code MADE to return
-    at its first instruction: `aes_trapdoor.through_ub_trampoline`). AT THE CALL both shores stand in the ROM's
-    routine on THE STACK THE DESK'S START-UP ALLOCATED (the machine's own AES_USERDEF_STACK: its top less the PARMBLK
+    at its first instruction: `aes_trapdoor.through_ub_trampoline`). AT THE CALL each shore stands in ITS draw code
+    — the ROM's `$fde844`; on a blob, since band 6 slice F3 (N18), the thunk into our C, the trampoline's operand
+    relocated — on THE STACK THE DESK'S START-UP ALLOCATED (the machine's own AES_USERDEF_STACK: its top less the PARMBLK
     and the return address), the PARMBLK handed, the caller's stack pointer parked — one megabyte outside the blob
     but the return address, a site of each build's region, mapped. WHERE IT RETURNS: the caller's stack pointer
     back, D0 the draw code's answer, every other register as the callee left it, the megabyte equal the same way."""

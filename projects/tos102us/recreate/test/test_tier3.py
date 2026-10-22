@@ -91,7 +91,17 @@ import test_desk_view                                      # noqa: E402  (unit L
 # ---- band 6 slice F2c: its batteries whose door users' rows are pinned there ----
 import test_desk_act                                       # noqa: E402  (unit B: gr_isdown's and gr_bwait's door users)
 # ---- end of slice F2c's ----
-import test_boot_snapshot                                  # noqa: E402
+# ---- band 6 slice F3, stage 1, author A: its batteries whose door users' rows are pinned there ----
+# ---- end of stage 1 A's ----
+# ---- band 6 slice F3, stage 1, author B: its batteries whose door users' rows are pinned there ----
+# ---- end of stage 1 B's ----
+# ---- band 6 slice F3, stage 2, author A: its batteries whose door users' rows are pinned there ----
+# ---- end of stage 2 A's ----
+# ---- band 6 slice F3, stage 2, author B: its batteries whose door users' rows are pinned there ----
+# ---- end of stage 2 B's ----
+# ---- band 6 slice F3, stage 3: its batteries whose door users' rows are pinned there ----
+# ---- end of stage 3's ----
+import test_boot_snapshot                                 # noqa: E402
 
 
 RomBench = tier3.RomBench               # the project's own: the kit's, the fork queue's codes relocated for our shore
@@ -3542,6 +3552,25 @@ DOOR_USERS_WHOLE_RUN.update(test_desk_view.DOOR_USERS_WHOLE_RUN)
 DOOR_USERS_PRICED.update(test_desk_act.DOOR_USERS_PRICED)
 DOOR_USERS_WHOLE_RUN.update(test_desk_act.DOOR_USERS_WHOLE_RUN)
 # ---- end of slice F2c's ----
+# ...and, since band 6 slice F3, each wave-2 stage-author's, one block each (a battery an earlier block reads already
+# is not read again: the block says which one holds its new rows):
+# ---- band 6 slice F3, stage 1, author A ---- (unit C's engine: d_dofcopy's three and dir_op's one door users, over
+# its GEMDOS replayed — `test_desk_dir.py`, read above, holds them apart from its wave-1b rows)
+DOOR_USERS_PRICED.update(test_desk_dir.ENGINE_DOOR_USERS_PRICED)
+DOOR_USERS_WHOLE_RUN.update(test_desk_dir.ENGINE_DOOR_USERS_WHOLE_RUN)
+# ---- end of stage 1 A's ----
+# ---- band 6 slice F3, stage 1, author B ---- (units L's, I's and B's wave-2 door users — win_blt, win_slide, win_arrow,
+# win_bdall, desk_verify, act_bdown, gr_drgplns —, each battery's `*_WAVE_2` dicts; the three batteries are read above)
+for _battery in (test_desk_view, test_desk_win, test_desk_act):
+    DOOR_USERS_PRICED.update(_battery.DOOR_USERS_PRICED_WAVE_2)
+    DOOR_USERS_WHOLE_RUN.update(_battery.DOOR_USERS_WHOLE_RUN_WAVE_2)
+# ---- end of stage 1 B's ----
+# ---- band 6 slice F3, stage 2, author A ----
+# ---- end of stage 2 A's ----
+# ---- band 6 slice F3, stage 2, author B ----
+# ---- end of stage 2 B's ----
+# ---- band 6 slice F3, stage 3 ----
+# ---- end of stage 3's ----
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
@@ -3878,6 +3907,16 @@ UNPRICED_AT_A_ROM_ENTRY = {
     # ---- end of group G3's ----
     # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
     # ---- end of group G4's ----
+    # ---- band 6 slice F3, stage 1, author A ----
+    # ---- end of stage 1 A's ----
+    # ---- band 6 slice F3, stage 1, author B ----
+    # ---- end of stage 1 B's ----
+    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- end of stage 2 A's ----
+    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- end of stage 2 B's ----
+    # ---- band 6 slice F3, stage 3 ----
+    # ---- end of stage 3's ----
 }
 # OWED, the same class, registered nowhere yet: dos_sdta, dos_close and dos_cconout (host arguments of the same
 # `$fe3c28` tail; their batteries are bands 3's — STATUS.md's rows say "verified, unpriced").

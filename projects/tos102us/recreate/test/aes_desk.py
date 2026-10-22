@@ -1086,6 +1086,21 @@ CHAINS.update({
 })
 # ---- end of group G2's wave-4 ----
 # ---- end of band 6 wave 4's ----
+# ---- band 6 slice F3's fix pass: THE CARTRIDGE'S LINE A DRIVE (the user's ruling 2026-10-21, "price via INF class") ----
+# A LABELLED CLASS OF DISK (`aes_boot.THE_CARTRIDGE_A_DRIVE`, said in the machine's and the chain's names): the DESKTOP.INF
+# machine booted over the disk whose default text's cartridge line is retyped a drive's — and THE ROM AS IT SHIPS keeps it
+# and opens it: its reader drops a drive line lettered 'C' where the map has no C:, uppercase alone (`deskapp.c`
+# drive_line_kept), so the lowercase 'c' is a drive icon; and do_dopen skips drive_check for 'c' (`desksupp.c`
+# aes_do_dopen), so the window opens over pn_active's cartridge arm — cart_sfirst, cart_snext (and bands 0-5's cart_init,
+# cart_find), the port 0 on the oracle: no cartridge, the chain's end. A ROM bug, pinned as it ships (`test_desk_util.py`).
+CARTRIDGE_A_DRIVE = "the DESKTOP.INF machine, its cartridge's line a drive (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)"
+MACHINES[CARTRIDGE_A_DRIVE] = lambda: aes_boot.Machine(aes_boot.booted(aes_boot.inf_preinit(), aes_boot.cartridge_drive_disk()))
+CARTRIDGE_OPENED = "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)"
+CHAINS.update({
+    CARTRIDGE_OPENED: Chain(CARTRIDGE_A_DRIVE, double_clicked("drive c:'s icon", drive("c")),
+                            (OPEN_A_DRIVE, addrs.AES_ROM_PN_ACTIVE, addrs.AES_ROM_CART_SFIRST, addrs.AES_ROM_CART_SNEXT)),
+})
+# ---- end of slice F3's fix pass ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK
@@ -1225,7 +1240,8 @@ OUR_MACHINES = {
     FILES: lambda: _our_boot(aes_boot.files_preinit(), aes_boot.files_disk_of()),
     DISK_IN_B: lambda: aes_boot.with_a_disk_in_drive_b(OUR_MACHINES[INF_ICONS](), aes_boot.blank_disk()),
     SINGLE_SIDED_IN_B: lambda: aes_boot.with_a_disk_in_drive_b(OUR_MACHINES[INF_ICONS](), single_sided_disk()),
-    PRINTER_ON_LINE: lambda: aes_boot.with_a_printer_on_line(walked_ours(SHOW_PRINT_ALERT).machine)}
+    PRINTER_ON_LINE: lambda: aes_boot.with_a_printer_on_line(walked_ours(SHOW_PRINT_ALERT).machine),
+    CARTRIDGE_A_DRIVE: lambda: _our_boot(aes_boot.inf_preinit(), aes_boot.cartridge_drive_disk())}
 
 # ---- who ran: each PC charged to its routine; the ROM's text declared still to run ----
 # THE ROM'S TEXT OF BANDS 0-5 THAT A ROUTINE STILL THE ROM'S REACHES OTHERWISE THAN THROUGH THE TABLE — so the ROM's,
@@ -1261,26 +1277,54 @@ def _table_of(memory, at):
     return tuple(case.long_in(memory, at + index * LONG_BYTES) for index in range(aes.AES_LINEF_TABLE_ENTRIES))
 
 
+# A ROUTINE BOUND BY VALUE (band 6 slice F3, N18): no Line-F word names `$fde844`, the desk's G_USERDEF draw — the
+# ROM reaches it by ub_trampoline's `jsr`, and so does a machine of ours by the trampoline of OUR blob (`trapdoor.S`,
+# whose bytes are the ROM's but its relocated operands). So the trampoline's operands ARE that routine's binding: a
+# band-6 routine a ROM `jsr` of the trampoline names is ours where the blob's operand there is not the ROM's address
+# — read off the blob, decoded, not named here. `{our source's symbol: the ROM routine it stands for}`.
+BY_VALUE_CALLERS = {"aes_rom_ub_trampoline": addrs.AES_ROM_UB_TRAMPOLINE}
+A_CALL_TO = "jsr 0x"
+
+
+def bound_by_value(blob):
+    """`{a band-6 routine's start: the longword `blob`'s operand holds}` for every absolute `jsr` of a by-value caller
+    (`BY_VALUE_CALLERS`) whose ROM operand names a routine of band 6."""
+    import rom_data                     # (here: its decoder is objdump, wanted by this reading alone)
+    bound = {}
+    for symbol, rom in BY_VALUE_CALLERS.items():
+        ours = blob.entry(symbol) - blob.base
+        for at, text in rom_data.instructions(rom, rom + transcription.TRAPDOOR_ENTRIES[symbol].bytes):
+            if text and text.startswith(A_CALL_TO) and (target := int(text.removeprefix(A_CALL_TO), 16)) in routines():
+                bound[target] = case.long_in(blob.blob, ours + at - rom + WORD_BYTES)
+    return bound
+
+
+def _bound(blob):
+    """`{a band-6 routine's start: the longword `blob` binds it by}` — its entry of the bound table, or its by-value
+    caller's operand."""
+    table = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
+    in_the_table = {rom: ours for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), table) if rom in routines()}
+    return {**in_the_table, **bound_by_value(blob)}
+
+
 @functools.cache
 def flipped(blob=None):
-    """BAND 6'S ROUTINES WHOSE ENTRY OF THE TABLE `blob` (ours by default) BINDS IS OURS — a longword other than the
-    ROM's own: on a machine of ours a ROM caller's Line-F call of one runs our code. A frozenset of their starts."""
-    blob = blob or our_blob()
-    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
-    return frozenset(rom for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), bound) if ours != rom) & frozenset(routines())
+    """BAND 6'S ROUTINES WHOSE BINDING ON `blob` (ours by default) IS OURS — the table's entry, or a by-value caller's
+    operand (`BY_VALUE_CALLERS`), a longword other than the ROM's own: on a machine of ours the ROM's call of one runs
+    our code. A frozenset of their starts."""
+    return frozenset(rom for rom, ours in _bound(blob or our_blob()).items() if ours != rom)
 
 
 def our_entries(blob=None):
-    """`{a flipped routine's start: the longword `blob`'s bound table holds for it}` — its thunk, or its native entry."""
+    """`{a flipped routine's start: the longword `blob` binds it by}` — its thunk, or its native entry."""
     blob = blob or our_blob()
-    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
-    return {rom: ours for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), bound) if rom in flipped(blob)}
+    return {rom: ours for rom, ours in _bound(blob).items() if rom in flipped(blob)}
 
 
 def still_the_rom_s(blob=None):
     """BAND 6'S ROUTINES STILL THE ROM'S on a machine of `blob` (W6-R5's declared spans, by their starts): not
-    `flipped` — their entry the ROM's, or no entry at all (reached by `bsr` or by value: the ROM's here until the slice
-    that flips one says so in this function)."""
+    `flipped` — their entry the ROM's, or no entry at all (reached by `bsr`; or by value, where the caller's operand is
+    the ROM's address)."""
     return frozenset(routines()) - flipped(blob)
 
 
@@ -1291,12 +1335,13 @@ OurStepped = namedtuple("OurStepped", "boot profile blob entered")
 OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s), `blob`, the cycles the
 blob's own span ran, and `entered` — `((an entry of our bound table that lies in the blob, the cycles at its first
 instruction), ...)` for each such entry the step ran (band 6 slice F1: a flipped routine's thunk, entered by the ROM's
-desk's own call word)."""
+desk's own call word; since slice F3, a by-value caller's operand of ours too — `BY_VALUE_CALLERS`)."""
 
 
-def _our_table_s_entries(blob):
-    """The distinct longwords of `blob`'s bound table that are addresses of the blob: our entries, thunks and native."""
-    bound = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
+def _our_entries_in_the_blob(blob):
+    """The distinct longwords of `blob`'s bound table — and of its by-value callers' operands — that are addresses of
+    the blob: our entries, thunks and native."""
+    bound = (*_table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base), *bound_by_value(blob).values())
     return tuple(sorted({entry for entry in bound if blob.base <= entry < blob.end}))
 
 
@@ -1320,7 +1365,7 @@ def stepped_ours(boot, received, until=None, at=None, budget=STEP_INSNS):
             after = aes_boot.continued.derive(boot, tuple(received), budget, until, at)
         profile, blob = _profile_read(), emu.prof_cycles(ours.base, ours.end)
         assert (ours.base, ours.end) == (our_blob().base, our_blob().end), "a step of ours is of the shipped blob's machine"
-        entered = tuple((at, cycles) for at in _our_table_s_entries(our_blob())
+        entered = tuple((at, cycles) for at in _our_entries_in_the_blob(our_blob())
                         if (cycles := emu.prof_cycles(at, at + WORD_BYTES)))
     finally:
         emu.prof_enable(False)

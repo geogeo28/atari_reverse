@@ -1288,9 +1288,11 @@ def trap_callers_spans():
 # until then (three longwords and a `jsr`).
 #   * crit_err's bound: its own bytes + the thunk + eralert's paths (own frames, each trap site its call's need of
 #     OUR VDI) + the nest, beside the 2,048.
-#   * ub_trampoline's: its own 8 bytes; what the desk's draw code takes of the 1,024 is THE ROM'S until band 6.
+#   * ub_trampoline's: its own 8 bytes; what the desk's draw code takes of the 1,024 is OURS since band 6 slice F3
+#     (N18: the trampoline's `jsr` names the thunk into our C) — MEASURED on the hands' chains on our shore, the
+#     userdef stack's column of `test_aes_desk_ours.DEPTHS`.
 CRIT_ERR, ERALERT = "aes_rom_crit_err", "aes_eralert"
-THE_DESK_S_DRAW_CODE = "the_desk_s_userdef_draw_code"       # $fde844: band 6's, the ROM's until then
+THE_DESK_S_DRAW_CODE = "the_desk_s_userdef_draw_code"       # $fde844: band 6's, ours since slice F3 (N18)
 CRIT_ERR_ROM_END = addrs.AES_ROM_CRIT_ERR + 0x70            # crit_err, to its `rts` ($fe3cbe..$fe3d2d)
 CRIT_ERR_STACK = (CRIT_ERR_SP_SAVE + LONG_BYTES, CRIT_ERR_STACK_TOP)
 A_TWO_WORD_THUNK_ADDS = 3 * LONG_BYTES + LONG_BYTES         # the image and two widened words pushed, then its `jsr` of the C

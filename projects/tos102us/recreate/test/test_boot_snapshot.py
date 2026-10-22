@@ -331,7 +331,21 @@ import test_desk_supp                                       # noqa: E402,F401
 # ---- end of group G2's ----
 # ---- band 6 slices F2b / F2c: each slice's new battery imports here, in a block of its own (before gemsuper's LAST) ----
 # ---- end of slices F2b / F2c ----
-import test_aes_gemsuper                                   # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
+# ---- band 6 slice F3: each stage-author's new battery imports here, in a block of its own (wave 2's batteries are all
+# imported above; unit M's `test_desk_util` in stage 1 A's block, since its fix pass) ----
+# ---- band 6 slice F3, stage 1, author A ----
+import test_desk_util                                       # noqa: E402,F401  (unit M's cartridge pair: its rows on the
+                                                            # labelled class's chain — the stage's fix pass)
+# ---- end of stage 1 A's ----
+# ---- band 6 slice F3, stage 1, author B ----
+# ---- end of stage 1 B's ----
+# ---- band 6 slice F3, stage 2, author A ----
+# ---- end of stage 2 A's ----
+# ---- band 6 slice F3, stage 2, author B ----
+# ---- end of stage 2 B's ----
+# ---- band 6 slice F3, stage 3 ----
+# ---- end of stage 3's ----
+import test_aes_gemsuper                                  # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402

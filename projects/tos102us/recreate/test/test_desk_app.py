@@ -665,18 +665,86 @@ def test_app_start_s_answer_is_read_by_deskmain():
     assert db.answer_readers(da.entry_of(APP_START))
 
 
-def test_unit_a_s_wave_2_routines_are_linked_unbound_and_the_rom_s(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, asked of every held core) for unit A's wave-2 routines; their
-    table entries the ROM's; no registry row names one."""
-    assert not db.bound_referrers(blob, da.UNIT_A_WAVE_2)
-    linef_table = _linef_table()
-    ours = {getattr(addrs, name): name for name in da.UNIT_A_WAVE_2}
-    assert {ours[entry.target]: entry.verdict for entry in linef_table.entries() if entry.target in ours} == {
-        name: linef_table.THE_ROM_S for name in da.UNIT_A_WAVE_2}
-    assert set(da.UNIT_A_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    cores = {routines.core_symbol(name) for name in da.UNIT_A_WAVE_2}
-    assert not [name for name in (*(row[0] for row in (*aes.CASES, *aes.UNPRICED)), *aes_event.SWITCHING_ROWS)
-                if name.split(",")[0] in cores]
+# ---- FLIPPED (band 6 slice F3, stage 1): app_start; app_save HELD, UNBOUND --------------------------------------------------
+def test_app_start_is_flipped_and_app_save_held_unbound(blob):
+    """THE FLIP PIN of app_start (`aes_deskarrive.flipped`) and THE UNBOUND PIN of app_save (`aes_deskarrive.unbound`: its
+    entry the ROM's, no registry row, no function outside the unbound desk refers to a held core) — held to stage 2
+    (`aes_deskapp.UNIT_A_WAVE_2_HELD_AT_F3`)."""
+    import aes_deskarrive as dar
+    dar.flipped(blob, da.UNIT_A_WAVE_2_FLIPPED)
+    dar.unbound(blob, da.UNIT_A_WAVE_2_HELD_AT_F3)
+
+
+# ---- band 6 slice F3: app_start's ROWS — every arrival registered, A ROW THAT SWITCHES (`aes_deskapp.register_switching`),
+# its GEMDOS calls answered by band 5's recording trap with the answers the ROM's run in place got
+# (`aes_deskwin.ROW_SCRIPTED`, in the row's name). The classes stay Tier 1's.
+START_DOOR_USERS = frozenset()
+START_X_FLAG_DIFFERS = frozenset(START_ARRIVALS)
+
+
+def _start_row(chain):
+    arrived = da.arrival(APP_START, chain)
+    answers, _back = da.dos_answers_in_place(arrived, start_traps(shell_inf(arrived.boot.ram)))
+    return da.register_switching(arrived, door_user=chain in START_DOOR_USERS, x_flag_differs=chain in START_X_FLAG_DIFFERS,
+                                 answers=answers)
+
+
+START_ROWS = {chain: _start_row(chain) for chain in START_ARRIVALS}
+START_NO_DOOR_PREMISES = {
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine, as text; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
+    "aes_app_start, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
+    "aes_app_start, arrival 0 of files: the long file shown, a blank at each page's end and at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), 1, ()),
+}
+START_NO_DOOR_PRICED = {
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((226644, 343706), None, None, (0, 0, 0)),
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine, as text; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((226644, 343698), None, None, (0, 0, 0)),
+    "aes_app_start, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((221798, 338648), None, None, (0, 0, 0)),
+    "aes_app_start, arrival 0 of files: the long file shown, a blank at each page's end and at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        ((221798, 338648), None, None, (0, 0, 0)),
+}
+START_NO_DOOR_WHOLE_RUN = {
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (416754, 413730), "bench_shipped": (416754, 308076)},
+    "aes_app_start, arrival 0 of the boot of the DESKTOP.INF machine, as text; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (416746, 413730), "bench_shipped": (416746, 308076)},
+    "aes_app_start, arrival 0 of file: shown, a key at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (411128, 408338), "bench_shipped": (411128, 302662)},
+    "aes_app_start, arrival 0 of files: the long file shown, a blank at each page's end and at its end; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers":
+        {"bench": (411128, 408338), "bench_shipped": (411128, 302662)},
+}
+
+
+def test_app_start_s_rows_are_its_arrivals_each_a_row_that_switches_with_no_door():
+    """EVERY ARRIVAL A ROW THAT SWITCHES, WITH NO DOOR (MEASURED, the table's second count: no call of a rebound entry),
+    the X flag declared on each (MEASURED, each row's blob differential at `$8995`: the switch after the C's own
+    arithmetic), pinned here."""
+    import aes_switching
+    assert all(row.door is None and row.x_flag_differs for row in START_ROWS.values()) and len(START_ROWS) == 4
+    names = {aes_switching.row_name(row) for row in START_ROWS.values()}
+    assert names == set(START_NO_DOOR_PREMISES) == set(START_NO_DOOR_PRICED) == set(START_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", START_NO_DOOR_PREMISES)
+def test_app_start_s_row_has_its_premise_on_the_rom_s_run(name):
+    da.vet_the_premise(name, START_NO_DOOR_PREMISES)
+
+
+@pytest.mark.parametrize("name", START_NO_DOOR_WHOLE_RUN)
+def test_app_start_s_row_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    da.vet_on_a_blob(blob, name, START_NO_DOOR_PREMISES, START_NO_DOOR_PRICED, START_NO_DOOR_WHOLE_RUN)
+
+
+@pytest.mark.parametrize("name", START_NO_DOOR_PRICED)
+def test_app_start_s_row_is_priced_as_pinned_and_under_the_bar(name):
+    da.vet_the_price(name, START_NO_DOOR_PRICED)
 
 
 # ==== BAND 6 WAVE 2, GROUP G4: app_save ($fdbb34), DESKTOP.INF WRITTEN =============================================

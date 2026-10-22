@@ -127,8 +127,26 @@ def test_inf_folder_s_emptied_arrival_finds_the_tallies_stale():
     assert all(stale), stale
 
 
-def test_inf_folder_is_linked_and_unbound(blob):
-    da.unbound(blob, inf.UNIT_F_WAVE_2)
+def test_inf_folder_is_flipped(blob):
+    """FLIPPED at band 6 slice F3, stage 1: its core called by its own thunk of the table, its entry ours through it."""
+    da.flipped(blob, inf.UNIT_F_WAVE_2)
+
+
+# ---- band 6 slice F3, stage 1: inf_folder's ROWS — each case at its arrival a PLAIN ROW over its GEMDOS replayed (the
+# copy engine's recorder, the orchestrator's ruling (c): `aes_deskarrive.register_row`'s `pokes` and `hook`, `REPLAYED` in
+# the row's name; it reaches no binding); the class stays Tier 1's.
+def _folder_row(chain):
+    arrived = da.arrival(INF_FOLDER, chain)
+    pokes = case.merge_pokes(da.row_machine_of(arrived), cdir.replayed(cdir.in_place(arrived)))
+    return da.register_row(da.Case(INF_FOLDER, chain, yields=False), pokes=pokes, hook=cdir.engine_hook,
+                           label_said=f"arrival 0 of {chain} [{cdir.REPLAYED}]")
+
+
+FOLDER_ROWS = {name: _folder_row(chain) for name, chain in FOLDER_CASES.items()}
+
+
+def test_inf_folder_has_a_row_at_each_arrival():
+    assert {row[1] for row in FOLDER_ROWS.values()} == {da.entry_of(INF_FOLDER)} and len(FOLDER_ROWS) == len(FOLDER_CASES)
 
 
 def test_inf_folder_s_answer_is_held_at_the_word_and_read_by_its_two_callers():

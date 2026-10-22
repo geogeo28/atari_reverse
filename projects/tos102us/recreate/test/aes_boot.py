@@ -2011,6 +2011,20 @@ def inf_machine(view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED, machine=Non
     return Machine(booted(machine or inf_preinit(), inf_disk_of(view, resolution), **_taken_over_by(ours, door)))
 
 
+# THE CARTRIDGE'S LINE A DRIVE (band 6 slice F3's fix pass; the user's ruling 2026-10-21: "price via INF class") — A
+# LABELLED CLASS OF DISK: the DESKTOP.INF disk, the default text's cartridge line retyped a drive's
+# (`accessory_disk.with_the_cartridge_line_a_drive`: one byte of the file, the serial and the layout unchanged). A
+# ROM-run state, never a poke: the ROM's own boot reads the file and keeps a drive icon lettered 'c'.
+THE_CARTRIDGE_A_DRIVE = ("F3 THE CARTRIDGE'S LINE A DRIVE: the DESKTOP.INF disk, its `#C 01 06 00 FF c CARTRIDGE` line retyped "
+                         "`#M` (one byte of the file): a drive icon lettered 'c'")
+
+
+@functools.cache
+def cartridge_drive_disk():
+    """THE DESKTOP.INF DISK OF THE CLASS ABOVE: one disk to the machine `inf_preinit` logged in, as every `#E` pair's is."""
+    return accessory_disk.with_the_cartridge_line_a_drive(inf_disk_of(), default_inf())
+
+
 def with_a_disk_in_drive_b(machine, disk):
     """`machine` — booted, or continued, with drive B: empty — WITH `disk` IN DRIVE B: (band 6 wave 4, W6-R9: the
     `DRIVE_B` class). Drive B: was never LOGGED IN — the driver's record for it is all zeros — so a disk there is one

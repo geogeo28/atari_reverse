@@ -145,9 +145,8 @@ ROM_ADDRESSES_AS_DATA = {
                  "AES_ACC_ROOT_OF_C": TABLE, "AES_ACC_PATTERN_OF_C": TABLE, "AES_ACC_ROOT": TABLE, "AES_ACC_PATTERN": TABLE},
     # ---- end of slice L's ----
     # ---- band 5 wave 3, slice T: the trap door (`trapdoor.S`) --------------------------------------------------------
-    # ub_trampoline's `jsr` of the desk's G_USERDEF draw code ($fe3f50), the ROM's own operand: band 6's routine, and
-    # the one word of the door's region that still names the ROM (`test_aes_trapdoor.py`).
-    "trapdoor.S": {"AES_ROM_DESK_USERDEF": CODE},
+    # (ub_trampoline's `jsr` of the desk's G_USERDEF draw code ($fe3f50) named the ROM's `$fde844` here until band 6
+    # slice F3, N18, relocated it to the thunk into our C: the door's region names no ROM address, `test_aes_trapdoor.py`.)
     # ---- end of slice T's block --------------------------------------------------------------------------------------
     # ---- band 5 wave 4, slice I: gemstart and geminit ----------------------------------------------------------------
     # WHAT gem_entry COPIES, carried as the ROM's own data: the table's first nine entries with the high word of its

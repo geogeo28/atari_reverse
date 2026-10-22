@@ -232,6 +232,20 @@ cold, 11 ms served.
      The BIOS driver's FIVE-SECOND HOLD-OFF (`$fc209a`: `_hz_200 - $e84 < 1000` answers "not ready" without polling,
      and stamps the time) is the ROM's and runs as such: TIME PASSES at an idle only by a reception,
      `aes_boot.ticked(n)` — n ticks of the system timer, each through Timer C's handler as a click's are.
+7. **A LABELLED CLASS OF DISK: THE CARTRIDGE'S LINE A DRIVE** (band 6 slice F3's fix pass; the user's ruling of
+   2026-10-21, "price via INF class"; `aes_boot.THE_CARTRIDGE_A_DRIVE`). Not a device and not a poke: the DESKTOP.INF
+   disk the fourth capture logged in, its default text's cartridge line `#C 01 06 00 FF c CARTRIDGE` retyped `#M` —
+   ONE BYTE of the file, patched in the image as the `#E` pairs are (`accessory_disk.with_the_cartridge_line_a_drive`:
+   the serial, the FATs and the root the same bytes, so the floppy model's vet takes it as the disk the machine logged
+   in; `aes_boot.cartridge_drive_disk()`). The ROM's own boot reads it, and THE ROM AS IT SHIPS keeps the line as a
+   drive icon lettered 'c' — its reader drops a drive line lettered uppercase 'C' alone where the map has no C:
+   (`src/desk/deskapp.c` drive_line_kept) — and opens that drive without drive_check (`src/desk/desksupp.c`
+   aes_do_dopen skips it for the cartridge's letter): pn_active's cartridge arm, cart_sfirst / cart_snext (and cart_init
+   / cart_find), the port 0 on the oracle — no cartridge, the chain's end. A ROM bug, pinned as it ships
+   (`test_desk_util.py`). The class is SAID IN THE NAMES of its machine (`aes_desk.CARTRIDGE_A_DRIVE`) and its one
+   chain (`aes_desk.CARTRIDGE_OPENED`, "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)"), so every row and case
+   at its arrivals carries it in its id. A cartridge PRESENT is still no machine of the model's (`test_aes_cart.py`,
+   OWED: the kit's port). Its rows (plain, `through`): pn_active's 'c' arm 0.44, cart_sfirst 0.31, cart_snext 0.35.
 
 NO OTHER INTERRUPT IS DELIVERED: nothing between `gem_entry` and the first idle waits on a clock. **No time passes** in
 a booted machine — its clocks are its pre-init machine's, and `colorptr` (`$45a`) is still pending: the first
@@ -477,7 +491,7 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   table); `walked_ours(name)` walks a chain from its predecessor's machine of ours. Named stops per shore
   (`our_stop`): the rubber box's poll is our C gr_stilldn's entry; the viewer's two waits stay the ROM's until unit M
   flips (F4 adds their C-side stops).
-- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 113 of 115 chains): the screen and the desk's block
+- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 114 of 116 chains): the screen and the desk's block
   (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
   and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
   EVERY inventory start, `aes_desk.charged`) but THE ONE CLASS `RUN_UNDER_BANDS_0_TO_5`: three spans a band-5 routine
@@ -3377,7 +3391,9 @@ the table's kind (`aes_event.LINEF_TABLE_SLOT`: `{$fee900: aes_linef_table}`, ma
 gem_main's stretches), THE DOOR its eighth part (nine longwords), and `tier3.code_relocations` maps it. So the ROM's
 desk — each routine of it until that routine flips — calls OUR AES through the table and parks through our
 dispatcher: its turn is a turn of ours priced as an accessory's (W6-R7, `aes_desk_turns_pinned.py`), the door
-takeover differs from the ROM-booted machine in five by-nature classes (`aes_ctlmgr.the_bound_desk_s_classes`), and
+takeover differs from the ROM-booted machine in five by-nature classes (`aes_ctlmgr.the_bound_desk_s_classes`;
+GEMDOS's own stack among them: the VDI door's window ($100) and, below it, as deep as the comparison's ROM run stored
+— its write ledger, no deeper than the file system's $300, read off the run; Tier 3 hands no ledger and keeps the $100), and
 a row's two runs are entered with THE DESK'S LIVE FRAMES laid as the ROM's (`aes_ctlmgr.lay_the_desk_s_live_frames`,
 a labelled staging: the dead locals the takeover leaves) and compared byte for byte where they end
 (`tier3.vet_the_desk_s_live_frames`) — read over the desk's text LESS ITS FLIPPED ROUTINES' (`aes_ctlmgr.the_desk_s_text`:

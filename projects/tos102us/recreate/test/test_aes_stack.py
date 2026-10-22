@@ -1503,6 +1503,7 @@ PD2_LEAVES_A_USERDEF_S_ROUTINE = PD2_S_SPAN - TRAP_PATH_USERDEF_CALL
 CRIT_ERR_S_SPAN, CRIT_ERR_READ = 2048, stack.PrivateStack(0, 46, (stack.CRIT_ERR, stack.ERALERT), True)
 CRIT_ERR_SPARE = {BENCH: 570, SHIPPED: 740}
 UB_TRAMPOLINE_READ = stack.PrivateStack(0, 8, (stack.UB_TRAMPOLINE, stack.THE_DESK_S_DRAW_CODE), True)
+OUR_DRAW_CODE_S_USERDEF_DEPTH = 486     # the deepest the walked chains reach on the userdef stack on our shore (F3, N18)
 
 
 def test_finding_the_trap_path_s_own_frames_by_chain(blob):
@@ -1605,7 +1606,8 @@ def test_finding_crit_err_s_and_ub_trampoline_s_private_stacks(blob):
     stack, holds 46 bytes of its own above eralert and RETURNS; with the thunk, the C eralert's paths — each trap
     its call's need of OUR VDI — and the nest it fits its 2,048 bytes, 740 spare on the shipped blob. ub_trampoline
     holds 8 above the desk's draw code, on the 1,024 bytes the booted desk's own pointer names the end of — and what
-    that code takes of them is the ROM's until band 6."""
+    that code takes of them is OURS since band 6 slice F3 (N18), MEASURED on the hands' chains on our shore: the
+    deepest of `test_aes_desk_ours.DEPTHS`' userdef column, under the 1,024."""
     assert stack.crit_err_read() == CRIT_ERR_READ and stack.ub_trampoline_read() == UB_TRAMPOLINE_READ
     assert stack.CRIT_ERR_STACK[1] - stack.CRIT_ERR_STACK[0] == CRIT_ERR_S_SPAN
     crit_err = dict(stack.rom_listed(addrs.AES_ROM_CRIT_ERR, stack.CRIT_ERR_ROM_END, {})).values()
@@ -1618,6 +1620,9 @@ def test_finding_crit_err_s_and_ub_trampoline_s_private_stacks(blob):
     assert at_a_trap and CRIT_ERR_S_SPAN - needed == CRIT_ERR_SPARE[stack.shore_of(blob)]
     lo, top = stack.userdef_stack()
     assert top - lo == stack.USERDEF_STACK_BYTES == 1024 and lo % 2 == 0
+    import test_aes_desk_ours as ours
+    userdef = ours.STACKS.index(ours.desk.USERDEF_STACK)
+    assert max(depths[userdef] for depths in ours.DEPTHS.values()) == OUR_DRAW_CODE_S_USERDEF_DEPTH < top - lo
 
 
 # ---- THE TRAP PATH, MEASURED BEHIND THE DOOR (ruling W3-R8: bound AND measured) ------------------------------------------------

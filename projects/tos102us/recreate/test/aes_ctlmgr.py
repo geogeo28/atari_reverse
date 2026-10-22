@@ -320,7 +320,13 @@ TWO_IDLES = (aes_boot.TRAP_SAVE_FRAME, aes_boot.LINE_F_MASK)
 # UDA's state block to its top — two builds' frames under the desk's —, a wait's parameter that is an address in that
 # stack) — and in TWO OF GEMDOS'S, where the desk's last `trap #1` left OUR build's state:
 #   * GEMDOS'S OWN STACK below where its entry parks A7: dead between two traps, it holds the return address of the
-#     trap's caller — the ROM's glue on its shore, OUR build's (`aes_dos_alloc`) on ours;
+#     trap's caller — the ROM's glue on its shore, OUR build's (`aes_dos_alloc`) on ours: THE VDI DOOR'S WINDOW
+#     (`vdi_helpers.GEMDOS_DOOR_WINDOWS`, $100) — and, since band 6 slice F3 (pn_active flipped: the bound desk's own
+#     C searches the disk), what the file system's deeper frames left of the caller's registers there: BELOW THAT
+#     WINDOW AS DEEP AS THE ROM'S OWN RUN STORED (its write ledger, `Boot.stored`; looked for no deeper than the file
+#     system runs, `aes_shell.FILE_SYSTEM_STACK_DEPTH`) — read off each comparison's run, never a constant (the F3
+#     fix pass, reviewer A's A-1: measured, "drive A:'s window opened" differs at $1561..$158c and its ROM run stores
+#     from $1542; a boot's from $14c4; a continuation that traps nowhere, nothing below the window);
 #   * p_run's REGISTER-SAVE AREA (the AES's basepage): the trapping caller's registers and the address of its frame —
 #     a place in PD0's stack, two builds' depths.
 # Each located from the machine's own pointers, and the two of GEMDOS's as `vdi_helpers.GEMDOS_DOOR_WINDOWS` names
@@ -531,22 +537,28 @@ def residue_where_the_runs_end(its_memory, the_rom_s, ours, our_memory):
     return frozenset(excused)
 
 
-def the_bound_desk_s_gemdos_windows(memory):
-    """GEMDOS's two windows of the bound desk (above) over `memory`, as `(lo, hi, why)`: its own stack, and p_run's
-    register-save area (through the machine's own p_run)."""
+def the_bound_desk_s_gemdos_windows(memory, the_rom_s_stores=()):
+    """GEMDOS's two windows of the bound desk (above) over `memory`, as `(lo, hi, why)`: its own stack — the VDI door's
+    window, deepened to the lowest byte of the file system's reach THE ROM'S RUN STORED (`the_rom_s_stores`: its
+    ledger's `(start, length)` runs; none: the VDI door's window alone) —, and p_run's register-save area (through the
+    machine's own p_run)."""
+    import aes_shell                    # (here: the shell's door, a heavy import, gives the file system's depth alone)
     basepage = case.long_in(memory, addrs.GEMDOS_P_RUN) & aes_boot.BUS
     (stack_lo, stack_hi, _why), = (window for window in vdi_helpers.GEMDOS_DOOR_WINDOWS
                                    if window[1] == addrs.GEMDOS_SUPERVISOR_STACK)
-    return ((stack_lo, stack_hi, THE_GEMDOS_STACK),
+    reached = aes_desk.depth_stored(the_rom_s_stores, stack_hi - aes_shell.FILE_SYSTEM_STACK_DEPTH, stack_hi)
+    return ((min(stack_lo, stack_hi - reached), stack_hi, THE_GEMDOS_STACK),
             (basepage + addrs.BASEPAGE_SAVED_D0, basepage + addrs.BASEPAGE_SAVED_FRAME + aes.LONG_BYTES, THE_GEMDOS_SAVE_AREA))
 
 
 def the_bound_desk_s_classes(rom, ours):
-    """`{class: (lo, hi)}` the takeover machine `ours` differs from the ROM-booted `rom` in BECAUSE ITS DESK IS BOUND."""
+    """`{class: (lo, hi)}` the takeover machine `ours` differs from the ROM-booted `rom` in BECAUSE ITS DESK IS BOUND —
+    GEMDOS's stack as deep as `rom`'s own run stored (its ledger: REFUSED BY NAME where it saturated)."""
     desk = _Process(THE_DESK_S_NAME, aes.SHELL_PD, the_desk_s_stack(ours))
     assert ours.long(addrs.GEMDOS_P_RUN) == rom.long(addrs.GEMDOS_P_RUN), "the two machines run two GEMDOS processes"
+    assert not rom.boot.writes_truncated, "the ROM's run saturated its write ledger: how deep it took GEMDOS's stack is not known"
     return {**aes_boot._of_a_program(rom, ours, desk),
-            **{why: (lo, hi) for lo, hi, why in the_bound_desk_s_gemdos_windows(ours.ram)}}
+            **{why: (lo, hi) for lo, hi, why in the_bound_desk_s_gemdos_windows(ours.ram, rom.boot.stored)}}
 
 
 def outside_the_bound_desk_s_classes(rom, ours, differing):

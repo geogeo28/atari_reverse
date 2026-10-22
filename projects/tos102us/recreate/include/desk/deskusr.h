@@ -74,7 +74,7 @@
 
 /* ==== BAND 6 WAVE 2, group G1: the text view's G_USERDEF draw — dr_code `$fde7b4` (GEM's DESKUSR name, read from its
  * body) and its one caller `$fde844` (AES_ROM_DESK_USERDEF), which ub_trampoline calls by VALUE on the desk's userdef
- * stack (no Line-F word: held in `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, ruling R-W2-4) ======================== */
+ * stack (no Line-F word: its binding is that `jsr`'s operand, `trapdoor.S`'s thunk since band 6 slice F3, N18) ==== */
 /* dr_code: a line whose SELECTED bit changed is inverted (bb_fill in XOR, solid); any other drawn — ob_sfcb into
  * g_1text, the text's colour set, its characters into intin, v_gtext in the large font at the object's corner, and the
  * LINE colour left in XOR mode ($fde830..$fde83a: gsx_attr(0, 3, 1)). Its answer: the current state, as handed. */

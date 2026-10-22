@@ -12,8 +12,9 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
   2. FLIP (skipped by `--unflipped`, which measures the tree as it is): `bench/linef_table.py`'s LINKED_AND_NOT_FLIPPED
      emptied and `src/aes/lineftable.S` generated again — every linked routine's entry ours, through its thunk — and
      sh_cmd's four built-ins (`src/aes/shell.c`) entered at their thunks on target (the desk door's `jsr`s; the host
-     library keeps the ROM's addresses; the thunks are copied into a source of the flip's own). `$fde844` stays the
-     ROM's (no table entry: its operand is F3's). Each step's anchor is held by `test_aes_desk_ours.py`.
+     library keeps the ROM's addresses; the thunks are copied into a source of the flip's own). `$fde844` (no table
+     entry) is ours already: `trapdoor.S`'s operand, relocated at band 6 slice F3 (N18). Each step's anchor is held
+     by `test_aes_desk_ours.py`.
   3. BUILD, FORCED: the private tree's blobs and library are removed and made again (`make` after an rsync can see a
      source older than its product: the mutation-testing rebuild trap) — the shipped blob is the one measured.
   4. THE BLOB IS FLIPPED, READ OFF ITS OWN BOUND TABLE (not with `--unflipped`): every band-6 routine with a C core and
@@ -27,7 +28,7 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
 
 Exits non-zero if the blob is not flipped (step 4), if a walked chain is over the gate, if a chain is refused that is
 not declared (or for another reason than its declaration reads), or if a declared refusal walks. Run from anywhere:
-`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 115 chains (113 walked unflipped, 107
+`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 116 chains (114 walked unflipped, 108
 on the flipped state); a whole run is minutes (~10-15 at `--jobs 6`, build included); the first copy is ~700 MB.
 """
 import argparse

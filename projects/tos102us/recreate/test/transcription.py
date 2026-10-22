@@ -614,10 +614,12 @@ TRAPDOOR_GLOBLS = globl_entries(trapdoor_sources())
 _MASK_BRACKETS = {"aes_rom_spl7_save", "aes_rom_spl_restore"}
 TRAPDOOR_ENTRIES = {
     # the handler, its way out and the desk's G_USERDEF door ($fe3ea6..$fe3f5d): byte-exact but for the four `jsr`s
-    # of the mask brackets and the `movea.l #` of aes_entry
+    # of the mask brackets, the `movea.l #` of aes_entry and (band 6 slice F3, N18) ub_trampoline's `jsr` of the
+    # desk's draw code, the thunk into our C
     **_end_to_end((("aes_rom_trap2", addrs.AES_ROM_TRAP2, _MASK_BRACKETS | {"aes_rom_entry"}),
                    ("aes_rom_trap2_exit", addrs.AES_ROM_TRAP2_EXIT, _MASK_BRACKETS),
-                   ("aes_rom_ub_trampoline", addrs.AES_ROM_UB_TRAMPOLINE, ())), addrs.AES_ROM_SIGNAL),
+                   ("aes_rom_ub_trampoline", addrs.AES_ROM_UB_TRAMPOLINE, {"ub_trampoline_to_aes_desk_userdef"})),
+                  addrs.AES_ROM_SIGNAL),
     # gemsuper's aes_entry, the same file: the ROM's stream to its last call (`stream`), its three call words `jsr`s
     "aes_rom_entry": SwitchEntry(addrs.AES_ROM_ENTRY, addrs.AES_ROM_ENTRY_END - addrs.AES_ROM_ENTRY,
                                  frozenset({"aes_entry_to_aes_marshal", "aes_dsptch", "aes_rom_trap2_exit"})),

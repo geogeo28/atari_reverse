@@ -4740,6 +4740,23 @@ ROWS_THAT_SWITCH = {
     "aes_gr_bwait": 3, "aes_move_drvicon": 1, "aes_act_chg": 5, "aes_act_allchg": 1, "aes_desk_draw_dial": 3,
     "aes_desk_do_namecon": 3, "aes_desk_show_dial": 3, "aes_desk_draw_fld": 2,
     # ---- end of slice F2c's ----
+    # band 6 slice F3: wave 2's routines that yield — every row at an arrival of each, one block a stage-author
+    # ---- band 6 slice F3, stage 1, author A ---- (`test_desk_dir.py`'s engine: 10 over its GEMDOS replayed — d_dofcopy's
+    # three and dir_op's one door users', d_doop's six with no door)
+    "aes_desk_d_dofcopy": 3, "aes_desk_d_doop": 6, "aes_desk_dir_op": 1,
+    # ---- end of stage 1 A's ----
+    # ---- band 6 slice F3, stage 1, author B ---- (`test_desk_view.py`, `test_desk_win.py`, `test_desk_act.py`,
+    # `test_desk_app.py`: 53 — 38 door users', 15 with no door; win_blt's, win_arrow's, win_srtall's and desk_verify's
+    # arrivals that reach no binding are plain rows)
+    "aes_win_blt": 4, "aes_win_slide": 2, "aes_win_arrow": 4, "aes_win_bdall": 4, "aes_desk_clear": 3, "aes_desk_verify": 2,
+    "aes_act_bsclick": 7, "aes_act_bdown": 11, "aes_gr_drgplns": 12, "aes_app_start": 4,
+    # ---- end of stage 1 B's ----
+    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- end of stage 2 A's ----
+    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- end of stage 2 B's ----
+    # ---- band 6 slice F3, stage 3 ----
+    # ---- end of stage 3's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -4803,6 +4820,18 @@ BY_NATURE_CENSUS = {
                                                  # ---- end of group G3's ----
                                                  # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
                                                  # ---- end of group G4's ----
+                                                 # ---- band 6 slice F3, stage 1, author A ----
+                                                 # ---- end of stage 1 A's ----
+                                                 # ---- band 6 slice F3, stage 1, author B ----
+                                                 # (`test_desk_act.X_FLAG_DIFFERS_WAVE_2`, `test_desk_app.START_X_FLAG_DIFFERS`)
+                                                 "aes_act_bsclick": 2, "aes_gr_drgplns": 2, "aes_app_start": 4,
+                                                 # ---- end of stage 1 B's ----
+                                                 # ---- band 6 slice F3, stage 2, author A ----
+                                                 # ---- end of stage 2 A's ----
+                                                 # ---- band 6 slice F3, stage 2, author B ----
+                                                 # ---- end of stage 2 B's ----
+                                                 # ---- band 6 slice F3, stage 3 ----
+                                                 # ---- end of stage 3's ----
                                                  },
                            # (...and under the opcode switch's arms, `test_aes_gemsuper.py`: a playback's timer record
                            # at two speeds, two recordings' sleep, evnt_timer and two evnt_multi with a timer;
@@ -5418,6 +5447,31 @@ SLOTS_HELD_WHERE_PARKED = {
     "aes_gr_bwait": ("AES_GR_BWAIT_ANSWERS", "AES_DESK_BIND_FRAME", "AES_GR_ISDOWN_ANSWERS"),
     "aes_desk_do_namecon": ("AES_DESK_DIR_RECT", "AES_FM_DO_FRAME"),
     # ---- end of slice F2c's ----
+    # ---- band 6 slice F3 (N14): wave 2's door users, one block a stage-author (its cut, §3: the candidates are the
+    # wave-2 windows' frames held across a wait — unit H's six, FUN_CLOSE / SUPP / CNX_GET, GR_DRGPLNS / ACT_BDOWN) ----
+    # ---- band 6 slice F3, stage 1, author A ---- (MEASURED, the audit's: the engine's door users park in form_do's wait
+    # under a dialog of unit C's — the name conflict's, the delete's — its rectangle held, do_namecon's same two)
+    "aes_desk_d_dofcopy": ("AES_DESK_DIR_RECT", "AES_FM_DO_FRAME"),
+    "aes_desk_dir_op": ("AES_DESK_DIR_RECT", "AES_FM_DO_FRAME"),
+    # ---- end of stage 1 A's ----
+    # ---- band 6 slice F3, stage 1, author B ---- (MEASURED by the audit below: the union over each door user's rows of the
+    # slots held where its process was parked — unit L's scrolls and rebuild, desk_verify's rebuild, act_bdown's and
+    # gr_drgplns's drags)
+    "aes_desk_verify": ("AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME"),
+    **{f"aes_win_{routine}": ("AES_DESK_BIND_FRAME", "AES_DESK_SCROLL_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_WIN_FRAME")
+       for routine in ("blt", "slide", "arrow")},
+    "aes_win_bdall": ("AES_DESK_BIND_FRAME", "AES_DESK_SCROLL_FRAME", "AES_DESK_VIEW_FRAME"),
+    "aes_act_bdown": ("AES_ACT_BDOWN_FRAME", "AES_GR_DRGPLNS_FRAME", "AES_GR_BWAIT_ANSWERS", "AES_DESK_BIND_FRAME",
+                      "AES_GR_ISDOWN_ANSWERS", "AES_ACT_CHG_RECT", "AES_DESK_WIN_FRAME", "AES_ACT_ALLCHG_RECTS"),
+    "aes_gr_drgplns": ("AES_GR_DRGPLNS_FRAME", "AES_GR_BWAIT_ANSWERS", "AES_DESK_BIND_FRAME", "AES_GR_ISDOWN_ANSWERS",
+                       "AES_ACT_CHG_RECT", "AES_DESK_WIN_FRAME"),
+    # ---- end of stage 1 B's ----
+    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- end of stage 2 A's ----
+    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- end of stage 2 B's ----
+    # ---- band 6 slice F3, stage 3 ----
+    # ---- end of stage 3's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

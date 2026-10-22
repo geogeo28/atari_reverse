@@ -219,19 +219,25 @@ def at_arrivals(cases):
     return {name: each for name, each in by_label(cases).items() if not each.why}
 
 
-def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=None, label_said=None):
+def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=None, label_said=None, hook=None,
+                 at_idle=None):
     """THE CASE `each` (at an arrival) REGISTERED: a plain row, or a row that switches — through its door where
     `door` (a door user: its run arrives at an entry of the event layer's door), with no door else; the X flag
     declared where `x_flag_differs`. `pokes`: the row's machine where the case lays a staging over the arrival's (a
-    scripted trap); `label_said`: the row's label where it says more than the case's (the staging). The row."""
+    scripted trap; since band 6 slice F3, the copy engine's GEMDOS replayed — `aes_deskdir.replayed`); `label_said`:
+    the row's label where it says more than the case's (the staging); `hook`: a plain row's companion's (the
+    staging's host twins, `run_function`'s); `at_idle`: the wakes of a row that switches where its case's are more
+    than WAKES says (`{idle: interrupt}`: the keys its chain typed). A row with no door keeps its routine's declared
+    child doors (`aes_event.CHILD_DOORS`: the staging's twins in its companion's fork). The row."""
     arrived = arrival_of(each)
     machine = pokes if pokes is not None else row_machine_of(arrived)
     said = label_said or label(each)
     answered = answered and vdi.ALCYON[each.name].restype is not None
     if not each.yields:
-        return aes.register(said, each.name, arrived.arguments, machine, answer_compared=answered)
-    row = row_of(arrived, said, answered, pokes=machine, **WAKES.get(each.wake, {}))._replace(x_flag_differs=x_flag_differs)
-    return aes_event.register_woken(row if door else row._replace(door=None))
+        return aes.register(said, each.name, arrived.arguments, machine, hook=hook, answer_compared=answered)
+    wake = WAKES.get(each.wake, {}) if at_idle is None else {"at_idle": at_idle}
+    row = row_of(arrived, said, answered, pokes=machine, **wake)._replace(x_flag_differs=x_flag_differs)
+    return aes_event.register_woken(row if door else row._replace(door=None, child_doors=row.door.doors))
 
 
 # ---- FLIPPED (band 6 slice F2): the generator's verdict for each routine of a unit is ITS THUNK, its thunk calls its core ----

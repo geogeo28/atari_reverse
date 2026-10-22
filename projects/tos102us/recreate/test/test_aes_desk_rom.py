@@ -422,6 +422,9 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 wave 4, group G2 (unit N) ----
     "band 6 wave 4, group G2": (1, 5),     # a single-sided disk in drive B:, drive A: dropped on it, OK, COPY: refused
     # ---- end of group G2's wave-4 ----
+    # ---- band 6 slice F3's fix pass (the cartridge's line a drive: a labelled class of disk) ----
+    "band 6 slice F3's fix pass": (1, 1),  # drive 'c' opened on the labelled class's machine (`aes_desk.CARTRIDGE_OPENED`)
+    # ---- end of slice F3's fix pass ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -529,6 +532,9 @@ REACHED_BY_BLOCK = {
     # ---- band 6 wave 4, group G2 (unit N) ----
     "band 6 wave 4, group G2": 1,          # $fee364 util_error: the copy's "not the same type"
     # ---- end of group G2's wave-4 ----
+    # ---- band 6 slice F3's fix pass ----
+    "band 6 slice F3's fix pass": 2,       # $fed522 cart_sfirst, $fed534 cart_snext (pn_active's cartridge arm, drive 'c')
+    # ---- end of slice F3's fix pass ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 

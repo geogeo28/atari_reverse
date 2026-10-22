@@ -39,11 +39,11 @@ PINNED = {
         "bench_shipped": ((38662, 55780, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
-        "bench": ((273050, 386374, 0),),
-        "bench_shipped": ((262956, 386374, 13368),),
+        "bench": ((274618, 388404, 0),),
+        "bench_shipped": ((264524, 388404, 13368),),
     },
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": {
-        "bench": ((273392, 387166, 0),),
-        "bench_shipped": ((263298, 387166, 13368),),
+        "bench": ((274960, 389196, 0),),
+        "bench_shipped": ((264866, 389196, 13368),),
     },
 }

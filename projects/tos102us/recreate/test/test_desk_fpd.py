@@ -27,6 +27,7 @@ import pytest
 from harness import BASE_IMAGE, addrs
 
 import aes
+import aes_desk
 import aes_deskact as da
 import aes_deskarrive as dar
 import aes_deskbind as db
@@ -347,13 +348,16 @@ def test_every_routine_of_the_unit_has_a_row_at_an_arrival():
 
 
 # ---- band 6 wave 2, group G2 (unit G): pn_close `$fdfa20`, pn_active `$fdfc3c` ---------------------------------------------------
-# pn_active SEARCHES THE DISK: every case of it runs over GEMDOS REPLAYED (`aes_deskfpd.gemdos_script`: the ROM's own run in
-# place's answers and DTAs, `aes_fslib`'s replay on both shores — in the id), unpoisoned as the list routines are. A
-# drive's spec is all the chains hand it ("A:\..."): the cartridge's arm ('c', unit M's search) and a file pool spent
-# are labelled classes, and a name the disk does not hold (".AB": begins with '.' and goes on) a class whose replay's
-# answer says it.
+# pn_active SEARCHES THE DISK: every case of it on a drive runs over GEMDOS REPLAYED (`aes_deskfpd.gemdos_script`: the ROM's
+# own run in place's answers and DTAs, `aes_fslib`'s replay on both shores — in the id), unpoisoned as the list routines
+# are. A drive's spec is all the model's disks hand it ("A:\..."); THE CARTRIDGE'S ARM ('c', unit M's search: no GEMDOS
+# call, nothing replayed) is reached by the labelled class of disk whose cartridge line is a drive's (the F3 fix pass:
+# `aes_desk.CARTRIDGE_OPENED`, `test_desk_util.py`) — an arrival, and a labelled class laid over drive A:'s besides; a
+# file pool spent is a labelled class, and a name the disk does not hold (".AB": begins with '.' and goes on) a class
+# whose replay's answer says it.
 CLOSE, ACTIVE = "AES_ROM_PN_CLOSE", "AES_ROM_PN_ACTIVE"
 NONE_LEFT = "file: dragged to the trash, OK"                # A:'s one file deleted: the search finds none (EFILNF)
+CARTRIDGE_OPENED = aes_desk.CARTRIDGE_OPENED                # drive 'c' opened: the labelled class of disk's chain
 REPLAYED_STEERED = (*UNPOISONED, ("hook", df.replay_hook))
 REPLAYED = df.replay_laid()
 PNODE_SPEC, DOS_AX_NO_FILE_NODES = FPD["PNODE_SPEC"], FPD["DOS_AX_NO_FILE_NODES"]
@@ -421,7 +425,9 @@ CASES_WAVE_2 = (
     # pn_active: one file, four (a folder among them, sorted), a folder's "." and ".." (not listed: its node left over
     # and freed), and none (Fsfirst's EFILNF)
     *(Case(ACTIVE, chain, laid=REPLAYED, steered=REPLAYED_STEERED) for chain in (OPEN_A, FILES_OPENED, FOLDER_OPENED, NONE_LEFT)),
-    Case(ACTIVE, OPEN_A, why="the spec's drive 'c', the cartridge's (no machine of ours opens one): unit M's search, none",
+    # ...and drive 'c' opened on the labelled class's machine: unit M's search, no cartridge (the port 0), nothing found
+    Case(ACTIVE, CARTRIDGE_OPENED, steered=UNPOISONED),
+    Case(ACTIVE, OPEN_A, why="the spec's drive 'c', the cartridge's, over drive A:'s arrival: unit M's search, none",
          arguments=lambda a: a.arguments, laid=("the path's spec drive 'c'", _cartridge_s_spec), steered=UNPOISONED),
     Case(ACTIVE, FILES_OPENED, why="no file node free: the search ends at its first entry, AES_DOS_AX 100",
          arguments=lambda a: a.arguments, laid=(f"{df.REPLAYED}; the free file list's head 0", _no_file_node_free),
@@ -452,7 +458,7 @@ def test_a_wave_2_routine_from_its_arrival_is_the_rom_s(name):
     assert da.answered_at_its_width(each.name, result.long_answer()) == da.answered_at_its_width(each.name, back.registers["d0"])
 
 
-ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 6, 5
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 7, 5
 
 
 def test_every_wave_2_routine_has_a_case_at_an_arrival_of_its_own():
@@ -480,13 +486,20 @@ def test_pn_close_s_d0_is_read_by_no_caller_and_pn_active_s_by_its_callers():
     assert sum(each.name == CLOSE for each in CASES_WAVE_2) == 2
 
 
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_routine(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`) asked of the unit's wave-2 routines."""
-    assert not db.bound_referrers(blob, df.UNIT_G_WAVE_2)
+# ---- band 6 slice F3, stage 1: THE WAVE-2 ROWS — every case at an arrival a PLAIN ROW (`aes_deskact.register_row`):
+# pn_close's over the arrival, pn_active's over its GEMDOS REPLAYED (the staging its case lays, fslib's replay, said in
+# the row's name; its twins the companion's) — and, since the fix pass, its drive-'c' arrival over the labelled class's
+# machine (nothing replayed: the cartridge's arm makes no GEMDOS call); the classes stay Tier 1's.
+ROWS_WAVE_2 = {name: da.register_row(each, answered=df.SIGNATURES_WAVE_2[each.name][0] is not None)
+               for name, each in da.at_arrivals(BY_LABEL_WAVE_2, df.UNIT_G_WAVE_2).items()}
 
 
-def test_the_table_s_entries_for_the_wave_2_routines_stay_the_rom_s_and_no_registry_names_one():
-    verdicts, linef_table = da.table_verdicts(df.UNIT_G_WAVE_2)
-    assert verdicts == {name: linef_table.THE_ROM_S for name in df.UNIT_G_WAVE_2}
-    assert set(df.UNIT_G_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    assert not da.registered(df.UNIT_G_WAVE_2)
+def test_every_wave_2_routine_has_a_row_at_an_arrival():
+    assert {row[1] for row in ROWS_WAVE_2.values()} == {da.entry_of(name) for name in df.UNIT_G_WAVE_2}
+    assert len(ROWS_WAVE_2) == ARRIVALS_WAVE_2
+
+
+def test_the_wave_2_routines_are_flipped(blob):
+    """FLIPPED at band 6 slice F3, stage 1 (`aes_deskarrive.flipped`): each core called by its own thunk of the table,
+    each entry ours through it, none held."""
+    dar.flipped(blob, df.UNIT_G_WAVE_2)

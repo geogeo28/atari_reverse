@@ -52,6 +52,7 @@ REGION_LO, REGION_HI = HANDLER, addrs.AES_ROM_SIGNAL    # ub_trampoline's `rts` 
 ENTRY, ENTRY_END = addrs.AES_ROM_ENTRY, addrs.AES_ROM_ENTRY_END
 HANDLER_SYMBOL, WAY_OUT_SYMBOL, UB_SYMBOL, ENTRY_SYMBOL = "aes_rom_trap2", "aes_rom_trap2_exit", "aes_rom_ub_trampoline", "aes_rom_entry"
 MARSHAL_THUNK = "aes_entry_to_aes_marshal"
+USERDEF_THUNK = "ub_trampoline_to_aes_desk_userdef"     # band 6 slice F3 (N18): ub_trampoline's `jsr`, our C's thunk
 SELECTOR_AES, SELECTOR_AES_ALT, SELECTOR_PTERM, SELECTOR_VDI = (
     addrs.GEM_SELECTOR_AES, addrs.GEM_SELECTOR_AES_ALT, addrs.GEM_SELECTOR_PTERM, addrs.GEM_SELECTOR_VDI)
 # The handler's second instruction: a second stop inside it, so that a run watched at its first is watched there
@@ -360,7 +361,9 @@ def desk_s_first_vdi_trap():
 
 # ---- ub_trampoline: A LABELLED ARGUMENT CLASS, and the desk's draw code not run ------------------------------------------------
 # No boot reaches it (a desk window with icons draws through it: a hand's double-click), and what it calls is the
-# desk's own draw code, band 6's. So its case is a CALL STAGED over a machine the ROM booted — the desk's, whose
+# desk's own draw code, band 6's — the ROM's `$fde844` on the ROM's shore, and on a blob (since band 6 slice F3, N18)
+# the thunk into our C, `USERDEF_THUNK`: each shore's run is stopped at ITS callee's first instruction (the
+# door), so neither callee runs. So its case is a CALL STAGED over a machine the ROM booted — the desk's, whose
 # start-up allocated the 1 KB stack the trampoline moves to (AES_USERDEF_STACK holds its real top) — entered with a
 # whole register file, and held at TWO PLACES: where it enters the desk's routine (the stack it stands on, the
 # PARMBLK handed, the caller's stack pointer parked), and where it returns to its caller once that routine has
@@ -377,17 +380,17 @@ A_PARMBLK, A_DRAW_ANSWER = 0x0001_2340, 0x0000_5a5a     # an address and a draw 
 def through_ub_trampoline(ram, registers, blob=None):
     """ub_trampoline(A_PARMBLK) over the megabyte `ram`, entered with `registers` (`emu.REPORTED_REGS`) on the
     harness's stack — the ROM's, or `blob`'s (the blob laid): a `UbCall`."""
-    memory, entry = _image_of(ram), UB_TRAMPOLINE
+    memory, entry, callee = _image_of(ram), UB_TRAMPOLINE, addrs.AES_ROM_DESK_USERDEF
     if blob is not None:
         ours = aes_boot.ours_of(blob)
         aes_boot._vet_clear_where_the_blob_goes(memory, ours)
         memory[ours.base:ours.base + len(ours.image)] = ours.image
-        entry = blob.entry(UB_SYMBOL)
+        entry, callee = blob.entry(UB_SYMBOL), blob.entry(USERDEF_THUNK)
     emu.install_chip_seeds()
     result = emu.run_bench(memory, entry, A_PARMBLK, emu.STACK_TOP, emu.SENTINEL, max_insns=UB_INSNS,
-                           door=frozenset({addrs.AES_ROM_DESK_USERDEF}), seed_regs=rom_bench.entry_registers(registers))
+                           door=frozenset({callee}), seed_regs=rom_bench.entry_registers(registers))
     try:
-        assert (result["status"], emu.bench_door_pc()) == (emu.BENCH_DOOR, addrs.AES_ROM_DESK_USERDEF), (
+        assert (result["status"], emu.bench_door_pc()) == (emu.BENCH_DOOR, callee), (
             "ub_trampoline never entered the desk's draw code")
         sp = emu.bench_door_sp()
         at_the_call, registers_there = bytes(memory[:RAM_BYTES]), aes_boot.registers_at_the_stop(emu.REPORTED_REGS)

@@ -532,10 +532,97 @@ def test_the_wave_2_answers_that_are_not_the_rom_s_are_counted_by_name():
     assert Counter(BY_LABEL_WAVE_2[name].name in VOID_IN_C_WAVE_2 for name in BY_LABEL_WAVE_2)[True] == 13
 
 
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit I's wave-2 four."""
-    assert not db.bound_referrers(blob, w.UNIT_I_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 1): desk_clear and desk_verify; pro_run and do_wopen HELD, UNBOUND ------------------
+def test_the_wave_2_two_are_flipped_and_the_other_two_held_unbound(blob):
+    """THE FLIP PIN of desk_clear and desk_verify (`aes_deskarrive.flipped`) and THE UNBOUND PIN of pro_run and do_wopen
+    (`aes_deskarrive.unbound`: their entries the ROM's, no registry row, no function outside the unbound desk refers to a
+    held core) — held to stage 2 with unit J (`aes_deskwin.UNIT_I_WAVE_2_HELD_AT_F3`)."""
+    import aes_deskarrive as dar
+    dar.flipped(blob, w.UNIT_I_WAVE_2_FLIPPED)
+    dar.unbound(blob, w.UNIT_I_WAVE_2_HELD_AT_F3)
 
 
-def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
-    assert w.verdicts_not_the_rom_s(w.UNIT_I_WAVE_2) == (set(), [])
+# ---- band 6 slice F3: THE TWO'S ROWS — every case at an arrival of desk_clear and desk_verify registered
+# (`aes_deskwin.register_row`): desk_verify's a plain row where it rebuilds no window (`yields_wave_2`), a row that
+# switches where it does; desk_clear's rows that switch. The classes stay Tier 1's.
+#   * DOOR USERS (`DOOR_USERS_WAVE_2`, MEASURED, the table's second count: 8 calls of a rebound entry each), pinned in
+#     `DOOR_USERS_*_WAVE_2` and read by `test_tier3.py`: desk_verify's two that switch (it rebuilds the window: win_bdall);
+#     desk_clear's three make no such call — rows that switch with no door.
+DOOR_USERS_WAVE_2 = frozenset(name for name in AT_ITS_OWN_ARRIVAL_WAVE_2
+                              if BY_LABEL_WAVE_2[name].name == "AES_ROM_DESK_VERIFY" and yields_wave_2(BY_LABEL_WAVE_2[name]))
+X_FLAG_DIFFERS_WAVE_2 = frozenset()
+ROWS_WAVE_2 = {name: w.register_row(BY_LABEL_WAVE_2[name], yields_wave_2(BY_LABEL_WAVE_2[name]), door_user=name in DOOR_USERS_WAVE_2,
+                                    x_flag_differs=name in X_FLAG_DIFFERS_WAVE_2)
+               for name in AT_ITS_OWN_ARRIVAL_WAVE_2 if BY_LABEL_WAVE_2[name].name in w.UNIT_I_WAVE_2_FLIPPED}
+PLAIN_WAVE_2 = frozenset(name for name in ROWS_WAVE_2 if not yields_wave_2(BY_LABEL_WAVE_2[name]))
+
+# ---- THE WAVE-2 ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by
+# each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
+DOOR_USERS_PRICED_WAVE_2 = {
+    'aes_desk_verify, arrival 2 of A: File > Open':
+        ((251122, 443758), (249698, 441046), 8, (0, 0, 0)),
+    'aes_desk_verify, arrival 2 of window: A: opened again (two windows)':
+        ((251212, 443992), (249788, 441280), 8, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_WAVE_2 = {
+    'aes_desk_verify, arrival 2 of A: File > Open':
+        {"bench": (1181294, 1007012), "bench_shipped": (1181294, 1010894)},
+    'aes_desk_verify, arrival 2 of window: A: opened again (two windows)':
+        {"bench": (996688, 822262), "bench_shipped": (996688, 826144)},
+}
+NO_DOOR_PREMISES_WAVE_2 = {
+    'aes_desk_clear, arrival 1 of A: File > Open':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    'aes_desk_clear, arrival 2 of window: A: opened again (two windows)':
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+    "aes_desk_clear, arrival 1 of folder: File > New Folder, 'A', Return":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+}
+NO_DOOR_PRICED_WAVE_2 = {
+    'aes_desk_clear, arrival 1 of A: File > Open':
+        ((9476, 14078), None, None, (0, 0, 0)),
+    'aes_desk_clear, arrival 2 of window: A: opened again (two windows)':
+        ((9516, 14208), None, None, (0, 0, 0)),
+    "aes_desk_clear, arrival 1 of folder: File > New Folder, 'A', Return":
+        ((15016, 21056), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN_WAVE_2 = {
+    'aes_desk_clear, arrival 1 of A: File > Open':
+        {"bench": (20840, 16576), "bench_shipped": (20840, 17034)},
+    'aes_desk_clear, arrival 2 of window: A: opened again (two windows)':
+        {"bench": (20970, 16616), "bench_shipped": (20970, 17074)},
+    "aes_desk_clear, arrival 1 of folder: File > New Folder, 'A', Return":
+        {"bench": (27818, 22424), "bench_shipped": (27818, 23430)},
+}
+
+
+def test_the_wave_2_rows_are_the_cases_at_arrivals_and_every_one_that_switches_is_pinned_by_its_door():
+    """EVERY CASE AT AN ARRIVAL OF A FLIPPED ROUTINE A ROW; the plain ones exactly those named; EVERY ROW THAT SWITCHES
+    PINNED ONCE — a door user's in `DOOR_USERS_*_WAVE_2` (read by `test_tier3.py`), any other here; the X flag declared
+    on exactly the rows named."""
+    import aes_switching
+    switching = {aes_switching.row_name(row): name for name, row in ROWS_WAVE_2.items() if hasattr(row, "door")}
+    assert {name for name, row in ROWS_WAVE_2.items() if not hasattr(row, "door")} == set(PLAIN_WAVE_2)
+    door_users = {row for row, name in switching.items() if ROWS_WAVE_2[name].door}
+    assert {switching[row] for row in door_users} == set(DOOR_USERS_WAVE_2)
+    assert set(DOOR_USERS_PRICED_WAVE_2) == set(DOOR_USERS_WHOLE_RUN_WAVE_2) == door_users
+    assert set(NO_DOOR_PREMISES_WAVE_2) == set(NO_DOOR_PRICED_WAVE_2) == set(NO_DOOR_WHOLE_RUN_WAVE_2) == set(switching) - door_users
+    assert {name for name, row in ROWS_WAVE_2.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS_WAVE_2)
+    assert (len(ROWS_WAVE_2), len(switching), len(door_users), len(X_FLAG_DIFFERS_WAVE_2)) == (8, 5, 2, 0)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES_WAVE_2)
+def test_a_wave_2_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    aes_switching.vet_the_premise(aes_event.SWITCHING_ROWS[name].row, aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name])
+    aes_switching.vet_on_a_blob(blob, aes_event.SWITCHING_ROWS[name].row, premise, NO_DOOR_PRICED_WAVE_2[name][3],
+                                NO_DOOR_WHOLE_RUN_WAVE_2[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    aes_switching.vet_the_table_s_price(aes_event.SWITCHING_ROWS[name].row, aes_switching.Priced(*NO_DOOR_PRICED_WAVE_2[name]))

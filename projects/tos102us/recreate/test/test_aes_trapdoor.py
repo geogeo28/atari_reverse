@@ -3,13 +3,14 @@ ub_trampoline as the ROM's own (`$fe3ea6..$fe3f5d`), and gemsuper's aes_entry as
 (What it DOES is `test_aes_trapdoor_rows.py`'s: the arms and the round trip run from real arrivals on both blobs.)
 
 FOUR CLAIMS HOLD IT.
-  * THE REGION'S BYTES are the ROM's, every word but FIVE longwords, on BOTH blobs: the four `jsr`s of the mask
-    brackets, which go to `switch.S`'s two, and the `movea.l #` of aes_entry, which names the stream below.
+  * THE REGION'S BYTES are the ROM's, every word but SIX longwords, on BOTH blobs: the four `jsr`s of the mask
+    brackets, which go to `switch.S`'s two, the `movea.l #` of aes_entry, which names the stream below, and (band 6
+    slice F3, N18) ub_trampoline's `jsr` of the desk's draw code, which names the thunk into our C.
   * aes_entry IS THE ROM'S STREAM instruction by instruction (`transcription.assert_stream`): its three Line-F call
     words NAMED, each a `jsr` of the entry that stands for the routine the ROM's table reaches — the marshal's thunk,
     the dispatcher's entry, the way out — and its one short branch following the four bytes the first `jsr` adds.
   * WHAT THE PINS DO NOT REACH IS HELD BESIDE THEM: the source's symbols tile its text with nothing between, before
-    or after; the thunk is its shape into `aes_marshal`; the table's lengths are the build's.
+    or after; each thunk is its shape into its C (`aes_marshal`, `aes_desk_userdef`); the table's lengths are the build's.
   * WHAT IS DEAD IS PROVED DEAD, from the ROM's own bytes: the way out never returns (so aes_entry's Line-F return
     and the instruction after the handler's `jsr (a0)` are never executed as a return), and it is reached from one
     place.
@@ -45,11 +46,12 @@ HANDLER, WAY_OUT, UB, ENTRY = door.HANDLER_SYMBOL, door.WAY_OUT_SYMBOL, door.UB_
 REGION_S_ENTRIES = (HANDLER, WAY_OUT, UB)
 REGION = transcription.pinned_region(door.REGION_LO, door.REGION_HI, "AES_ROM_TRAP2",
                                      ("AES_ROM_TRAP2_EXIT", "AES_ROM_UB_TRAMPOLINE"))
-# THE FIVE OPERANDS THAT NAME OUR BUILD, each by the instruction that holds it (its operand lies one word in): the
-# mask brackets' four calls — two in the AES arm, two in the way out — and aes_entry by value.
+# THE SIX OPERANDS THAT NAME OUR BUILD, each by the instruction that holds it (its operand lies one word in): the
+# mask brackets' four calls — two in the AES arm, two in the way out —, aes_entry by value, and (band 6 slice F3, N18)
+# ub_trampoline's call of the desk's draw code, `$fde844`: the thunk into our C.
 SPL7_SAVE_CALLS, SPL_RESTORE_CALLS = (0xFE3ECA, 0xFE3F0C), (0xFE3EF2, 0xFE3F36)
 ENTRY_BY_VALUE_AT = 0xFE3F00
-UB_S_CALL_AT = 0xFE3F50                 # ...and the one that still names the ROM: the desk's draw code (band 6)
+UB_S_CALL_AT = 0xFE3F50
 THE_SWITCH_S_ANCHOR = "AES_ROM_SPL7_SAVE"
 
 
@@ -64,11 +66,13 @@ RELOCATED = {
        for site in SPL_RESTORE_CALLS},
     _operand(ENTRY_BY_VALUE_AT): Relocated(ABSOLUTE, None, "aes_entry by value, into A0: where our stream is linked",
                                            thunk=ENTRY),
+    _operand(UB_S_CALL_AT): Relocated(ABSOLUTE, None, "the desk's draw code `$fde844`, a `jsr`: the thunk into our C",
+                                      thunk=door.USERDEF_THUNK),
 }
-# What each relocated operand must hold, as a symbol of the blob asked: the same five on either blob.
+# What each relocated operand must hold, as a symbol of the blob asked: the same six on either blob.
 NAMED_BY_OPERAND = {**{_operand(site): "aes_rom_spl7_save" for site in SPL7_SAVE_CALLS},
                     **{_operand(site): "aes_rom_spl_restore" for site in SPL_RESTORE_CALLS},
-                    _operand(ENTRY_BY_VALUE_AT): ENTRY}
+                    _operand(ENTRY_BY_VALUE_AT): ENTRY, _operand(UB_S_CALL_AT): door.USERDEF_THUNK}
 # aes_entry's three Line-F call words IN THE ROM'S ORDER, each with the ROM routine its table entry reaches and the
 # entry our `jsr` names. WHERE each lies is read off the ROM — the words of aes_entry that are no 68000 instruction.
 CALLS_IN_ORDER = (CallWord("AES_ROM_MARSHAL", door.MARSHAL_THUNK), CallWord("AES_ROM_DSPTCH", "aes_dsptch"),
@@ -77,7 +81,7 @@ CALL_WORDS_AT = tuple(at for at, text in rom_data.instructions(door.ENTRY, door.
 assert len(CALL_WORDS_AT) == len(CALLS_IN_ORDER), "aes_entry makes three Line-F calls and its stream ends on the third"
 assert CALL_WORDS_AT[-1] == door.ENTRY_END - WORD_BYTES
 STREAM = transcription.stream(door.ENTRY, door.ENTRY_END, ENTRY, dict(zip(CALL_WORDS_AT, CALLS_IN_ORDER)))
-SOURCE_S_SYMBOLS = (*REGION_S_ENTRIES, ENTRY, door.MARSHAL_THUNK)
+SOURCE_S_SYMBOLS = (*REGION_S_ENTRIES, ENTRY, door.MARSHAL_THUNK, door.USERDEF_THUNK)
 BLOBS = switch.BLOBS
 
 
@@ -87,14 +91,14 @@ def blob(request):
 
 
 # ---- the bytes ----------------------------------------------------------------------------------------------------------
-def test_the_region_is_the_rom_s_bytes_but_for_the_five_operands_that_name_our_build():
-    """THE BYTE PIN: every word of `$fe3ea6..$fe3f5d` the ROM's, and the five that are not exactly where the mask
-    brackets and our aes_entry are linked — ub_trampoline's `jsr` of the desk's draw code among the words EQUAL."""
+def test_the_region_is_the_rom_s_bytes_but_for_the_six_operands_that_name_our_build():
+    """THE BYTE PIN: every word of `$fe3ea6..$fe3f5d` the ROM's, and the six that are not exactly where the mask
+    brackets, our aes_entry and the thunk into our desk's draw code (band 6 slice F3, N18) are linked."""
     transcription.assert_transcribed(REGION, relocated=RELOCATED)
 
 
 def test_the_region_is_the_same_bytes_on_both_blobs(blob):
-    """...and on the shipped configuration's blob too: every byte the ROM's but those five operands, each naming
+    """...and on the shipped configuration's blob too: every byte the ROM's but those six operands, each naming
     THAT blob's entry."""
     ours = transcription.bytes_of(blob, REGION.anchor, REGION.lo, REGION.hi - REGION.lo)
     theirs = bytes(BASE_IMAGE[REGION.lo:REGION.hi])
@@ -108,21 +112,21 @@ def test_the_region_is_the_same_bytes_on_both_blobs(blob):
     assert ours[at:] == theirs[at:]
 
 
-def test_the_five_operands_are_every_word_of_the_region_that_names_aes_code():
+def test_the_six_operands_are_every_word_of_the_region_that_names_aes_code():
     """THE LIST IS THE ROM'S OWN: every instruction of the region whose operand NAMES A ROUTINE OF THE AES'S TEXT is
-    one of the five relocated — or ub_trampoline's call of the desk's draw code, the one word that stays the ROM's
-    (band 6: the census `test_aes_rom_data.py` lists it for `trapdoor.S`, CODE)."""
+    one of the six relocated — ub_trampoline's call of the desk's draw code among them since band 6 slice F3 (N18):
+    no word of the region names the ROM, and the census (`test_aes_rom_data.py`) lists nothing for `trapdoor.S`."""
     naming = {_operand(operand.site): operand.value for operand in rom_data.text_operands(REGION.lo, REGION.hi)
               if not operand.pc_relative and aes.AES_TEXT[0] <= operand.value < aes.AES_TEXT[1]}
     calls = {_operand(at): int(text.split()[-1], 16) for at, text in rom_data.instructions(REGION.lo, REGION.hi)
              if text and text.startswith("jsr 0x")}
     named = {**naming, **calls}
-    assert set(named) == set(RELOCATED) | {_operand(UB_S_CALL_AT)}
+    assert set(named) == set(RELOCATED)
     assert named[_operand(UB_S_CALL_AT)] == addrs.AES_ROM_DESK_USERDEF
     assert named[_operand(ENTRY_BY_VALUE_AT)] == addrs.AES_ROM_ENTRY
     assert {named[_operand(site)] for site in SPL7_SAVE_CALLS} == {addrs.AES_ROM_SPL7_SAVE}
     assert {named[_operand(site)] for site in SPL_RESTORE_CALLS} == {addrs.AES_ROM_SPL_RESTORE}
-    assert rom_census.ROM_ADDRESSES_AS_DATA["trapdoor.S"] == {"AES_ROM_DESK_USERDEF": rom_census.CODE}
+    assert "trapdoor.S" not in rom_census.ROM_ADDRESSES_AS_DATA
 
 
 def test_aes_entry_is_the_rom_s_stream_its_three_call_words_made_jsrs(blob):
@@ -144,13 +148,16 @@ def test_every_stream_of_the_registry_is_one_of_the_two_batteries_declarations()
         [STREAM, test_aes_switch.STREAM], key=lambda declared: declared.lo), "a stream no battery of the two declares, or one declared twice"
 
 
-def test_the_source_holds_its_entries_its_thunk_and_nothing_else(blob):
-    """WHAT THE PINS DO NOT REACH, held: `trapdoor.S`'s symbols — the region's three routines, aes_entry, the thunk —
-    lie END TO END in each blob with nothing between them and nothing after the last but the assembler's fill; and
-    the thunk is one longword's shape into `aes_marshal` (`aes_switch.vet_a_thunk`)."""
+def test_the_source_holds_its_entries_its_thunks_and_nothing_else(blob):
+    """WHAT THE PINS DO NOT REACH, held: `trapdoor.S`'s symbols — the region's three routines, aes_entry, the two
+    thunks — lie END TO END in each blob with nothing between them and nothing after the last but the assembler's
+    fill; and each thunk is one longword's shape into its C (`aes_switch.vet_a_thunk`): aes_entry's into `aes_marshal`,
+    ub_trampoline's (band 6 slice F3, N18) into `aes_desk_userdef`."""
     switch.vet_laid_end_to_end(blob, SOURCE_S_SYMBOLS)
     switch.vet_a_thunk(blob, door.MARSHAL_THUNK, switch.ONE_LONG_THUNK, "aes_marshal")
+    switch.vet_a_thunk(blob, door.USERDEF_THUNK, switch.ONE_LONG_THUNK, "aes_desk_userdef")
     assert {door.MARSHAL_THUNK} == ENTRIES[ENTRY].exits - set(ENTRIES) - set(transcription.SWITCH_ENTRIES)
+    assert {door.USERDEF_THUNK} == ENTRIES[UB].exits
 
 
 def test_a_thunk_into_another_routine_and_a_run_of_symbols_that_leaves_one_out_are_refused(blob):
@@ -190,13 +197,12 @@ def test_each_entry_of_the_table_is_where_and_what_the_table_says(entry, blob):
 
 def test_the_table_s_exits_are_the_symbols_the_pins_name():
     """An entry's EXITS — what its bytes name of our build where the ROM's name the ROM's — are exactly its pin's:
-    the relocations that lie in its bytes, the stream's three call words. ub_trampoline has none: its one call is
-    still the ROM's (above)."""
+    the relocations that lie in its bytes, the stream's three call words — ub_trampoline's one, since band 6 slice F3
+    (N18), the thunk into the desk's draw code."""
     for entry in REGION_S_ENTRIES:
         row = ENTRIES[entry]
         assert row.exits == {NAMED_BY_OPERAND[at] for at in NAMED_BY_OPERAND if row.rom <= at < row.rom + row.bytes}
     assert ENTRIES[ENTRY].exits == {call.symbol for call in STREAM.calls.values()}
-    assert not ENTRIES[UB].exits
 
 
 def test_the_region_is_the_three_routines_end_to_end():

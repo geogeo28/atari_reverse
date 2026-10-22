@@ -18,14 +18,16 @@
  *                 local are the contract, and no compiler is held to it;
  *   ub_trampoline moves to another stack round a call and back, a register its only local.
  *
- * TWO PINS (`test/test_aes_trapdoor.py`). The region is BYTE-EXACT but for FIVE longwords: the four `jsr`s of the
- * mask brackets go to `switch.S`'s two, the `movea.l #` of aes_entry to the stream below. aes_entry is held
+ * TWO PINS (`test/test_aes_trapdoor.py`). The region is BYTE-EXACT but for SIX longwords: the four `jsr`s of the
+ * mask brackets go to `switch.S`'s two, the `movea.l #` of aes_entry to the stream below, and (band 6 slice F3, N18)
+ * ub_trampoline's `jsr` of the desk's draw code to the second thunk below. aes_entry is held
  * INSTRUCTION BY INSTRUCTION under the stream kind (`test/transcription.py`, `assert_stream`): every instruction the
  * ROM's but the three Line-F call words, each NAMED, and the one short branch across the first.
  *
- * ONE WORD STILL NAMES THE ROM: ub_trampoline's `jsr $fde844` — the desk's own draw code, band 6's. It is the ROM's
- * byte, a census entry (`test_aes_rom_data.py`) and the one declared `jsr` of a build into the AES's ROM text
- * (`bench/tier3.py`: ROM_CALLS_OWED_TO_A_LATER_BAND) — owed the day that routine has a body of ours.
+ * NO WORD NAMES THE ROM'S TEXT SINCE BAND 6 SLICE F3 (N18): ub_trampoline's `jsr $fde844` — the desk's own draw code,
+ * band 6's, reached BY VALUE (no Line-F word names it) — names the thunk into its C, `aes_desk_userdef`. The ROM's
+ * machines keep the ROM's trampoline in `$8c32` and so the ROM's draw; every machine of ours draws the text view's
+ * lines through our C. The harness reads that operand off the blob (`test/aes_desk.py`'s `flipped`).
  *
  * WHAT A `jsr` CHANGES FOR THE CALLEE, AND WHY IT IS RIGHT (as for disp, `switch.S`): the Line-F handler enters a
  * routine with the return address on the stack, as a `jsr` does — so the way out's constant counts the same bytes —
@@ -129,7 +131,7 @@ aes_rom_ub_trampoline:
     move.l  %sp,(AES_USERDEF_SP_SAVE).l
     movea.l (AES_USERDEF_STACK).l,%sp
     move.l  %d0,-(%sp)
-    M68K_JSR_LONG(AES_ROM_DESK_USERDEF)             /* $fe3f50: the ROM's own, until band 6 */
+    M68K_JSR_LONG(ub_trampoline_to_aes_desk_userdef) /* $fe3f50: $fde844, the desk's draw code — our C's thunk */
     movea.l (AES_USERDEF_SP_SAVE).l,%sp
     rts
     .size   aes_rom_ub_trampoline,.-aes_rom_ub_trampoline
@@ -149,6 +151,8 @@ aes_rom_entry:
     M68K_JSR_LONG(aes_rom_trap2_exit)               /* $fe65c0: $f2bc — and no instruction after it runs */
     .size   aes_rom_entry,.-aes_rom_entry
 
-/* ==== THE THUNK aes_entry's `jsr` into C reaches: the marshal's Alcyon frame — one longword, the parameter block —
- * taken into the m68k C call (`c_call_glue.h`). Local, sized: no ROM bytes, and no entry of the build's. */
+/* ==== THE THUNKS the `jsr`s into C reach, one longword's Alcyon frame each taken into the m68k C call (`c_call_glue.h`).
+ * Local, sized: no ROM bytes, and no entry of the build's. aes_entry's: the marshal's, the parameter block. */
 ONE_LONGWORD_THUNK(aes_entry_to_aes_marshal, aes_marshal)
+/* ...ub_trampoline's (band 6 slice F3, N18): `$fde844`'s, the PARMBLK the trampoline pushed on the userdef stack. */
+ONE_LONGWORD_THUNK(ub_trampoline_to_aes_desk_userdef, aes_desk_userdef)

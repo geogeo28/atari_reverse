@@ -78,6 +78,10 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_I_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# FLIPPED at band 6 slice F3 (stage 1) but two: desk_clear and desk_verify flipped; pro_run and do_wopen HELD to stage 2,
+# with unit J (the cut: do_wopen flipped under the ROM's do_dopen / do_diropen takes "A: File > Open" to 1,560 > 1,548).
+UNIT_I_WAVE_2_HELD_AT_F3 = ("AES_ROM_PRO_RUN", "AES_ROM_DO_WOPEN")
+UNIT_I_WAVE_2_FLIPPED = tuple(name for name in UNIT_I_WAVE_2 if name not in UNIT_I_WAVE_2_HELD_AT_F3)
 # ---- end of group G3's wave-2 ----
 # The routines whose run reaches the dispatcher — through a binding of unit D's — on every arm a case takes: rows that
 # switch.

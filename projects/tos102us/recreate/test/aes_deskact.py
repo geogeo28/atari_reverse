@@ -60,10 +60,13 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_B_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# FLIPPED at band 6 slice F3 (stage 1): the three whole — none held.
+UNIT_B_WAVE_2_HELD_AT_F3 = ()
 # ---- end of group G4's wave-2 ----
-# THE ROUTINES WHOSE CALLEES REACH THE DISPATCHER (a binding of unit D's): their cases are rows that switch.
+# THE ROUTINES WHOSE CALLEES REACH THE DISPATCHER (a binding of unit D's): their cases are rows that switch — wave 2's
+# three among them since their flip (band 6 slice F3: every ROM run of their arrivals through its dispatcher enters the desk).
 YIELDING = ("AES_ROM_GR_OBFIND", "AES_ROM_GR_ISDOWN", "AES_ROM_GR_PLNS", "AES_ROM_GR_BWAIT", "AES_ROM_MOVE_DRVICON",
-            "AES_ROM_ACT_CHG", "AES_ROM_ACT_ALLCHG")
+            "AES_ROM_ACT_CHG", "AES_ROM_ACT_ALLCHG", *UNIT_B_WAVE_2)
 # THE FIVE HELD AT BAND 6 SLICE F2 (stage 2), each until its C callees were flipped: gr_isdown (unit D's evnt_multi),
 # gr_bwait (gr_isdown), act_chg, act_allchg and move_drvicon (unit I's do_wredraw) — ALL FIVE FLIPPED at band 6 slice F2c,
 # with evnt_multi and do_wredraw: the unit whole.
@@ -297,8 +300,10 @@ def held_plain(each):
 # else (its child's doors its own), the X flag declared where its yield parks each build's own. A LABELLED ARGUMENT CLASS
 # (a `why`) stays Tier 1's.
 def row_label(each):
-    """A row's label (the routine is its name's core): the arrival, and the wake where the case has one."""
-    return f"arrival {each.nth} of {each.chain}" + (f"; {each.wake}" if each.wake else "")
+    """A row's label (the routine is its name's core): the arrival, the staging it lays where it has one (`[what]`),
+    and the wake where the case has one."""
+    laid = f" [{each.laid[0]}]" if each.laid else ""
+    return f"arrival {each.nth} of {each.chain}{laid}" + (f"; {each.wake}" if each.wake else "")
 
 
 def at_arrivals(by_label_of_cases, names):
@@ -306,17 +311,25 @@ def at_arrivals(by_label_of_cases, names):
     return {name: each for name, each in by_label_of_cases.items() if not each.why and each.name in names}
 
 
-def register_row(each, *, answered, door_user=False, x_flag_differs=False, at_idle=None, reaches_no_binding=False):
+def register_row(each, *, answered, door_user=False, x_flag_differs=False, at_idle=None, at_calls=None,
+                 reaches_no_binding=False):
     """THE CASE `each` (at an arrival) REGISTERED: a plain row, or the row that switches of a routine that yields — its
-    wait ended by `at_idle` (`{idle: interrupt}`: the case's wake, its battery's) where it waits. A yielding routine's
-    arm that `reaches_no_binding` (measured: the ROM's run through its dispatcher enters no process) is a plain row. The row."""
+    wait ended by `at_idle` (`{idle: interrupt}`: the case's wake, its battery's) where it waits, or by `at_calls`
+    (`{door call: interrupt}`: a poll that never idles — the rubber box's, unit D's GRAF_RUBBOX wakes). A yielding
+    routine's arm that `reaches_no_binding` (measured: the ROM's run through its dispatcher enters no process) is a plain
+    row. A case that lays a staging over its arrival (`laid`: since band 6 slice F3, pn_active's GEMDOS replayed) is
+    registered over it, its `what` in the row's label — and its steered hook (the staging's host twins) taken by a
+    plain row alone: a row that switches has none to hand them, and is refused by name where its case steers one. The row."""
     arrived = arrival_of(each)
-    pokes = aes_desk.arrival_s_machine(arrived.boot.ram)
+    pokes = case.merge_pokes(aes_desk.arrival_s_machine(arrived.boot.ram), *layers_of(each))
+    hook = dict(each.steered or ()).get("hook")           # (the staging's host twins: its companion's, as Tier 1's)
     if each.name not in YIELDING or reaches_no_binding:
         assert not at_idle, f"{row_label(each)}: a plain row has no idle to wake (`at_idle` given)"
-        return aes.register(row_label(each), each.name, arrived.arguments, pokes, answer_compared=answered)
-    row = aes_event.woken_row(row_label(each), each.name, arrived.arguments, lambda: pokes, at_idle or {}, None, objects=True,
-                              answered=answered)
+        assert not at_calls, f"{row_label(each)}: a plain row has no door call to wake (`at_calls` given)"
+        return aes.register(row_label(each), each.name, arrived.arguments, pokes, hook=hook, answer_compared=answered)
+    assert not hook, f"{row_label(each)}: a row that switches takes no steered hook (its staging's twins would be dropped)"
+    row = aes_event.woken_row(row_label(each), each.name, arrived.arguments, lambda: pokes, at_idle or {}, at_calls,
+                              objects=True, answered=answered)
     door = row.door if door_user else None
     return aes_event.register_woken(row._replace(door=door, child_doors="" if door_user else row.door.doors,
                                                  x_flag_differs=x_flag_differs))

@@ -1,10 +1,16 @@
 """THE CARTRIDGE'S DIRECTORY SEARCH (`src/desk/deskutil.c`; band 6 wave 2, group G2, unit M, ruling R-W2-1): cart_sfirst
-`$fed522` and cart_snext `$fed534`, HELD AT TIER 1 — LINKED, AND NOTHING BOUND.
+`$fed522` and cart_snext `$fed534`, HELD AT TIER 1 — AND, SINCE BAND 6 SLICE F3 (stage 1), FLIPPED: their Line-F table
+entries are their thunks; SINCE ITS FIX PASS each priced by a plain row at its arrival on THE LABELLED CHAIN (below).
 
-  * NO CHAIN REACHES EITHER: their one caller, pn_active `$fdfc3c`, takes them where a path's spec drive is 'c' — the
-    cartridge's window, which no machine of ours opens (the oracle's bus answers 0 at the cartridge port, whatever the
-    image holds: `test_aes_cart.py`). TRIED: every one of pn_active's 29 reaching chains hands it an "A:\\" spec. So
-    EVERY CASE IS A LABELLED ARGUMENT CLASS over pn_active's own arrival ("A: File > Open"): the DTA pointer and the
+  * ONE CHAIN REACHES THEM, OF A LABELLED CLASS OF DISK (the user's ruling 2026-10-21, "price via INF class";
+    `aes_boot.THE_CARTRIDGE_A_DRIVE`): their one caller, pn_active `$fdfc3c`, takes them where a path's spec drive is
+    'c' — the cartridge's. No disk of the model's opens one (every one of pn_active's other reaching chains hands it an
+    "A:\\" spec); THE DESKTOP.INF DISK WHOSE DEFAULT CARTRIDGE LINE IS RETYPED A DRIVE'S does — the ROM's own boot keeps
+    it as a drive icon 'c' (its reader drops a drive line lettered uppercase 'C' alone) and the ROM's do_dopen opens it
+    without drive_check ('c' skipped): pn_active's cartridge arm, the port 0 on the oracle (no cartridge: the chain's
+    end). THAT ROM QUIRK IS PINNED AS IT SHIPS (both shores keep the icon, the ROM's open enters no drive_check), and
+    each routine's case at its arrival there (`aes_desk.CARTRIDGE_OPENED`) is a PLAIN ROW, registered.
+  * THE REST ARE LABELLED ARGUMENT CLASSES over pn_active's own arrival ("A: File > Open"): the DTA pointer and the
     attribute word pn_active would hand cart_sfirst there — and for cart_snext's found arm the cursor LAID at a
     ROM-format cartridge header chain in RAM (test_aes_cart.py's staging; its id says LAID).
   * cart_sfirst's FOUND ARM IS UNPINNED BY A DIFFERENTIAL: cart_sfirst calls cart_init, which reads the port THROUGH
@@ -20,6 +26,7 @@ import pytest
 from harness import BASE_IMAGE
 
 import aes
+import aes_desk
 import aes_deskact as da
 import aes_deskbind as db
 import aes_deskfpd  # noqa: F401 — pn_active's declared frame, whose arrival every case runs over
@@ -30,6 +37,7 @@ import gemdos
 Case, UNPOISONED = da.Case, da.UNPOISONED
 SFIRST, SNEXT, ACTIVE = "AES_ROM_CART_SFIRST", "AES_ROM_CART_SNEXT", "AES_ROM_PN_ACTIVE"
 OPEN_A = "A: File > Open"
+CARTRIDGE_OPENED = aes_desk.CARTRIDGE_OPENED
 CART = aes.header_constants("cart.h")
 CURSOR, DTA_KEPT = CART["AES_CART_CURSOR"], CART["AES_CART_DTA"]
 DTA_POINTER = db.DESK_GLOBALS["DESK_DTA_POINTER"]
@@ -73,6 +81,9 @@ AT_THE_HEAD, AT_THE_LAST = ("the cursor at a staged header chain's head", _chain
 STALE_CURSOR = ("the cursor stale ($a5a5a5a5): cart_init sets it", lambda _arrived: {CURSOR: struct.pack(">I", 0xA5A5A5A5)})
 
 CASES = (
+    # ---- AT THEIR ARRIVALS on the labelled chain: no cartridge (the port 0), the chain's end
+    Case(SFIRST, CARTRIDGE_OPENED), Case(SNEXT, CARTRIDGE_OPENED),
+    # ---- THE CLASSES
     Case(SFIRST, OPEN_A, over=ACTIVE, why="the DTA and attributes pn_active hands on 'c': no cartridge, the chain's end",
          arguments=_what_pn_active_hands),
     Case(SFIRST, OPEN_A, over=ACTIVE, why="...over a stale cursor: cart_init's, then cart_find's at NULL",
@@ -90,31 +101,65 @@ EVERY_CASE = pytest.mark.parametrize("name", BY_LABEL)
 
 
 @EVERY_CASE
-def test_a_routine_of_the_unit_over_pn_active_s_arrival_is_the_rom_s(name):
-    """THE CASE: the C core against the ROM's routine over pn_active's arrival's megabyte — every byte, the answer at
-    its width."""
-    da.held_plain(BY_LABEL[name])
+def test_a_routine_of_the_unit_from_its_arrival_or_over_pn_active_s_is_the_rom_s(name):
+    """THE CASE: the C core against the ROM's routine over its own arrival's megabyte (a class: pn_active's) — every
+    byte, the answer at its width; at its own arrival the answer ALSO the one the ROM's run in place leaves its caller."""
+    each = BY_LABEL[name]
+    result = da.held_plain(each)
+    if not each.why:
+        back = da.returned_in_place(da.arrival_of(each))
+        assert da.answered_at_its_width(each.name, result.long_answer()) == da.answered_at_its_width(each.name, back.registers["d0"])
 
 
-def test_every_case_is_a_class_and_each_routine_has_cases():
-    """No chain reaches the pair (the docstring): every case a labelled class, both routines held."""
-    assert all(each.why for each in CASES)
-    assert {each.name for each in CASES} == set(du.UNIT_M_WAVE_2)
+def test_each_routine_has_a_case_at_its_arrival_and_the_rest_are_classes():
+    """One case of each routine at its arrival on the labelled chain (the docstring); every other a labelled class."""
+    at_arrivals = [each for each in CASES if not each.why]
+    assert sorted(each.name for each in at_arrivals) == sorted(du.UNIT_M_WAVE_2)
+    assert all(each.chain == CARTRIDGE_OPENED for each in at_arrivals)
 
 
-def test_no_chain_reaches_either_routine_nor_hands_pn_active_a_cartridge_s_spec():
-    """TRIED (lesson 1): the hands' reach table names no chain for either, and every arrival of pn_active the chains
-    make is a GEMDOS drive's spec (the cartridge's arm, `$fdfc48 cmpi.b #'c'`, untaken). The first arrival of each
-    chain is read: the spec's drive byte."""
-    import aes_desk
+def test_the_labelled_chain_alone_reaches_either_routine_and_hands_pn_active_the_cartridge_s_spec():
+    """TRIED (lesson 1), and READ OFF THE CHAINS: the hands' reach table names THE LABELLED CHAIN alone for each, and
+    every arrival of pn_active the chains make hands it a GEMDOS drive's spec ("A:") but that chain's, which hands it the
+    cartridge's drive (`$fdfc48 cmpi.b #'c'`: the immediate read off the ROM). The first arrival of each chain is read:
+    the spec's drive byte."""
     from harness import addrs
+    import test_desk_fpd
     table = aes_desk.reach()
-    assert not table[addrs.AES_ROM_CART_SFIRST] and not table[addrs.AES_ROM_CART_SNEXT]
+    assert table[addrs.AES_ROM_CART_SFIRST] == table[addrs.AES_ROM_CART_SNEXT] == (CARTRIDGE_OPENED,)
 
     def drive(chain):
         arrived = da.arrival(ACTIVE, chain)
         return arrived.boot.ram[(arrived.arguments[0] & da.BUS) + PNODE_SPEC]
-    assert {drive(chain) for chain in table[addrs.AES_ROM_PN_ACTIVE]} == {ord("A")}
+    drives = {chain: drive(chain) for chain in table[addrs.AES_ROM_PN_ACTIVE]}
+    assert drives.pop(CARTRIDGE_OPENED) == test_desk_fpd.CARTRIDGE_DRIVE and set(drives.values()) == {ord("A")}
+
+
+# THE ROM'S QUIRK, AS IT SHIPS (a ROM bug is never fixed): the reader keeps a drive line lettered 'c' — it drops only an
+# uppercase 'C' where the map has no C: (`src/desk/deskapp.c` drive_line_kept) — and do_dopen opens drive 'c' WITHOUT
+# drive_check (`src/desk/desksupp.c` aes_do_dopen: the cartridge's letter skips it).
+DRIVE_LETTER = "c"
+
+
+def test_both_shores_keep_the_retyped_line_as_a_drive_icon_c_and_the_rom_s_open_of_it_enters_no_drive_check():
+    """THE CLASS'S MACHINE ON BOTH SHORES (the ROM's boot; ours, by our gem_entry and our reader): a drive icon
+    lettered 'c' — the default text's cartridge line, retyped — beside A: and B:, in sight; and the ROM's own open of
+    it (the chain) enters do_dopen and pn_active and never drive_check."""
+    from harness import addrs
+    for machine in (aes_desk.MACHINES[aes_desk.CARTRIDGE_A_DRIVE](), aes_desk.OUR_MACHINES[aes_desk.CARTRIDGE_A_DRIVE]()):
+        assert [letter for _index, _text, letter in aes_desk.icons(machine) if letter.isalpha()] == [DRIVE_LETTER, "B", "A"]
+        aes_desk.drive_point(machine, DRIVE_LETTER)
+    entered = aes_desk.entered(CARTRIDGE_OPENED)
+    assert {aes_desk.OPEN_A_DRIVE, addrs.AES_ROM_PN_ACTIVE} <= entered and addrs.AES_ROM_DRIVE_CHECK not in entered
+
+
+def test_the_class_s_disk_is_the_default_inf_disk_but_one_byte_of_its_file():
+    """THE LABELLED CLASS IS ONE BYTE OF THE FILE: the disk the DESKTOP.INF machine logged in, its cartridge line's type
+    letter `C` made `M` — the serial, the FATs and the root unchanged (the boot's floppy model refuses another disk)."""
+    import aes_boot
+    plain, retyped = aes_boot.inf_disk_of(), aes_boot.cartridge_drive_disk()
+    apart = [at for at, (was, now) in enumerate(zip(plain, retyped)) if was != now]
+    assert len(plain) == len(retyped) and len(apart) == 1 and (plain[apart[0]], retyped[apart[0]]) == (ord("C"), ord("M"))
 
 
 # ---- THE FOUND ARM OF cart_sfirst: A READING, THE C ALONE ----------------------------------------------------------------
@@ -146,17 +191,24 @@ def test_both_answer_a_word_and_pn_active_reads_cart_sfirst_s_and_cart_snext_s()
     assert all(db.answer_readers(getattr(addrs, name)) for name in du.UNIT_M_WAVE_2)
 
 
-# ---- LINKED AND UNBOUND --------------------------------------------------------------------------------------------------------
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_the_pair(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`, one for every unit of the desk)."""
-    assert not db.bound_referrers(blob, du.UNIT_M_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 1) — PRICED SINCE ITS FIX PASS --------------------------------------------------------------
+# Flipped at stage 1 ⚠️ verified-but-unpriced (no disk of the model's arrives at either); PRICED at its fix pass by the
+# labelled class above (the user's ruling 2026-10-21): each case at an arrival A PLAIN ROW (`aes_deskact.register_row`:
+# neither yields), over the arrival's megabyte; the classes stay Tier 1's. Who-ran: our shore enters neither's thunk —
+# pn_active, their one ROM caller, is ours, and our C calls their cores (`test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE`);
+# each row's kit call enters its thunk (`test_aes_lineftable`).
+ROWS = {name: da.register_row(each, answered=du.SIGNATURES_WAVE_2[each.name][0] is not None)
+        for name, each in da.at_arrivals(BY_LABEL, du.UNIT_M_WAVE_2).items()}
 
 
-def test_the_table_s_entries_for_the_pair_stay_the_rom_s_and_no_registry_names_one():
-    verdicts, linef_table = da.table_verdicts(du.UNIT_M_WAVE_2)
-    assert verdicts == {name: linef_table.THE_ROM_S for name in du.UNIT_M_WAVE_2}
-    assert set(du.UNIT_M_WAVE_2) <= set(linef_table.LINKED_AND_NOT_FLIPPED)
-    assert not da.registered(du.UNIT_M_WAVE_2)
+def test_each_routine_of_the_pair_has_a_row_at_its_arrival():
+    assert sorted(row[1] for row in ROWS.values()) == sorted(da.entry_of(name) for name in du.UNIT_M_WAVE_2)
+
+
+def test_the_pair_is_flipped(blob):
+    """THE FLIP PIN (`aes_deskarrive.flipped`): each core called by its own thunk of the table, each entry ours."""
+    import aes_deskarrive
+    aes_deskarrive.flipped(blob, du.UNIT_M_WAVE_2)
 
 
 # ==== BAND 6 WAVE 4, group G1: THE SHOW / PRINT ENGINE — desk_show_file `$fed61e`, desk_print_file `$fed624` ======

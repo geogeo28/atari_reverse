@@ -1036,9 +1036,11 @@ CompanionRun = namedtuple("CompanionRun", "staged delivered answer calls image e
 
 def _door_of(row):
     """What a row's Tier 1 fork binds: its door user's door — or, for a row that reaches A DOOR OF ITS OWN and makes
-    no door call (`child_doors`), a door that serves no entry and runs that source first. Either way the fork notes
-    the image at every dispatch, and the companion holds each to the ROM's."""
-    return row.door or (aes_switch.DoorUser(doors=row.child_doors) if row.child_doors else None)
+    no door call (`child_doors`), a door that serves no entry and runs that source first, THE WALKED ROUTINES SERVED
+    as a row with no door at all is served them (`aes_switch._served_with_no_door`, slice H2; since band 6 slice F3:
+    d_doop's rows over the copy engine's replay draw its fields by objc_draw). Either way the fork notes the image at
+    every dispatch, and the companion holds each to the ROM's."""
+    return row.door or (aes_switch.DoorUser(objects=True, doors=row.child_doors) if row.child_doors else None)
 
 
 def companion(row, at_stops_only=()):

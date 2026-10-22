@@ -47,6 +47,8 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_L_WAVE_2 = tuple(SIGNATURES_WAVE_2)
+# FLIPPED at band 6 slice F3 (stage 1): the five whole — none held.
+UNIT_L_WAVE_2_HELD_AT_F3 = ()
 # ---- end of group G3's wave-2 ----
 # The routines whose run reaches the dispatcher through a binding of unit D's on every arm a case takes.
 YIELDS_L = frozenset({"AES_ROM_WIN_START", "AES_ROM_WIN_ALLOC", "AES_ROM_WIN_FREE", "AES_ROM_WIN_TOP", "AES_ROM_WIN_BLDVIEW",

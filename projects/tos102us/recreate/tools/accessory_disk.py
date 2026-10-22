@@ -218,6 +218,26 @@ def inf_disk_of(text, view=VIEW_AS_ICONS, resolution=RESOLUTION_AS_BOOTED):
     return bytes(image)
 
 
+# THE CARTRIDGE'S LINE A DRIVE'S (band 6 slice F3's fix pass; the user's ruling 2026-10-21, "price via INF class"): the
+# default text holds the cartridge's icon as a `#C` line lettered lowercase 'c'; RETYPED `#M` — one byte of the file,
+# patched in the image as the `#E` pairs are (the serial, the FATs and the root the same bytes) — it is a drive's line
+# to the ROM's reader, which keeps it (it drops a drive line lettered 'C' alone, uppercase, where the map has no C:).
+INF_CARTRIDGE_LINE = b"#C 01 06 00 FF c CARTRIDGE"
+INF_LINE_TYPE_AT, INF_DRIVE_LINE_TYPE = 1, b"M"     # of a line: `#`, then its type letter
+
+
+def with_the_cartridge_line_a_drive(image, text):
+    """The DESKTOP.INF disk `image` — `text` its only file — with the cartridge's line retyped a drive's (above),
+    REFUSED BY NAME where the text holds no one such line."""
+    if text.count(INF_CARTRIDGE_LINE) != 1:
+        raise ValueError(f"the DESKTOP.INF text holds {text.count(INF_CARTRIDGE_LINE)} lines {INF_CARTRIDGE_LINE!r}")
+    line = file_at(0, len(text)) + text.index(INF_CARTRIDGE_LINE)
+    assert image[line:line + len(INF_CARTRIDGE_LINE)] == INF_CARTRIDGE_LINE, "the line is not where st_build lays the file"
+    patched = bytearray(image)
+    patched[line + INF_LINE_TYPE_AT:line + INF_LINE_TYPE_AT + len(INF_DRIVE_LINE_TYPE)] = INF_DRIVE_LINE_TYPE
+    return bytes(patched)
+
+
 def inf_disk_path(recreate=RECREATE):
     """Where `make` writes the DESKTOP.INF disk — the default text, unpatched — for the capture to boot (INF_DISK)."""
     return recreate / "build" / "acc" / "INFDISK.ST"

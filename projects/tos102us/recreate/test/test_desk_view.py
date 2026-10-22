@@ -19,6 +19,7 @@ import pytest
 from harness import addrs
 
 import aes
+import aes_deskarrive as dar
 import aes_deskbind as db
 import aes_event
 import aes_deskview as v
@@ -470,10 +471,148 @@ def test_the_wave_2_answers_that_are_not_the_rom_s_are_counted_by_name():
     assert len(BY_LABEL_WAVE_2) == 25
 
 
-def test_no_function_of_a_blob_outside_the_unbound_desk_refers_to_a_wave_2_one(blob):
-    """THE UNBOUND PIN (`aes_deskbind.bound_referrers`), asked of unit L's wave-2 five."""
-    assert not db.bound_referrers(blob, v.UNIT_L_WAVE_2)
+# ---- FLIPPED (band 6 slice F3, stage 1): the five whole ------------------------------------------------------------------
+def test_the_wave_2_routines_are_flipped(blob):
+    """THE FLIP PIN (`aes_deskarrive.flipped`): each core called by its own thunk of the table, each entry OURS THROUGH
+    THAT THUNK, none held — and no function outside the unbound desk refers to a core still held."""
+    dar.flipped(blob, v.UNIT_L_WAVE_2)
 
 
-def test_the_wave_2_table_s_entries_stay_the_rom_s_and_no_registry_names_one():
-    assert w.verdicts_not_the_rom_s(v.UNIT_L_WAVE_2) == (set(), [])
+# ---- band 6 slice F3: THE FIVE'S ROWS — every case at an arrival registered (`aes_deskwin.register_row`). The classes
+# stay Tier 1's.
+#   * PLAIN ROWS WHERE NO BINDING IS REACHED (`REACHES_NO_BINDING_WAVE_2`, MEASURED: the ROM's run of the case through
+#     its dispatcher enters no process — the switching registrar refuses such a row by name): win_blt where no step is
+#     owed (the down arrow over a window whose rows are all shown, the fifth entry's), win_arrow's row arrows over those
+#     windows (no step: win_blt returns before its wind_get), and win_srtall (the sort alone).
+#   * DOOR USERS (`DOOR_USERS_WAVE_2`, MEASURED, the table's second count: 8 calls of a rebound entry, 16 where two
+#     windows are rebuilt), pinned in `DOOR_USERS_*_WAVE_2` and read by `test_tier3.py`: every other row but win_slide's
+#     over the down arrow, which makes no such call — a row that switches with no door.
+_NO_BINDING_WAVE_2 = {("AES_ROM_WIN_BLT", DOWN_SLIDER), ("AES_ROM_WIN_BLT", FIFTH_DOWN), ("AES_ROM_WIN_ARROW", DOWN_LINE),
+                      ("AES_ROM_WIN_ARROW", UP_LINE), ("AES_ROM_WIN_ARROW", FIFTH_DOWN)}
+_NO_DOOR_WAVE_2 = {("AES_ROM_WIN_SLIDE", DOWN_SLIDER)}
+
+
+def _routine_and_chain(name):
+    return BY_LABEL_WAVE_2[name].name, BY_LABEL_WAVE_2[name].chain
+
+
+REACHES_NO_BINDING_WAVE_2 = frozenset(name for name in AT_ITS_OWN_ARRIVAL_WAVE_2 if BY_LABEL_WAVE_2[name].name == "AES_ROM_WIN_SRTALL"
+                                      or _routine_and_chain(name) in _NO_BINDING_WAVE_2)
+DOOR_USERS_WAVE_2 = frozenset(name for name in AT_ITS_OWN_ARRIVAL_WAVE_2
+                              if name not in REACHES_NO_BINDING_WAVE_2 and _routine_and_chain(name) not in _NO_DOOR_WAVE_2)
+X_FLAG_DIFFERS_WAVE_2 = frozenset()
+ROWS_WAVE_2 = {name: w.register_row(BY_LABEL_WAVE_2[name], name not in REACHES_NO_BINDING_WAVE_2,
+                                    door_user=name in DOOR_USERS_WAVE_2, x_flag_differs=name in X_FLAG_DIFFERS_WAVE_2)
+               for name in AT_ITS_OWN_ARRIVAL_WAVE_2}
+
+
+@pytest.mark.parametrize("name", sorted(REACHES_NO_BINDING_WAVE_2))
+def test_a_wave_2_arrival_that_reaches_no_binding_is_a_plain_row(name):
+    """`REACHES_NO_BINDING_WAVE_2`, MEASURED: the ROM's own run of the case through its dispatcher enters NO process, so
+    its row is the plain differential (the switching registrar refuses the other way, by name)."""
+    the_row = w.switching_row(BY_LABEL_WAVE_2[name], door_user=False, x_flag_differs=False)
+    assert not w.the_rom_s_run(the_row).entered
+    assert not hasattr(ROWS_WAVE_2[name], "door")
+
+# ---- THE WAVE-2 ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by
+# each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
+DOOR_USERS_PRICED_WAVE_2 = {
+    "aes_win_blt, arrival 1 of files: the window's right arrow clicked":
+        ((341578, 562812), (340154, 560100), 8, (0, 0, 0)),
+    'aes_win_blt, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
+        ((352460, 578496), (351036, 575784), 8, (0, 0, 0)),
+    'aes_win_blt, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
+        ((352450, 578486), (351026, 575774), 8, (0, 0, 0)),
+    'aes_win_blt, arrival 1 of files: the window sized smaller, then its right arrow clicked':
+        ((327482, 543442), (326058, 540730), 8, (0, 0, 0)),
+    "aes_win_slide, arrival 1 of files: the window's horizontal slider dragged right":
+        ((347012, 570928), (345588, 568216), 8, (0, 0, 0)),
+    'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
+        ((352808, 579730), (351384, 577018), 8, (0, 0, 0)),
+    "aes_win_arrow, arrival 1 of files: the window's right arrow clicked":
+        ((342008, 564056), (340584, 561344), 8, (0, 0, 0)),
+    'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
+        ((352842, 579732), (351418, 577020), 8, (0, 0, 0)),
+    "aes_win_arrow, arrival 1 of files: the window's right arrow gadget itself clicked (a column)":
+        ((342000, 564068), (340576, 561356), 8, (0, 0, 0)),
+    'aes_win_bdall, arrival 1 of window: View > Show as Text':
+        ((250950, 443814), (249526, 441102), 8, (0, 0, 0)),
+    'aes_win_bdall, arrival 1 of files: View > Sort by Date':
+        ((289810, 497046), (288386, 494334), 8, (0, 0, 0)),
+    'aes_win_bdall, arrival 1 of files: View > Show as Text':
+        ((285796, 491472), (284372, 488760), 8, (0, 0, 0)),
+    'aes_win_bdall, arrival 1 of two windows: View > Show as Text':
+        ((306518, 525666), (303670, 520242), 16, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_WAVE_2 = {
+    "aes_win_blt, arrival 1 of files: the window's right arrow clicked":
+        {"bench": (2068066, 1874096), "bench_shipped": (2068066, 1877620)},
+    'aes_win_blt, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
+        {"bench": (2082276, 1884700), "bench_shipped": (2082276, 1887968)},
+    'aes_win_blt, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
+        {"bench": (2079062, 1881498), "bench_shipped": (2079062, 1884754)},
+    'aes_win_blt, arrival 1 of files: the window sized smaller, then its right arrow clicked':
+        {"bench": (1537822, 1348782), "bench_shipped": (1537822, 1351110)},
+    "aes_win_slide, arrival 1 of files: the window's horizontal slider dragged right":
+        {"bench": (2079740, 1883334), "bench_shipped": (2079740, 1886980)},
+    'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
+        {"bench": (2080306, 1881854), "bench_shipped": (2080306, 1885112)},
+    "aes_win_arrow, arrival 1 of files: the window's right arrow clicked":
+        {"bench": (2069310, 1874524), "bench_shipped": (2069310, 1878050)},
+    'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
+        {"bench": (2083512, 1885080), "bench_shipped": (2083512, 1888350)},
+    "aes_win_arrow, arrival 1 of files: the window's right arrow gadget itself clicked (a column)":
+        {"bench": (2075466, 1880638), "bench_shipped": (2075466, 1884186)},
+    'aes_win_bdall, arrival 1 of window: View > Show as Text':
+        {"bench": (1181350, 1005992), "bench_shipped": (1181350, 1010950)},
+    'aes_win_bdall, arrival 1 of files: View > Sort by Date':
+        {"bench": (1245764, 1061222), "bench_shipped": (1245764, 1064320)},
+    'aes_win_bdall, arrival 1 of files: View > Show as Text':
+        {"bench": (1249294, 1061928), "bench_shipped": (1249294, 1068886)},
+    'aes_win_bdall, arrival 1 of two windows: View > Show as Text':
+        {"bench": (1136554, 936442), "bench_shipped": (1136554, 944430)},
+}
+NO_DOOR_PREMISES_WAVE_2 = {
+    "aes_win_slide, arrival 1 of files: the window's down arrow clicked":
+        ((), 0, 0xae5e, (0xae5e,), None, ()),
+}
+NO_DOOR_PRICED_WAVE_2 = {
+    "aes_win_slide, arrival 1 of files: the window's down arrow clicked":
+        ((5958, 9090), None, None, (0, 0, 0)),
+}
+NO_DOOR_WHOLE_RUN_WAVE_2 = {
+    "aes_win_slide, arrival 1 of files: the window's down arrow clicked":
+        {"bench": (15852, 12966), "bench_shipped": (15852, 13240)},
+}
+
+
+def test_the_wave_2_rows_are_the_cases_at_arrivals_and_every_one_that_switches_is_pinned_by_its_door():
+    """EVERY CASE AT AN ARRIVAL OF A FLIPPED ROUTINE A ROW; the plain ones exactly those named; EVERY ROW THAT SWITCHES
+    PINNED ONCE — a door user's in `DOOR_USERS_*_WAVE_2` (read by `test_tier3.py`), any other here; the X flag declared
+    on exactly the rows named."""
+    import aes_switching
+    switching = {aes_switching.row_name(row): name for name, row in ROWS_WAVE_2.items() if hasattr(row, "door")}
+    assert {name for name, row in ROWS_WAVE_2.items() if not hasattr(row, "door")} == set(REACHES_NO_BINDING_WAVE_2)
+    door_users = {row for row, name in switching.items() if ROWS_WAVE_2[name].door}
+    assert {switching[row] for row in door_users} == set(DOOR_USERS_WAVE_2)
+    assert set(DOOR_USERS_PRICED_WAVE_2) == set(DOOR_USERS_WHOLE_RUN_WAVE_2) == door_users
+    assert set(NO_DOOR_PREMISES_WAVE_2) == set(NO_DOOR_PRICED_WAVE_2) == set(NO_DOOR_WHOLE_RUN_WAVE_2) == set(switching) - door_users
+    assert {name for name, row in ROWS_WAVE_2.items() if getattr(row, "x_flag_differs", False)} == set(X_FLAG_DIFFERS_WAVE_2)
+    assert (len(ROWS_WAVE_2), len(switching), len(door_users), len(X_FLAG_DIFFERS_WAVE_2)) == (22, 14, 13, 0)
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PREMISES_WAVE_2)
+def test_a_wave_2_row_with_no_door_has_its_premise_on_the_rom_s_run(name):
+    aes_switching.vet_the_premise(aes_event.SWITCHING_ROWS[name].row, aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name]))
+
+
+@pytest.mark.parametrize("name", NO_DOOR_WHOLE_RUN_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_parked_and_woken_by_our_dispatcher_on_both_blobs(name, blob):
+    premise = aes_switching.Premise(*NO_DOOR_PREMISES_WAVE_2[name])
+    aes_switching.vet_on_a_blob(blob, aes_event.SWITCHING_ROWS[name].row, premise, NO_DOOR_PRICED_WAVE_2[name][3],
+                                NO_DOOR_WHOLE_RUN_WAVE_2[name])
+
+
+@pytest.mark.parametrize("name", NO_DOOR_PRICED_WAVE_2)
+def test_a_wave_2_row_with_no_door_is_priced_as_pinned_and_under_the_bar(name):
+    aes_switching.vet_the_table_s_price(aes_event.SWITCHING_ROWS[name].row, aes_switching.Priced(*NO_DOOR_PRICED_WAVE_2[name]))

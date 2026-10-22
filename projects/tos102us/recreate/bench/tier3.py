@@ -2173,10 +2173,9 @@ JSR_ABSOLUTE_BYTES = 6                 # `jsr <abs.l>`: the opcode word and the 
 # NOT RECONSTRUCTED YET as the ROM's word; no row reaches it, and no measurement could price it. `test_tier3.py`
 # holds each entry to ONE site, inside the function named — a second caller, a call from C, or an entry nothing
 # needs any more reds there — and the day the routine has a body of ours the operand is relocated and its entry goes.
-ROM_CALLS_OWED_TO_A_LATER_BAND = {
-    addrs.AES_ROM_DESK_USERDEF: ("aes_rom_ub_trampoline", "band 6: the desk's G_USERDEF draw code, which ub_trampoline "
-                                                          "(`src/aes/trapdoor.S`) calls on the desk's own stack"),
-}
+# (ub_trampoline's `jsr $fde844` — the desk's G_USERDEF draw code, on the desk's own stack — was one, `trapdoor.S`'s,
+# until band 6 slice F3 (N18) relocated it to the thunk into that routine's C: none of a transcription's is left.)
+ROM_CALLS_OWED_TO_A_LATER_BAND = {}
 # ---- slice SH (band 5 wave 4): THE DESK DOOR ----------------------------------------------------------------------------
 # ...AND THE ONE KIND OF SUCH A `jsr` A C FUNCTION MAKES: the desk door's (`include/aes/deskdoor.h`) — deskmain from
 # sh_main, the desk's four built-ins from sh_cmd, each the ROM's own routine over the frame and AT THE STACK POINTER
@@ -3645,7 +3644,8 @@ def the_bound_desk_s_gemdos_windows(memory, programs):
     """BEHIND A DOOR THAT BINDS THE LINE-F TABLE (the desk among `programs`: band 6's binding), GEMDOS's two windows
     the desk's last trap left our build's state in (`aes_ctlmgr.the_bound_desk_s_gemdos_windows`) — none elsewhere.
     Dead between two traps, and not required to differ: a row whose last trap is another process's leaves both the
-    same bytes on both shores."""
+    same bytes on both shores. ITS STACK THE VDI DOOR'S WINDOW ALONE (no ledger handed: never deepened) — all a row
+    needs (band 6 slice F3's fix pass: reviewer A's W0, every Tier 3 row green at it)."""
     return aes_ctlmgr.the_bound_desk_s_gemdos_windows(memory) if aes.SHELL_PD in dict(programs) else ()
 
 

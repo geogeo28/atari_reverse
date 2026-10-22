@@ -101,10 +101,28 @@ FLIPPED_AT_F2 = {
     "F2c": (13, 13, 1),     # objc_draw, evnt_multi, men_update and the ten waiting on them; entered but UNENTERED's twelve
     # ---- end of slice F2c's ----
 }
-ENTRIES_FLIPPED_AT_F2 = sum(entries for entries, _thunks, _entered in FLIPPED_AT_F2.values())
-VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_AT_F2,
-            THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_AT_F2}
-THUNKS = THUNKS_AT_F1 + sum(thunks for _entries, thunks, _entered in FLIPPED_AT_F2.values())
+# BAND 6 SLICE F3 (wave 2's forty-four, in stages — its cut): each stage-author's flip on a line of its own, the same
+# triple, inside its own block; the pins below add them to F2's.
+FLIPPED_AT_F3 = {
+    # ---- band 6 slice F3, stage 1, author A (units C, F, E, G, M; `$fde844` by N18) ----
+    "S1-A": (9, 9, 9),      # the nine with an entry (`$fde844` has none: its thunk is `trapdoor.S`'s); every one entered
+                            # (cart_sfirst / cart_snext by their plain rows on the labelled chain since the fix pass)
+    # ---- end of stage 1 A's ----
+    # ---- band 6 slice F3, stage 1, author B (unit L, B; desk_clear, desk_verify; app_start) ----
+    "S1B": (11, 11, 4),     # units L's and B's wave-2 five and three, desk_clear, desk_verify, app_start; entered but UNENTERED's seven
+    # ---- end of stage 1 B's ----
+    # ---- band 6 slice F3, stage 2, author A (unit H but fun_d2desk, fun_drag; app_save) ----
+    # ---- end of stage 2 A's ----
+    # ---- band 6 slice F3, stage 2, author B (unit J; pro_run, do_wopen; cnx_get) ----
+    # ---- end of stage 2 B's ----
+    # ---- band 6 slice F3, stage 3 (fun_d2desk, fun_drag, hndl_kbd) ----
+    # ---- end of stage 3's ----
+}
+FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values())
+ENTRIES_FLIPPED_SINCE_F1 = sum(entries for entries, _thunks, _entered in FLIPPED_SINCE_F1)
+VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_SINCE_F1,
+            THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_SINCE_F1}
+THUNKS = THUNKS_AT_F1 + sum(thunks for _entries, thunks, _entered in FLIPPED_SINCE_F1)
 # The operand of the handler's RAM copy (`$cc24`): the table kind's one slot (`aes_event.LINEF_TABLE_SLOT`).
 TABLE_OPERAND_IN_RAM = aes.AES_LINEF_COPY + aes.LINEF_TABLE_OPERAND
 
@@ -674,10 +692,25 @@ UNENTERED = {
         "DESK_EVNT_MULTI", "DESK_OBJC_DRAW", "MEN_UPDATE", "DO_WREDRAW", "GR_ISDOWN", "GR_BWAIT", "MOVE_DRVICON", "ACT_CHG",
         "DESK_DRAW_DIAL", "DESK_SHOW_DIAL", "DESK_DRAW_FLD", "DESK_DO_NAMECON")},
     # ---- end of slice F2c's ----
+    # ---- band 6 slice F3, stage 1, author A ---- none: each of the author's nine has a plain row that enters it (the
+    # cartridge's pair, flipped with no row, since the fix pass by their rows on the labelled chain: `test_desk_util.py`)
+    # ---- end of stage 1 A's ----
+    # ---- band 6 slice F3, stage 1, author B ---- THE SEVEN FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`; win_blt's, win_arrow's, win_srtall's and desk_verify's plain rows — no binding reached —
+    # enter theirs)
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in (
+        "WIN_SLIDE", "WIN_BDALL", "DESK_CLEAR", "APP_START", "GR_DRGPLNS", "ACT_BSCLICK", "ACT_BDOWN")},
+    # ---- end of stage 1 B's ----
+    # ---- band 6 slice F3, stage 2, author A ----
+    # ---- end of stage 2 A's ----
+    # ---- band 6 slice F3, stage 2, author B ----
+    # ---- end of stage 2 B's ----
+    # ---- band 6 slice F3, stage 3 ----
+    # ---- end of stage 3's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
-# each F2 group adds its own entered count on its line of FLIPPED_AT_F2)
-ENTERED_THUNKS = 311 + sum(entered for _entries, _thunks, entered in FLIPPED_AT_F2.values())
+# each F2 group and F3 stage-author adds its own entered count on its line of FLIPPED_AT_F2 / FLIPPED_AT_F3)
+ENTERED_THUNKS = 311 + sum(entered for _entries, _thunks, entered in FLIPPED_SINCE_F1)
 
 
 def test_the_thunks_no_case_enters_are_listed_by_name():
@@ -890,24 +923,21 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     # ---- band 6 wave 2: each unit's WAVE-2 list (`UNIT_<X>_WAVE_2`, its own block of the unit's module) and count,
     # one line per unit inside its group's block — wave 1b's lines above stay as they are ----
     # ---- band 6 wave 2, group G1 (units C, F, E) ----
-    ("aes_deskdir", "UNIT_C_WAVE_2"): 3,
-    ("aes_deskinf", "UNIT_F_WAVE_2"): 1,
-    ("aes_deskusr", "UNIT_E_WAVE_2"): 2,
+    # (units C, F, E: FLIPPED at band 6 slice F3, stage 1 — `$fde844` with them, by its operand: N18)
     # ---- end of group G1's wave-2 ----
     # ---- band 6 wave 2, group G2 (units H, G, M) ----
     ("aes_deskfun", "UNIT_H_WAVE_2"): 11,
-    ("aes_deskfpd", "UNIT_G_WAVE_2"): 2,
-    ("aes_deskutil", "UNIT_M_WAVE_2"): 2,
+    # (units G, M: FLIPPED at band 6 slice F3, stage 1)
     # ---- end of group G2's wave-2 ----
     # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
-    ("aes_deskwin", "UNIT_I_WAVE_2"): 4,
+    ("aes_deskwin", "UNIT_I_WAVE_2_HELD_AT_F3"): 2,      # pro_run, do_wopen (stage 2); desk_clear, desk_verify flipped at F3 stage 1
     ("aes_desksupp", "UNIT_J_WAVE_2"): 7,
     ("aes_desktop", "UNIT_K_WAVE_2"): 2,
-    ("aes_deskview", "UNIT_L_WAVE_2"): 5,
+    ("aes_deskview", "UNIT_L_WAVE_2_HELD_AT_F3"): 0,     # none: the five flipped at F3 stage 1
     # ---- end of group G3's wave-2 ----
     # ---- band 6 wave 2, group G4 (units A, B) ----
-    ("aes_deskapp", "UNIT_A_WAVE_2"): 2,
-    ("aes_deskact", "UNIT_B_WAVE_2"): 3,
+    ("aes_deskapp", "UNIT_A_WAVE_2_HELD_AT_F3"): 1,      # app_save (stage 2); app_start flipped at F3 stage 1
+    ("aes_deskact", "UNIT_B_WAVE_2_HELD_AT_F3"): 0,      # none: the three flipped at F3 stage 1
     # ---- end of group G4's wave-2 ----
     # ---- band 6 wave 4: each unit's WAVE-4 list (`UNIT_<X>_WAVE_4`, its own block of the unit's module) and count ----
     # ---- band 6 wave 4, group G1 (unit M) ----

@@ -161,11 +161,37 @@ def test_the_arrivals_draw_whole_lines_and_the_clicked_one_selected():
     assert states[LINE_CLICKED][1] & SELECTED and not states[AS_TEXT][1] & SELECTED
 
 
-def test_the_text_view_s_draw_is_linked_and_unbound(blob):
-    da.unbound(blob, usr.UNIT_E_WAVE_2)
+def test_dr_code_is_flipped(blob):
+    """FLIPPED at band 6 slice F3, stage 1: its core called by its own thunk of the table, its entry ours through it."""
+    da.flipped(blob, (DR_CODE,))
+
+
+def test_the_userdef_draw_is_flipped_by_its_operand(blob):
+    """`$fde844` FLIPPED BY VALUE at band 6 slice F3, stage 1 (N18): no entry of the table names it, so its binding is
+    ub_trampoline's `jsr` — on `blob` the thunk into its core (`trapdoor.S`), which calls that core; the harness reads
+    it flipped off that operand (`aes_desk.flipped`), and no list holds it back."""
+    import aes_desk
+    import aes_trapdoor
+    import transcription
+    thunk = aes_trapdoor.USERDEF_THUNK
+    assert aes_desk.our_entries(blob)[da.entry_of(USERDEF)] == blob.entry(thunk)
+    assert "aes_desk_userdef" in transcription.call_graph(blob.elf)[thunk]
+    linef_table = da._linef_table()
+    assert USERDEF not in {**linef_table.LINKED_AND_NOT_FLIPPED, **linef_table.LINKED_HELD_NO_TABLE_ENTRY}
 
 
 WAVE_2_ARRIVALS, WAVE_2_CLASSES = 12, 2
+# ---- band 6 slice F3, stage 1: THE LINE'S ROWS — every case at an arrival a PLAIN ROW (`aes_deskarrive.register_row`, its
+# companion's VDI door bound as Tier 1's); the classes stay Tier 1's. THE USERDEF DRAW'S KIND (the orchestrator's ruling
+# (d)): reached BY VALUE — ub_trampoline's `jsr`, our trampoline in `$8c32` (R6's machine: the ROM's own arrival on the
+# desk's userdef stack, a ROM-run state) — and entered at OUR entry, its core's, as every row of a flipped routine is;
+# the ROM's at `$fde844`.
+WAVE_2_ROWS = {name: da.register_row(each, hook=aes_gsx.vdi_hook) for name, each in da.at_arrivals(WAVE_2_CASES).items()}
+
+
+def test_every_line_routine_has_a_row_at_an_arrival():
+    assert {row[1] for row in WAVE_2_ROWS.values()} == {da.entry_of(name) for name in usr.UNIT_E_WAVE_2}
+    assert len(WAVE_2_ROWS) == WAVE_2_ARRIVALS
 
 
 def test_every_line_routine_has_a_case_at_an_arrival_of_its_own():
