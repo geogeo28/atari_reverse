@@ -668,9 +668,51 @@ def lineftable_sources():
     return _listed_sources("LINEFTABLE_SOURCES")
 
 
+# ...AND ONE NAMED EXCEPTION (band 6 slice F4's prep, ruling O2): THE DESK DOOR'S THUNKS. sh_cmd enters the desk's four
+# built-ins by an absolute `jsr` of the desk door (`include/aes/deskdoor.h`), never through the table — so once a
+# built-in is flipped, the door must `jsr` THE VERY THUNK the table names for it. The generator makes that thunk a
+# `.globl` and names it to the C (`include/aes/lineftable.h`): one thunk, one source of truth, no copy of it anywhere.
+# `{the thunk: the built-in's addrs.h name}`.
+DESK_DOOR_CALLER = "aes_sh_cmd"
+DESK_DOOR_BUILT_INS = ("AES_ROM_DESK_SHOW_FILE", "AES_ROM_DESK_PRINT_FILE", "AES_ROM_DESK_FORMAT", "AES_ROM_DESK_COPY_DISK")
+DESK_DOOR_THUNKS = {LINEF_THUNK_PREFIX + routines.core_symbol(name): name for name in DESK_DOOR_BUILT_INS}
+
+
+def vet_the_table_s_globls(globls):
+    """The `.globl`s of the table's source: the table, and none but the desk door's thunks besides."""
+    stray = set(globls) - {LINEF_TABLE_SYMBOL} - set(DESK_DOOR_THUNKS)
+    assert LINEF_TABLE_SYMBOL in globls and not stray, (
+        f"the Line-F table's source defines other `.globl`s than its table and the desk door's thunks: {sorted(globls)}")
+
+
 LINEFTABLE_GLOBLS = globl_entries(lineftable_sources())
-assert LINEFTABLE_GLOBLS == {LINEF_TABLE_SYMBOL}, (
-    f"the Line-F table's source defines other `.globl`s than its table: {sorted(LINEFTABLE_GLOBLS)}")
+vet_the_table_s_globls(LINEFTABLE_GLOBLS)
+# The `jsr <abs.l>` lines of an `objdump -d` listing: `(the site, the address's high word, its low word)`.
+LISTED_JSR_ABSOLUTE = re.compile(r"^\s+([0-9a-f]+):\s+4eb9 ([0-9a-f]{4}) ([0-9a-f]{4})\s+jsr ", re.M)
+
+
+def desk_door_bindings(elf):
+    """`{a built-in's ROM address: the longword sh_cmd's desk door `jsr`s it by in the blob at `elf`}` — the ROM's own
+    address while the built-in is the ROM's, its thunk (the table's own, global) once it is flipped — read off the
+    blob's listing, each named by exactly one `jsr` of sh_cmd's body."""
+    symbols = {symbol.name: symbol for symbol in symbol_table(elf)}
+    caller = symbols[DESK_DOOR_CALLER]
+    called = [int(high + low, 16) for site, high, low in LISTED_JSR_ABSOLUTE.findall(listing(elf))
+              if caller.start <= int(site, 16) < caller.start + caller.size]
+    bound = {}
+    for thunk, name in DESK_DOOR_THUNKS.items():
+        rom = getattr(addrs, name)
+        either = {rom} | ({symbols[thunk].start} if thunk in symbols else set())
+        named = [longword for longword in called if longword in either]
+        assert len(named) == 1, f"{DESK_DOOR_CALLER}'s door names {name} by {len(named)} `jsr`s, not one: {named}"
+        bound[rom] = named[0]
+    return bound
+
+
+def desk_door_thunked(elf):
+    """`{a thunk of ours: the built-in it stands for}` — each built-in the blob at `elf`'s desk door enters at a thunk
+    (a flipped one: `desk_door_bindings`); none while every built-in is the ROM's."""
+    return {ours: rom for rom, ours in desk_door_bindings(elf).items() if ours != rom}
 # ---- end of slice T's block ---------------------------------------------------------------------------------------------
 
 

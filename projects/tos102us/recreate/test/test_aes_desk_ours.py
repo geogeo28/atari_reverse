@@ -38,7 +38,7 @@ from collections import namedtuple
 
 import pytest
 
-from harness import addrs
+from harness import BASE_IMAGE, addrs
 
 import aes
 import aes_boot
@@ -220,6 +220,70 @@ def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text
         assert start in ran, f"{start:#x} ran in no step of {name!r} on our shore"
 
 
+# ---- THE ENGINE'S PARTS AND SH_CMD'S DOOR, READ AS THEIR BUILT-INS ARE (band 6 slice F4's prep, rulings O2 / O4) ----------
+ENGINE_SPAN = (addrs.AES_ROM_DESK_SHOW_FILE, addrs.AES_ROM_DESK_UTIL_OPEN)     # the two built-ins' entries to the next routine
+SHOWN, PRINTED = addrs.AES_ROM_DESK_SHOW_FILE, addrs.AES_ROM_DESK_PRINT_FILE
+VIEWER_S_FIVE = {addrs.AES_ROM_DESK_VIEWER_LOOP, addrs.AES_ROM_DESK_VIEWER_MORE, addrs.AES_ROM_DESK_VIEWER_PAGE,
+                 addrs.AES_ROM_DESK_VIEWER_LINE, addrs.AES_ROM_DESK_RAWCIO_STRING}
+
+
+def test_the_engine_s_parts_are_its_routines_no_table_entry_names_each_reached_by_the_built_ins_declared():
+    """`aes_desk.ENGINE_PARTS` is exactly band 6's routines in the engine's span that no entry of the ROM's table names
+    (`bsr`-only: ruling R-W4-5), each reached by the show or the print built-in or both — and those flipped on our blob
+    are exactly the ones its two built-ins' bindings make so (none while both are held)."""
+    table = set(desk._table_of(BASE_IMAGE, aes.AES_LINEF_TABLE))     # the ROM's own table's longwords
+    lo, hi = ENGINE_SPAN
+    assert set(desk.ENGINE_PARTS) == {start for start in desk.routines() if lo <= start < hi and start not in table}
+    assert all(built_ins and set(built_ins) <= {SHOWN, PRINTED} for built_ins in desk.ENGINE_PARTS.values())
+    assert set(desk.ENGINE_PARTS) & desk.flipped() == desk.parts_flipped(desk.flipped() & {SHOWN, PRINTED})
+
+
+def test_a_part_reads_as_flipped_where_every_built_in_reaching_it_is_and_as_the_rom_s_where_one_is_held():
+    """THE PARTS' READING, BOTH WAYS: the show flipped alone flips the viewer's five and not the engine nor its next byte
+    (the print, which reaches them too, is held), nor the printer's character; the print alone, that character alone;
+    both, all eight."""
+    assert desk.parts_flipped(frozenset({SHOWN})) == VIEWER_S_FIVE
+    assert desk.parts_flipped(frozenset({PRINTED})) == {addrs.AES_ROM_DESK_PRINT_CHAR}
+    assert desk.parts_flipped(frozenset({SHOWN, PRINTED})) == set(desk.ENGINE_PARTS)
+    assert desk.parts_flipped(frozenset()) == frozenset()
+
+
+def test_sh_cmd_s_door_is_a_by_value_caller_and_a_routine_bound_two_ways_unalike_is_refused(monkeypatch):
+    """sh_cmd's desk door is read as a by-value caller (its four built-ins, each where the blob's `jsr` names it — the
+    ROM's routine while it is held), and a built-in whose door and table entry disagree — ours by one, the ROM's by the other — is
+    refused by name rather than read either way."""
+    blob = desk.our_blob()
+    bound = desk.bound_by_value(blob)
+    door = {getattr(addrs, name) for name in transcription.DESK_DOOR_BUILT_INS}
+    assert door <= set(bound) and all(bound[rom] == rom for rom in door if rom not in desk.flipped())
+    torn = {**bound, SHOWN: SHOWN if SHOWN in desk.flipped() else blob.entry(BOUND_TABLE)}     # unlike its table entry
+    monkeypatch.setattr(desk, "bound_by_value", lambda _blob: torn)
+    with pytest.raises(Refused, match="bound two ways"):
+        desk._bound(blob)
+
+
+def test_the_viewer_s_stops_are_ours_once_the_show_engine_is_and_refused_by_name_where_the_blob_has_no_symbol(monkeypatch):
+    """THE STOPS THAT MOVE WITH A FLIP (ruling O3): while the show engine is the ROM's on our machine, the viewer's key
+    waits are the ROM's addresses (`our_stops` is `OUR_STOPS`); once it is flipped they are our C's `key_awaited` —
+    refused by name where the blob holds no such symbol (an inlined key wait has no entry to stop at)."""
+    blob = desk.our_blob()
+    viewer = set(desk.OUR_STOPS_ONCE_FLIPPED)
+    if SHOWN not in desk.flipped(blob):
+        assert desk.our_stops(blob) == desk.OUR_STOPS
+    monkeypatch.setattr(desk, "flipped", lambda _blob=None: frozenset({SHOWN}))
+    assert set(desk.our_stops(blob)) == set(desk.OUR_STOPS) | viewer
+    refused = set()
+    for stop in viewer:
+        symbol = desk.our_stops(blob)[stop]
+        if symbol in blob.symbols:
+            assert desk.our_stop(stop, blob) == blob.entry(symbol)
+        else:
+            with pytest.raises(Refused, match=desk.A_STOP_NOT_IN_THE_BLOB):
+                desk.our_stop(stop, blob)
+            refused.add(stop)
+    assert _the_tool().stops_our_stop_refuses(desk, blob) == refused      # ...the tool's reading of the flipped blob
+
+
 # ---- WHO RAN, PER FLIPPED ROUTINE (band 6 slice F1, ruling W6-R5): its ROM span not a cycle on any walked chain, its entry ours run ----
 # A flipped routine's entry of the bound table is OURS (its thunk, or its `.S`): on our shore the ROM's desk's own call
 # words land there, and the ROM's span of the routine runs NOT ONE CYCLE on any walked chain. Its entry RAN on one chain
@@ -398,12 +462,14 @@ def _entered_on_our_shore():
 def test_every_flipped_routine_s_rom_span_ran_no_cycle_and_its_entry_of_ours_ran():
     """...AND THE ROUTINES THE BLOB'S OWN TABLE FLIPS ARE THOSE THE GENERATOR SAYS ARE OURS: an entry left (or put back)
     the ROM's in the built table under a verdict of ours is no flip, and reds here before any count does — and (band 6
-    slice F3, N18) the routines bound BY VALUE (`aes_desk.bound_by_value`) are flipped exactly where the generator holds
-    none of them back (`LINKED_HELD_NO_TABLE_ENTRY`)."""
+    slice F3, N18) the routines bound BY VALUE (`aes_desk.bound_by_value`: ub_trampoline's, and since slice F4's prep
+    sh_cmd's desk door) are flipped exactly where the generator holds none of them back (`LINKED_HELD_NO_TABLE_ENTRY`,
+    `LINKED_AND_NOT_FLIPPED`) — and the engine's parts exactly where their built-ins are (`aes_desk.parts_flipped`)."""
     generator = _the_generator()
     ours = {entry.target for entry in generator.entries() if entry.verdict != generator.THE_ROM_S}
-    by_value = set(desk.bound_by_value(desk.our_blob())) - {getattr(addrs, name) for name in generator.LINKED_HELD_NO_TABLE_ENTRY}
-    assert desk.flipped() == (ours | by_value) & frozenset(desk.routines()), "the blob's binding and the generator's verdicts disagree"
+    held = {getattr(addrs, name) for name in (*generator.LINKED_HELD_NO_TABLE_ENTRY, *generator.LINKED_AND_NOT_FLIPPED)}
+    bound_ours = frozenset(ours | (set(desk.bound_by_value(desk.our_blob())) - held)) & frozenset(desk.routines())
+    assert desk.flipped() == bound_ours | desk.parts_flipped(bound_ours), "the blob's binding and the generator's verdicts disagree"
     entered, its_span_ran = _entered_on_our_shore()
     assert not its_span_ran, f"a flipped routine's ROM span ran on our shore: {({f'{at:#x}': names[:2] for at, names in its_span_ran.items()})}"
     names = {getattr(addrs, name): name for name in dir(addrs) if name.startswith("AES_ROM_")}
@@ -502,28 +568,31 @@ def test_the_tool_empties_the_generator_s_held_list_before_its_thunks_are_named(
     assert emptied.replace(tool.EMPTIED, "", 1) == source
 
 
-def test_the_tool_copies_sh_cmd_s_four_thunks_out_of_the_flipped_table(monkeypatch):
-    """The flipped table (the generator over an empty held list) has a thunk for each of sh_cmd's four built-ins, each
-    entering its core; the tool's copies are those bodies, global. Today's table has none of them (units M and N held)."""
+def test_the_tool_s_flip_is_the_generator_s_and_moves_sh_cmd_s_door_with_the_table(monkeypatch):
+    """THE DESK DOOR MOVES WITH THE TABLE (band 6 slice F4's prep, ruling O2): the generator over an empty held list
+    makes the four built-ins' thunks — the table's own — the table's only other `.globl`s, and binds sh_cmd's door to
+    them (`include/aes/lineftable.h`); the tool's flip is that generator and copies no thunk. On the tree as it is, the
+    blob's door `jsr`s each built-in where the generator binds it: its thunk if it is thunked, else the ROM's routine."""
     tool, generator = _the_tool(), _the_generator()
-    with pytest.raises(AssertionError, match="no thunk"):
-        tool.door_thunks((derived.RECREATE / tool.TABLE).read_text())
+    door, thunked, blob = transcription.DESK_DOOR_THUNKS, set(generator.thunked_routines()), desk.our_blob()
+    assert not hasattr(tool, "door_thunks") and not hasattr(tool, "sh_cmd_flipped")
+    assert transcription.desk_door_bindings(blob.elf) == {getattr(addrs, name): blob.entry(thunk) if name in thunked else getattr(addrs, name)
+                                                      for thunk, name in door.items()}
     monkeypatch.setattr(generator, "LINKED_AND_NOT_FLIPPED", {})
-    copies = tool.door_thunks(generator.text())
-    for thunk in tool.BUILT_INS.values():
-        copy = tool.FLIPPED_PREFIX + thunk
-        assert f"    .globl {copy}\n" in copies and f"\n{copy}:\n" in copies
-        assert f"jsr     {thunk.removeprefix(transcription.LINEF_THUNK_PREFIX)}\n" in copies
+    globls = set(transcription.GLOBL.findall(generator.text()))
+    assert globls == {BOUND_TABLE, *door}
+    transcription.vet_the_table_s_globls(globls)
+    flipped_door = generator.door_text()
+    assert all(f"{generator.DOOR_BOUND_PREFIX}{name} {thunk} " in flipped_door for thunk, name in door.items())
 
 
-def test_the_tool_enters_sh_cmd_s_four_built_ins_at_the_copies_on_target_alone():
-    tool = _the_tool()
-    flipped = tool.sh_cmd_flipped((derived.RECREATE / tool.SHELL).read_text())
-    host, target = flipped.split("#ifdef RECREATE_HOST_DIFFERENTIAL\n", 1)[1].split("#else\n", 1)
-    for rom, thunk in tool.BUILT_INS.items():
-        assert flipped.count(f"(image, {tool.FLIPPED_PREFIX}{rom}, AES_SH_TAIL_TEXT") == 1 and f"(image, {rom}," not in flipped
-        assert f"#define {tool.FLIPPED_PREFIX}{rom} {rom}\n" in host
-        assert f"#define {tool.FLIPPED_PREFIX}{rom} {tool.FLIPPED_PREFIX}{thunk}\n" in target
+def test_the_table_s_globls_are_the_table_and_the_door_s_thunks_alone():
+    """THE NAMED EXCEPTION, HELD BOTH WAYS: a `.globl` of the table's source other than the table and the desk door's
+    four thunks is refused, and the table is required."""
+    transcription.vet_the_table_s_globls({BOUND_TABLE, *transcription.DESK_DOOR_THUNKS})
+    for refused in ({BOUND_TABLE, "linef_to_aes_desk_util_open"}, set(transcription.DESK_DOOR_THUNKS)):
+        with pytest.raises(AssertionError, match="other `.globl`s"):
+            transcription.vet_the_table_s_globls(refused)
 
 
 # ...AND ITS THREE SELF-CHECKS (slice D's fix pass: the review's F1-F3), each held where it can be without a flipped build.
@@ -553,6 +622,9 @@ def test_the_tool_refuses_a_walk_whose_write_ledger_saturated_and_measures_the_l
 
 
 
+VIEWER_CHAINS = 8                       # the chains with a step at the viewer's key waits (N4's: the F4 cut)
+
+
 def test_the_tool_s_refusals_are_held_to_its_declared_list_each_way():
     """A refusal outside the list, or reading other than its declaration, and a declared refusal that walks, are each
     the tool's non-zero exit; a declared refusal as declared is not."""
@@ -566,16 +638,21 @@ def test_the_tool_s_refusals_are_held_to_its_declared_list_each_way():
     assert set(tool.declared_refusals(unflipped=True)) == {launched, copied}
 
 
-def test_the_tool_s_declared_refusals_are_w6_r8_s_two_and_every_chain_that_stops_at_the_viewer():
-    """W6-R8's two are this battery's (`REFUSED_ON_OUR_SHORE`, reading what it reads); the flipped state's are EVERY
-    chain with a step at the viewer's key waits (the ROM's stops, N4) — a viewer chain added and not declared reds here."""
+def test_the_tool_s_declared_refusals_are_w6_r8_s_two_and_every_chain_that_stops_where_the_flipped_blob_has_no_stop():
+    """W6-R8's two are this battery's (`REFUSED_ON_OUR_SHORE`, reading what it reads); the flipped state's are DERIVED
+    (band 6 slice F4's prep, ruling O3): every chain with a step at a named stop the flipped blob has no C-side stop
+    for — the viewer's key waits while `key_awaited` is inlined — reading `our_stop`'s refusal, and none once it is not."""
     tool = _the_tool()
     assert set(tool.REFUSED_ON_EITHER_STATE) == set(REFUSED_ON_OUR_SHORE)
     assert all(reads in REFUSED_ON_OUR_SHORE[name][2] for name, (_why, reads) in tool.REFUSED_ON_EITHER_STATE.items())
-    viewer = {desk.VIEWER_AT_A_PAGE_S_END, desk.VIEWER_AT_THE_FILE_S_END}
-    assert not viewer & set(desk.OUR_STOPS)
+    viewer = set(desk.OUR_STOPS_ONCE_FLIPPED)
     stopping = {name for name, chain in desk.CHAINS.items() if any(step.until in viewer for step in chain.steps)}
-    assert set(tool.REFUSED_ON_THE_FLIPPED_STATE) == stopping
+    refused = tool.refused_on_the_flipped_state(desk.CHAINS, viewer)
+    assert set(refused) == stopping and len(stopping) == VIEWER_CHAINS
+    assert all(reads == desk.A_STOP_NOT_IN_THE_BLOB for _why, reads in refused.values())
+    assert tool.refused_on_the_flipped_state(desk.CHAINS, set()) == {}
+    assert tool.declared_refusals(unflipped=False, on_the_flipped_state=refused) == tool.REFUSED_ON_EITHER_STATE | refused
+    assert tool.declared_refusals(unflipped=True, on_the_flipped_state=refused) == tool.REFUSED_ON_EITHER_STATE
 
 
 # ---- W6-R4's DIET, ON THE SHIPPED ELF (slice D): the split helpers stay routines of their own -----------------------------

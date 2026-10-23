@@ -1253,8 +1253,8 @@ def deepest(which, names=None):
 #     bytes (the `Boot`'s `OurBoot`): a rebuilt blob is another question.
 #   * A NAMED STOP HAS AN ADDRESS ON EACH SHORE (`our_stop`): the entry of OUR routine where one is declared
 #     (`OUR_STOPS`: the rubber box's poll is gr_stilldn's entry, and gr_stilldn is band 3's C), else the ROM's own —
-#     the viewer's two key waits lie inside the show engine's body, the ROM's on our machine until unit M flips (its
-#     slice declares their C-side stops).
+#     the viewer's two key waits lie inside the show engine's body, the ROM's on our machine until unit M flips, and
+#     its C's key wait from then on (`OUR_STOPS_ONCE_FLIPPED`, read off the blob's own binding).
 #   * WHO RAN (ruling W6-R5): every PC of the ROM's GEM text a step ran is CHARGED TO ITS ROUTINE — the last start of
 #     the AES map's inventory at or below it, so every routine bounds its neighbour (`charged`) — and the ROM's text
 #     that may run on our machine is DECLARED and shrinks with each flip: band 6's routines whose entry of the bound
@@ -1325,42 +1325,83 @@ def _table_of(memory, at):
     return tuple(case.long_in(memory, at + index * LONG_BYTES) for index in range(aes.AES_LINEF_TABLE_ENTRIES))
 
 
+A_CALL_TO = "jsr 0x"
+
+
+def _bound_by_a_transcription_s_operands(blob, symbol, rom):
+    """`{a band-6 routine's start: the longword `blob`'s operand holds}` for every absolute `jsr` of the byte-pinned
+    caller `symbol` (the ROM's at `rom`) whose ROM operand names a routine of band 6."""
+    import rom_data                     # (here: its decoder is objdump, wanted by this reading alone)
+    bound, ours = {}, blob.entry(symbol) - blob.base
+    for at, text in rom_data.instructions(rom, rom + transcription.TRAPDOOR_ENTRIES[symbol].bytes):
+        if text and text.startswith(A_CALL_TO) and (target := int(text.removeprefix(A_CALL_TO), 16)) in routines():
+            bound[target] = case.long_in(blob.blob, ours + at - rom + WORD_BYTES)
+    return bound
+
+
 # A ROUTINE BOUND BY VALUE (band 6 slice F3, N18): no Line-F word names `$fde844`, the desk's G_USERDEF draw — the
 # ROM reaches it by ub_trampoline's `jsr`, and so does a machine of ours by the trampoline of OUR blob (`trapdoor.S`,
 # whose bytes are the ROM's but its relocated operands). So the trampoline's operands ARE that routine's binding: a
 # band-6 routine a ROM `jsr` of the trampoline names is ours where the blob's operand there is not the ROM's address
-# — read off the blob, decoded, not named here. `{our source's symbol: the ROM routine it stands for}`.
-BY_VALUE_CALLERS = {"aes_rom_ub_trampoline": addrs.AES_ROM_UB_TRAMPOLINE}
-A_CALL_TO = "jsr 0x"
+# — read off the blob, decoded, not named here. `{our source's symbol: how its bindings are read off a blob}`.
+# (AND SH_CMD'S DESK DOOR, band 6 slice F4's prep, ruling O2: our C, whose absolute `jsr`s enter the desk's four
+# built-ins — no bytes of the ROM's to read its operands at, so they are read off the blob's listing instead
+# (`transcription.desk_door_bindings`): each the ROM's routine, or the table's own thunk once that built-in is flipped.)
+UB_TRAMPOLINE = "aes_rom_ub_trampoline"
+BY_VALUE_CALLERS = {
+    UB_TRAMPOLINE: functools.partial(_bound_by_a_transcription_s_operands, symbol=UB_TRAMPOLINE, rom=addrs.AES_ROM_UB_TRAMPOLINE),
+    transcription.DESK_DOOR_CALLER: lambda blob: transcription.desk_door_bindings(blob.elf)}
 
 
 def bound_by_value(blob):
-    """`{a band-6 routine's start: the longword `blob`'s operand holds}` for every absolute `jsr` of a by-value caller
-    (`BY_VALUE_CALLERS`) whose ROM operand names a routine of band 6."""
-    import rom_data                     # (here: its decoder is objdump, wanted by this reading alone)
+    """`{a band-6 routine's start: the longword `blob` binds it by}` for every routine a by-value caller
+    (`BY_VALUE_CALLERS`) enters: a transcription's operands, or the desk door's `jsr`s."""
     bound = {}
-    for symbol, rom in BY_VALUE_CALLERS.items():
-        ours = blob.entry(symbol) - blob.base
-        for at, text in rom_data.instructions(rom, rom + transcription.TRAPDOOR_ENTRIES[symbol].bytes):
-            if text and text.startswith(A_CALL_TO) and (target := int(text.removeprefix(A_CALL_TO), 16)) in routines():
-                bound[target] = case.long_in(blob.blob, ours + at - rom + WORD_BYTES)
+    for bindings_of in BY_VALUE_CALLERS.values():
+        bound.update(bindings_of(blob))
     return bound
 
 
 def _bound(blob):
     """`{a band-6 routine's start: the longword `blob` binds it by}` — its entry of the bound table, or its by-value
-    caller's operand."""
+    caller's operand. A routine bound BOTH ways is bound alike by both — ours by both or the ROM's by both — or it is
+    refused: a flip that moved the table and not the desk door would run the ROM's routine where the table says ours."""
     table = _table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base)
     in_the_table = {rom: ours for rom, ours in zip(_table_of(BASE_IMAGE, aes.AES_LINEF_TABLE), table) if rom in routines()}
-    return {**in_the_table, **bound_by_value(blob)}
+    by_value = bound_by_value(blob)
+    torn = sorted(rom for rom, ours in by_value.items() if rom in in_the_table and (ours == rom) != (in_the_table[rom] == rom))
+    if torn:
+        raise Refused(f"bound two ways, ours by one and the ROM's by the other: {[f'${rom:x}' for rom in torn]}")
+    return {**in_the_table, **by_value}
+
+
+# THE SHOW / PRINT ENGINE'S EIGHT PARTS (band 6 slice F4's prep, ruling O4): `bsr`-only in the ROM and static C inside
+# the engine of ours (ruling R-W4-5), so a part has NO BINDING of its own — it runs as the built-ins that reach it do:
+# OURS WHERE EVERY BUILT-IN THAT REACHES IT IS FLIPPED, the ROM's while one of them is held. Which built-in reaches which
+# part is the ROM's own (its `bsr`s, read through the two entries' arms: the engine `$fed632` and the buffer's next byte
+# `$fed6d6` serve both, the printer's character `$fed832` the print, the viewer's five the show) and is held by the
+# converse on the flipped state (band 6 slice F4's cut: 13 chains, 141 steps, each part's ROM cycles).
+# `{a part's start: the built-ins that reach it}`.
+_SHOWN, _PRINTED = addrs.AES_ROM_DESK_SHOW_FILE, addrs.AES_ROM_DESK_PRINT_FILE
+ENGINE_PARTS = {
+    addrs.AES_ROM_DESK_SHOW_OR_PRINT: (_SHOWN, _PRINTED), addrs.AES_ROM_DESK_SHOW_NEXT_BYTE: (_SHOWN, _PRINTED),
+    addrs.AES_ROM_DESK_PRINT_CHAR: (_PRINTED,),
+    **dict.fromkeys((addrs.AES_ROM_DESK_VIEWER_LOOP, addrs.AES_ROM_DESK_VIEWER_MORE, addrs.AES_ROM_DESK_VIEWER_PAGE,
+                     addrs.AES_ROM_DESK_VIEWER_LINE, addrs.AES_ROM_DESK_RAWCIO_STRING), (_SHOWN,))}
+
+
+def parts_flipped(bound_ours):
+    """The engine's parts that run as OURS where `bound_ours` are the routines whose binding is ours."""
+    return frozenset(part for part, built_ins in ENGINE_PARTS.items() if set(built_ins) <= bound_ours)
 
 
 @functools.cache
 def flipped(blob=None):
     """BAND 6'S ROUTINES WHOSE BINDING ON `blob` (ours by default) IS OURS — the table's entry, or a by-value caller's
     operand (`BY_VALUE_CALLERS`), a longword other than the ROM's own: on a machine of ours the ROM's call of one runs
-    our code. A frozenset of their starts."""
-    return frozenset(rom for rom, ours in _bound(blob or our_blob()).items() if ours != rom)
+    our code — and the engine's parts whose built-ins all are (`ENGINE_PARTS`). A frozenset of their starts."""
+    bound_ours = frozenset(rom for rom, ours in _bound(blob or our_blob()).items() if ours != rom)
+    return bound_ours | parts_flipped(bound_ours)
 
 
 def our_entries(blob=None):
@@ -1378,6 +1419,18 @@ def still_the_rom_s(blob=None):
 
 # ---- a step of ours, its named stops ----
 OUR_STOPS = {RUBBER_BOX_POLL: "aes_gr_stilldn"}     # N4: band 3's C gr_stilldn — its entry is the poll's
+# ...and THE STOPS THAT MOVE WITH A FLIP (band 6 slice F4's prep, ruling O3): the viewer's two key waits lie inside the
+# show engine's body — the ROM's address while the engine is the ROM's on our machine; once it is flipped, its C's own
+# key wait, `key_awaited`, kept out of line for this stop. `{stop: (the routine whose flip moves it, our symbol)}`.
+OUR_STOPS_ONCE_FLIPPED = dict.fromkeys((VIEWER_AT_A_PAGE_S_END, VIEWER_AT_THE_FILE_S_END), (addrs.AES_ROM_DESK_SHOW_FILE, "key_awaited"))
+A_STOP_NOT_IN_THE_BLOB = "its C-side stop is no symbol of the blob"
+
+
+def our_stops(blob=None):
+    """`{a named stop: our symbol}` on a machine of `blob` (ours by default): `OUR_STOPS`, and each stop of
+    `OUR_STOPS_ONCE_FLIPPED` whose routine `blob` binds as ours."""
+    ours = flipped(blob or our_blob())
+    return {**OUR_STOPS, **{stop: symbol for stop, (routine, symbol) in OUR_STOPS_ONCE_FLIPPED.items() if routine in ours}}
 PROFILE_HELD_BY_OUR_STEP = "a profiled step of the hands' campaign on our shore (`aes_desk.stepped_ours`)"
 OurStepped = namedtuple("OurStepped", "boot profile blob entered")
 OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s), `blob`, the cycles the
@@ -1394,8 +1447,15 @@ def _our_entries_in_the_blob(blob):
 
 
 def our_stop(name, blob=None):
-    """THE NAMED STOP `name` ON OUR SHORE (the block's comment): our routine's entry, or the ROM's own address."""
-    return (blob or our_blob()).entry(OUR_STOPS[name]) if name in OUR_STOPS else STOPS[name]
+    """THE NAMED STOP `name` ON OUR SHORE (the block's comment): our routine's entry (`our_stops`), or the ROM's own
+    address. Refused by name where the stop is ours and its symbol is not the blob's (inlined: no entry to stop at)."""
+    blob = blob or our_blob()
+    symbol = our_stops(blob).get(name)
+    if symbol is None:
+        return STOPS[name]
+    if symbol not in blob.symbols:
+        raise Refused(f"the named stop {name!r} is ours, but {A_STOP_NOT_IN_THE_BLOB}: `{symbol}`")
+    return blob.entry(symbol)
 
 
 @derived.kept

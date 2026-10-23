@@ -70,6 +70,7 @@
 #include "machine.h"
 #include "staged_call.h"
 #include "aes/gemdosif.h"
+#include "aes/lineftable.h"
 
 _Static_assert(DESK_DOOR_SP_IN_SH_MAIN == 0xa368, "sh_main's SP at its calls: deskmain is entered at $a364");
 _Static_assert(DESK_DOOR_SP_IN_SH_CMD == 0xa356, "sh_cmd's SP at its calls");
@@ -130,7 +131,10 @@ static inline void desk_door_dos_exec(uint8_t *image, uint32_t name, int16_t mod
     register uint32_t answer_ __asm__("d0");                                                                            \
     register uint32_t kept_ __asm__("d3")
 /* A ROM routine's address as the `jsr`'s own operand: absolute, so the build's one call of it is a word a listing
- * shows (`bench/tier3.py` reads them). */
+ * shows (`bench/tier3.py` reads them). A BUILT-IN's operand (the two shapes below) is what the Line-F table's
+ * generator binds it to, `DESK_DOOR_BOUND_<its addrs.h NAME>` (`aes/lineftable.h`: the ROM's routine while the table
+ * leaves it the ROM's, the table's own thunk once it is flipped) — the name pasted where the shape's macro is spelt,
+ * so it is never expanded to its address first. */
 #define DESK_DOOR_TEXT_(address) #address
 #define DESK_DOOR_TEXT(address) DESK_DOOR_TEXT_(address)
 
@@ -159,7 +163,8 @@ static inline void desk_door_dos_exec(uint8_t *image, uint32_t name, int16_t mod
                                                                                                                         \
         (void)(image);                                                                                                  \
         DESK_DOOR_CALL(DESK_DOOR_SP_IN_SH_CMD, DESK_DOOR_SCRATCH_SLOT,                                                  \
-                       "move.l %[last],(%%sp)\n\tjsr " DESK_DOOR_TEXT(routine), DESK_DOOR_LAST, "d1", "a1");            \
+                       "move.l %[last],(%%sp)\n\tjsr " DESK_DOOR_TEXT(DESK_DOOR_BOUND_##routine), DESK_DOOR_LAST,       \
+                       "d1", "a1");                                                                                     \
     } while (0)
 
 /* `move.l <command>,(sp) / move.l <tail>,-(sp)` and the call ($feb36a, $feb388): the two disk routines. */
@@ -171,7 +176,8 @@ static inline void desk_door_dos_exec(uint8_t *image, uint32_t name, int16_t mod
                                                                                                                         \
         (void)(image);                                                                                                  \
         DESK_DOOR_CALL(DESK_DOOR_SP_IN_SH_CMD, DESK_DOOR_SCRATCH_SLOT,                                                  \
-                       "move.l %[before_it],(%%sp)\n\tmove.l %[last],-(%%sp)\n\tjsr " DESK_DOOR_TEXT(routine),          \
+                       "move.l %[before_it],(%%sp)\n\tmove.l %[last],-(%%sp)\n\tjsr "                                   \
+                       DESK_DOOR_TEXT(DESK_DOOR_BOUND_##routine),                                                       \
                        DESK_DOOR_LAST DESK_DOOR_BEFORE_IT, "d1");                                                       \
     } while (0)
 

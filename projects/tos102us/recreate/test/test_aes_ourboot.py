@@ -40,6 +40,7 @@ import aes_stack
 import aes_switch
 import case
 import isr
+import transcription
 import test_aes_stack as pinned
 from aes_boot import Refused
 
@@ -263,6 +264,20 @@ def test_every_row_and_pass_of_the_our_boot_says_what_it_is_made_of():
     assert set(ob.DISKS) == {BLANK, INF, INF_CHANGED} and "LABELLED STAGING" in aes_boot.OUR_BOOT
 
 
+@every_blob
+def test_the_built_ins_are_served_where_the_desk_door_enters_them_read_off_the_build(blob):
+    """THE SERVED DOOR AT OUR ENTRIES (band 6 slice F4's prep, ruling O2): each built-in's checkpoint stands on our
+    shore where the blob's desk door `jsr`s it — the ROM's routine while it is the ROM's, the table's thunk once it is
+    flipped, read off the build and never named — and the served door answers a flipped one at that thunk: no entry
+    of ours to answer at while all four are the ROM's, and none on the ROM's shore."""
+    ours, door = the_blob(blob), transcription.desk_door_bindings(the_blob(blob).elf)
+    for built_in, a_pass in THE_BUILT_IN_PASSES.items():
+        checkpoint, = [each for each in a_pass.checkpoints if each.what == built_in]
+        assert checkpoint.ours == ob.AT_THE_DESK_DOOR and ob.our_address(checkpoint, ours) == door[checkpoint.rom]
+    assert ob.served_door_of(ours) == {entry: rom for rom, entry in door.items() if entry != rom}
+    assert ob.served_door_of(None) == {}
+
+
 # ---- (2) THE CHECKPOINTS: both shores, the megabyte at each, the order, the stores between two ---------------------------------
 # THE LIVE CLASSES, CHECKPOINT BY CHECKPOINT — a rule read off what the machine is, the same on both blobs:
 #   * PD0's LIVE FRAMES wherever the two shores stand BELOW PD0's stack's top — everywhere but gem_entry's own
@@ -390,6 +405,53 @@ def test_labelled_craft_where_the_two_shores_stand_and_how_a_run_ends_are_refuse
     to_the_copy = ob.Pass("a labelled craft: the kit's ledger said full", BLANK, ob.THE_FIRST_PASS[:1], ob.THE_COPY_MADE)
     with pytest.raises(ob.Refused, match="the watched run's write ledger saturated"):
         ob.watched(to_the_copy)
+
+
+# A WATCHED RUN'S PROFILE IS ITS OWN FROM ITS FIRST TALLY (band 6 slice F4's prep, review RF4P's F1): the tallies' module
+# (`bench/tier3.py`), imported cold, derives kept answers, and one SAMPLED to be made again (`derived._sampled`) is a
+# profiled step of its own (`aes_desk.stepped`: vetted free, reset, on — and OFF). Inside a watched run's first tally
+# that left the ROM's shore 0 cycles in its own text — red on whichever worker's salt sampled one first.
+TO_THE_COPY = ob.Pass("a labelled craft: the boot's first pass to the Line-F handler's copy", BLANK, ob.THE_FIRST_PASS[:1],
+                      ob.THE_COPY_MADE)
+A_KEPT_ANSWER_MADE_AGAIN = "a kept answer made again, a labelled craft"   # (no regex metacharacter: matched below)
+
+
+def _a_kept_answer_made_again():
+    """A LABELLED CRAFT: what a sampled kept answer made again does to the profile — `aes_desk.stepped`'s own frame."""
+    aes_event.vet_the_profile_is_free(A_KEPT_ANSWER_MADE_AGAIN)
+    ob.emu.prof_reset()
+    ob.emu.prof_enable(True)
+    ob.emu.prof_enable(False)
+
+
+def test_labelled_craft_a_watched_run_imports_the_tallies_module_before_its_profile_is_on():
+    """THE TALLIES' MODULE COLD: its first `bench_tier3()` of the process makes a kept answer again (the craft) — the
+    watched run asks it before its profile is on, so the ROM's shore still tallies its own text."""
+    tier3, cold = bench_tier3(), [True]
+
+    def imported_cold():
+        if cold:
+            cold.clear()
+            _a_kept_answer_made_again()
+        return tier3
+    # (not the `monkeypatch` fixture: it switches the kept answers off — the tallies' module would derive cold — and no
+    # derivation is patched here)
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(ob, "bench_tier3", imported_cold)
+        the_rom_s_own = ob.watched(TO_THE_COPY).ended.tally[0]
+    assert not cold and the_rom_s_own > 0, f"the ROM's shore tallied {the_rom_s_own} cycles in its own text"
+
+
+def test_labelled_craft_a_profiled_run_a_watched_run_s_tally_asks_for_is_refused_by_name():
+    """A PROFILED RUN INSIDE A WATCHED ONE, asked by its tally — its very first reading too — is refused by name: the
+    run's profile is held from that reading on (`aes_event.profile_held`)."""
+    def a_tally_that_makes_one():
+        _a_kept_answer_made_again()
+        return ob.the_rom_s_tally()
+    memory, registers, disk, io, _ours = ob.began_at(TO_THE_COPY, None)
+    with pytest.raises(AssertionError, match=f"A PROFILED RUN INSIDE ANOTHER: {A_KEPT_ANSWER_MADE_AGAIN}"):
+        ob.watched_over(memory, registers, disk, io, None, ob.places_of(TO_THE_COPY.checkpoints, None), ob.until_of(TO_THE_COPY, None),
+                        a_tally_that_makes_one)
 
 
 # ---- gem_entry's ARMS (ruling W4-R5) ----------------------------------------------------------------------------------------------

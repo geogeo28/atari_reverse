@@ -157,9 +157,22 @@ def test_the_checked_in_source_is_the_generator_s_text():
         "src/aes/lineftable.S is not what bench/linef_table.py generates: make it again, never edit it")
 
 
+def test_the_checked_in_door_header_is_the_generator_s_text_and_binds_each_built_in_as_the_table_does():
+    """`include/aes/lineftable.h` (band 6 slice F4's prep) is GENERATED with the table and checked in: equal to
+    `linef_table.door_text()` — each of sh_cmd's four built-ins bound to its thunk where the table thunks it, to the
+    ROM's routine where it does not."""
+    assert linef_table.DOOR_HEADER.read_text() == linef_table.door_text(), (
+        "include/aes/lineftable.h is not what bench/linef_table.py generates: make it again, never edit it")
+    thunked = set(linef_table.thunked_routines())
+    for name in transcription.DESK_DOOR_THUNKS.values():
+        bound = linef_table.thunk_symbol(name) if name in thunked else name
+        assert f"#define {linef_table.DOOR_BOUND_PREFIX}{name} {bound} " in linef_table.door_text()
+
+
 def test_the_table_is_its_own_kind_of_the_build_contract():
     """`lineftable.S` is no transcription (no row, no C twin), no Alcyon entry, no source of the switch's, the trap
-    door's or gemstart's: listed apart, as make expands the lists; its one `.globl` is the table."""
+    door's or gemstart's: listed apart, as make expands the lists; its `.globl`s are the table and the desk door's
+    thunks of the built-ins it thunks (band 6 slice F4's prep: none until they flip)."""
     names = ("LINEFTABLE_SOURCES", "GEMSTART_SOURCES", "TRAPDOOR_SOURCES", "SWITCH_SOURCES", "TRANSCRIBED_SOURCES", "ALCYON_ENTRY_SOURCES")
     lists = {name: transcription.make_variable(RECREATE, name) for name in names}
     ours = lists["LINEFTABLE_SOURCES"]
@@ -168,7 +181,9 @@ def test_the_table_is_its_own_kind_of_the_build_contract():
     assert Path(ours[0]).resolve() == linef_table.SOURCE.resolve()
     for other in names[1:]:
         assert not set(ours) & set(lists[other]), f"lineftable.S is also listed in {other}"
-    assert transcription.LINEFTABLE_GLOBLS == {TABLE} == {transcription.LINEF_TABLE_SYMBOL}
+    thunked = set(linef_table.thunked_routines())
+    door = {thunk for thunk, name in transcription.DESK_DOOR_THUNKS.items() if name in thunked}
+    assert transcription.LINEFTABLE_GLOBLS == {TABLE, *door} and TABLE == transcription.LINEF_TABLE_SYMBOL
     assert TABLE not in (set(transcription.TRANSCRIBED) | set(transcription.ALCYON_ENTRIES) | set(transcription.SWITCH_ENTRIES)
                          | set(transcription.TRAPDOOR_ENTRIES) | set(transcription.GEMSTART_ENTRIES))
 

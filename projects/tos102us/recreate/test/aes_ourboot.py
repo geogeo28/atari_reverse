@@ -53,6 +53,7 @@ import aes_switching
 import case
 import derived
 import routines
+import transcription
 
 RAM_BYTES = aes_boot.RAM_BYTES
 LONG_BYTES, WORD_BYTES = aes.LONG_BYTES, aes.WORD_BYTES
@@ -67,10 +68,13 @@ class Refused(AssertionError):
 
 # ---- THE CHECKPOINTS ---------------------------------------------------------------------------------------------------------
 IN_GEM_ENTRY, THE_ROM_S_OWN = "at the ROM's own offset inside the build's gem_entry", "the ROM's own address on both shores"
+# ...and a built-in of the desk's on our shore (band 6 slice F4's prep): what the desk door `jsr`s it by, read off the
+# blob (`transcription.desk_door_bindings`) — the ROM's address while it is the ROM's, its thunk once it is flipped.
+AT_THE_DESK_DOOR = "where the desk door enters it on our shore"
 Checkpoint = namedtuple("Checkpoint", "what rom ours")
 Checkpoint.__doc__ = """One place both shores' runs are stopped at: `what` it is (its name in every table), the ROM's
-address, and where OUR run stands for it — a symbol of the blob (the build's own entry), IN_GEM_ENTRY, or
-THE_ROM_S_OWN."""
+address, and where OUR run stands for it — a symbol of the blob (the build's own entry), IN_GEM_ENTRY, THE_ROM_S_OWN
+or AT_THE_DESK_DOOR."""
 BRA_S = 0x60
 
 
@@ -145,6 +149,8 @@ def our_address(checkpoint, blob):
     """Where OUR run stands for `checkpoint` on `blob` (a `RomBench`)."""
     if checkpoint.ours == THE_ROM_S_OWN:
         return checkpoint.rom
+    if checkpoint.ours == AT_THE_DESK_DOOR:
+        return transcription.desk_door_bindings(blob.elf)[checkpoint.rom]
     if checkpoint.ours == IN_GEM_ENTRY:
         return blob.entry(aes_boot.GEM_ENTRY_SYMBOL) + checkpoint.rom - GEM_ENTRY
     return blob.entry(checkpoint.ours)
@@ -169,8 +175,9 @@ class _Watching:
     a routine of `returns` given a stop at its return address as its entry is arrived at, and a routine of `serving`
     ANSWERED WHERE THE RUN STANDS AT ITS ENTRY (the served door's own act, in place)."""
 
-    def __init__(self, memory, places, tally, returns, serving, ours, crafted=()):
+    def __init__(self, memory, places, tally, returns, serving, ours, crafted=(), door=None):
         self._memory, self._tally, self._returns, self._serving, self._ours = memory, tally, returns, dict(serving), ours
+        self._door = dict(door or {})
         self._crafted = dict(crafted)
         self.stops, self.served, self._began, self._seen = [], [], None, set()
         self.observing = {address: (what, self._arrived(what)) for address, what in places.items()}
@@ -201,7 +208,7 @@ class _Watching:
                 self._due[back] = (what, sp + LONG_BYTES)
                 self.observing.setdefault(back, (RETURNED.format(what), self._returned(back)))
             if what in self._serving:
-                self.served.append(aes_boot.served_where_it_stands(memory, sp, self._serving[what], self._ours))
+                self.served.append(aes_boot.served_where_it_stands(memory, sp, self._serving[what], self._ours, self._door))
             for at, data in self._crafted.get(what, ()) if first else ():      # A LABELLED CRAFT: after the stop is kept
                 memory[at:at + len(data)] = data
         return read
@@ -215,7 +222,8 @@ class _Watching:
         return read
 
 
-def watched_over(memory, registers, disk, io, ours, places, until, tally, returns=(), serving=None, crafted=(), budget=A_PASS_INSNS):
+def watched_over(memory, registers, disk, io, ours, places, until, tally, returns=(), serving=None, crafted=(), budget=A_PASS_INSNS,
+                 door=None):
     """ONE SHORE'S RUN over the sixteen megabytes `memory`, entered with `registers`, `disk` in the drive: observed at
     each address of `places` (`{address: what}`), ended at its first arrival at `until`. `ours`: the blob the
     machine holds (an `aes_boot.Ours`), None on the ROM's shore. `tally`: what is read at every stop (a tuple of
@@ -223,18 +231,21 @@ def watched_over(memory, registers, disk, io, ours, places, until, tally, return
     where the run stands at its entry. `crafted`: `((what, ((address, bytes), ...)), ...)` — A LABELLED CRAFT, bytes
     laid where the run first arrives at that checkpoint (its `Stop` kept first: the machine as the run made it). A
     `Watched`. THE PROFILE IS ON FOR THE RUN (the caller's tally reads it), never reset: refused by name inside
-    another profiled measurement."""
+    another profiled measurement. `door`: the served door's entries of the blob (`served_door_of`)."""
     watching = _Watching(memory, {address: what for address, what in places.items() if address != until}, tally,
-                         returns, serving or {}, ours, crafted)
+                         returns, serving or {}, ours, crafted, door)
     run = aes_boot._Run(memory, aes_boot.Floppy(memory, disk), budget, until=until, ours=ours, observing=watching.observing)
     run._observing = watching.observing     # ...the SAME dict: a return's stop is added while the run is in flight
+    # The tallies' module FIRST: its first import in a process derives kept answers, and a sampled one is MADE AGAIN —
+    # a profiled step of its own (`aes_desk.stepped`), which would switch the profile off inside this run unseen.
+    bench_tier3()
     aes_event.vet_the_profile_is_free("a watched run of the two shores")
     emu.prof_enable(True)
     try:
-        watching.begun(registers)
         with aes_event.profile_held(PROFILE_HELD_BY_A_WATCHED_RUN):
+            watching.begun(registers)       # ...its first tally inside the hold: a profiled run the tally asks is refused
             run.to_an_idle(registers, aes_boot._io_seed(io))
-        ended = watching._stop(places.get(until, f"{until:#x}"), emu.bench_door_sp(), True)
+            ended = watching._stop(places.get(until, f"{until:#x}"), emu.bench_door_sp(), True)
         ledger = tuple(aes_boot._CPU.osh_write_addrs()[:aes_boot._CPU.osh_num_writes()])
         _writes, truncated = emu.bench_writes(memory)
         if truncated:
@@ -287,9 +298,10 @@ def teardown_pass(disk=THE_BLANK_DISK):
 
 
 def built_in_pass(built_in, disk=THE_INF_DISK):
-    """deskmain answers 1 with the shell's tail a built-in's byte and a name: sh_cmd's arm, the built-in served."""
+    """deskmain answers 1 with the shell's tail a built-in's byte and a name: sh_cmd's arm, the built-in served (on our
+    shore at what the desk door enters it by: `AT_THE_DESK_DOOR`)."""
     byte, entry = THE_BUILT_INS[built_in]
-    checkpoints = (*THE_NEXT_PASS_BEGINS, Checkpoint(built_in, entry, THE_ROM_S_OWN), *A_BUILT_IN_PASS[len(THE_NEXT_PASS_BEGINS):])
+    checkpoints = (*THE_NEXT_PASS_BEGINS, Checkpoint(built_in, entry, AT_THE_DESK_DOOR), *A_BUILT_IN_PASS[len(THE_NEXT_PASS_BEGINS):])
     return Pass(f"deskmain answers 1 for {built_in}, {disk}", disk, checkpoints, DESKMAIN_ENTERED, 1,
                 (shel_write(A_FILE_OF_THE_DISK, bytes((byte,)) + A_FILE_OF_THE_DISK),), ((built_in, 0),))
 
@@ -363,12 +375,22 @@ def began_at(a_pass, blob):
     return memory, registers, at_the_desk.disk, at_the_desk.io, ours
 
 
+def served_door_of(blob):
+    """`{an entry of `blob`'s: the built-in it stands for}` — each built-in the desk door enters at a thunk of ours (a
+    flipped one, read off the build: `transcription.desk_door_thunked`), where the served door answers it on our
+    shore. None on the ROM's shore, and none while every built-in is the ROM's."""
+    if blob is None:
+        return {}
+    return transcription.desk_door_thunked(blob.elf)
+
+
 def watched(a_pass, blob=None):
     """ONE SHORE'S RUN OF `a_pass` — the ROM's (`blob` None) or `blob`'s (a `RomBench`) — a `Watched`."""
     memory, registers, disk, io, ours = began_at(a_pass, blob)
     tally = the_rom_s_tally if blob is None else our_tally(blob)
     return watched_over(memory, registers, disk, io, ours, places_of(a_pass.checkpoints, blob), until_of(a_pass, blob), tally,
-                    returns=ENTERED_AND_RETURNED, serving=dict(a_pass.serving), crafted=a_pass.crafted)
+                        returns=ENTERED_AND_RETURNED, serving=dict(a_pass.serving), crafted=a_pass.crafted,
+                        door=served_door_of(blob))
 
 
 # ---- THE CLASSES TWO SHORES' MACHINES DIFFER IN AT A CHECKPOINT, BY NATURE ----------------------------------------------------

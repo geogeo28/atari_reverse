@@ -6320,6 +6320,75 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       BEHAVIOUR: the new Tier 1 case, the row's companion and differential, the new chain's walk (and the cycle pins).
       The hands' campaign 118 → 120 chains, 393 → 401 steps, reach 238 unchanged; the ROM's deepest unchanged.
       Suite: `make test` (`PYTEST_ARGS="-n 6"`) from no `.so` and no `__pycache__`: 33,941 passed / 8 skipped, 11 FAILED, all `test_status` against the tree's STATUS (this text clears them: 33,952); collected 33,960 (+13), 13 m 38 s.
+  - **BAND 6 SLICE F4's PREP — NO FLIP: THE FOUR HARNESS PIECES THE FULL FLIP OWES, BEHAVIOUR-NEUTRAL ON THE TREE AS
+    IT IS** (2026-10-23; on `cfbb32a`, ONE AUTHOR ALONE IN THE SHARED TREE — the brief `scratchpad/b6/F4/prep.md`, the
+    cut `scratchpad/b6/F4/cut.md` §3 (a)-(c) and §4, the orchestrator's rulings O1-O4; hand-back `F4/PREP/handback.md`).
+    - **THE DOOR (O2)**: `bench/linef_table.py` generates `include/aes/lineftable.h` with `lineftable.S`. The header
+      binds each of sh_cmd's four built-ins to the ROM's routine while the table holds it, and to THE TABLE'S OWN THUNK
+      once it is thunked; that thunk becomes a `.globl`, the one named exception
+      `transcription.vet_the_table_s_globls` admits (`DESK_DOOR_THUNKS`). `deskdoor.h`'s two built-in shapes paste the
+      routine's name into that binding. The tool's copied thunks and `sh_cmd_flipped` are retired.
+    - **WHO-RAN AND THE START-UP READING**: `aes_desk.BY_VALUE_CALLERS` gains sh_cmd's door, read off the blob's listing
+      (`transcription.desk_door_bindings`). A routine bound both ways and unalike is refused by name (`_bound`). The
+      start-up's stack reading is told a flipped built-in's thunk is a call out of the build (`aes_stack.the_desk_door_of`).
+    - **THE PARTS (O4)**: `aes_desk.ENGINE_PARTS` (`{part: built-ins}`) is read by `flipped` / `still_the_rom_s`: a
+      part is ours where every built-in reaching it is, the ROM's while one is held.
+    - **THE STOP (O3)**: `OUR_STOPS_ONCE_FLIPPED` sets the viewer's two key waits to `key_awaited` only where the show
+      engine is ours; a stop that is ours with no symbol is refused by name. The tool's viewer refusals are DERIVED off
+      the flipped blob. `key_awaited`'s `noinline` is NOT in the prep (it would move `deskutil.o`): it is the flip's.
+    - **THE SERVED DOOR**: the our-boot's built-in checkpoints stand `AT_THE_DESK_DOOR`, read off the build, and
+      `served_where_it_stands` answers a flipped built-in at its thunk.
+    - **NEUTRAL [M]**: the 177 products are byte-identical to `cfbb32a`'s, rebuilt by force and hash-compared:
+      `lineftable.S` `6b8ab54c`, `glue.S`, every `build/bench_shipped/obj` object, both blobs, `libtos102us.so`
+      `fbf372b2` and `tier3.txt` `c9feed92` (a fresh run: 8,584 lines).
+    - **THE PRIVATE FULL FLIP [M]**: the twelve released plus `noinline`, on top of the prep; evidence only, nothing of
+      it lands.
+      - 223 of 244 flipped: the 8 parts read as flipped; the 13 converse chains are green. `test_aes_desk_ours` there:
+        144 passed, 5 red, re-measured after the fix pass. The two chain reds (Format formatted, printer Retry) red only on
+        their DEPTHS pins, past the converse's and the outside-span asserts; the other three are the flip's own pins (the
+        named stop, 223 vs 203, NOT_ENTERED).
+      - `test_aes_ourboot` is green there AFTER the fix pass's F1 (below): 131 passed twice (the 129, and the two
+        crafts). Before it, 128 + 1 red every time: F1's, not a flake. `tier3.py --jobs 4` makes a table BYTE-IDENTICAL
+        to today's (`c9feed92`): NO LINE MOVES. The cut's 4 + 1 built-in stretches stay where they are because the
+        built-ins are served at our entries.
+      - `tools/flipped_depths.py` full exits 0: 118 walked, 2 refused (W6-R8's), worst 1,536, 0 over, the viewer
+        chains walked. Without `noinline` it refuses them by the derived declaration and still exits 0.
+      - The pins left red there are the flip's own: counts, NOT_ENTERED, UNENTERED, DEPTHS (Format 958, printer
+        Retry 898), the named-stop pin, and the units' linked-and-unbound pins.
+    - **MUTANTS [M]**, each killed BY BEHAVIOUR (private copies, caches cleared, sources restored and hash-verified):
+      - the parts map widened, and narrowed;
+      - the stop present while the engine is the ROM's;
+      - the globl exception dropped;
+      - the served door keyed at the ROM's address (on the flipped copy: the built-in passes never return).
+      - The review's six, re-run after the fix pass (each in its own process group, the store warmed, C-side ones
+        rebuilt by force, the products incl. every `bench_shipped/obj` object restored and hash-verified): the header
+        hand-edited; the header STALE on the flipped copy (refused at collection by `_bound`'s "bound two ways",
+        before the header's own pin speaks); the parts map not read; a viewer part's built-ins widened; the served
+        door's mapping dropped; `_bound`'s torn refusal disabled.
+    - **THE FIX PASS (review RF4P, 2026-10-23)**:
+      - **F1, THE OUR-BOOT'S WATCHED RUN [M]**: a harness defect older than the prep (`cfbb32a` reds under the same
+        worker salt), never a flake. `aes_ourboot.watched_over` read its first tally OUTSIDE `aes_event.profile_held`,
+        and that tally was the process's first `bench_tier3()`: the import derives kept answers, a SAMPLED one is made
+        again (`derived._sampled`), and `aes_desk.stepped` switched the profile OFF inside the ROM's shore's run ("the
+        ROM's 0 in its own"). Now the run imports the tallies' module before its vet, and reads the first tally inside
+        the hold. Two labelled crafts pin it, `test_aes_ourboot.py`: the module made cold (the first `bench_tier3()`
+        makes a kept answer again), and a profiled run a tally asks for, refused by name. Both red on `cfbb32a`'s code
+        three runs of three (DID NOT RAISE; "the ROM's shore tallied 0 cycles in its own text"), green after; each
+        half reverted alone is killed by its own craft.
+      - **F3's shapes [M]**: `transcription.desk_door_thunked` (`{thunk: built-in}`), beside `desk_door_bindings`, serves
+        `served_door_of`, `the_desk_door_of` and the door test. `BY_VALUE_CALLERS` is `{symbol: its bindings' reader}`:
+        no branch on the symbol, no dead value. The tool asks `our_stop` (`stops_our_stop_refuses`) instead of
+        restating its rule, and the viewer-stop test holds the tool's reading to it. `deskdoor.h`'s orphan comment is
+        folded into `DESK_DOOR_TEXT`'s.
+      - **THE SECOND REVIEW (RF4PF), the orchestrator's edits [M]**: the door test keeps its OWN inversion of the
+        door (`{entry: rom ... if entry != rom}`), no longer `desk_door_thunked` against itself — the review's mutant
+        dropping that filter survived it, and is now killed on both blobs; the watched run's last tally is read inside
+        the hold too; `BY_VALUE_CALLERS`'s comment sits above its dict. AND R4: `aes_trapdoor._run` (reached by the
+        kept `at_the_trap`) reset and switched the profile with no vet — F1's class, asked by no profiled window today
+        (read) — and now asks `vet_the_profile_is_free` first, as every other profiled run does.
+    - Suite: `make test` (`PYTEST_ARGS="-n 8"`) from no `.so`, no blobs and no `__pycache__`, after the fix pass:
+      33,961 passed / 8 skipped, 0 failed; collected 33,969 (+9: the prep's 7 and F1's two crafts), 13 m 29 s
+      (pytest 11 m 43 s).
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -7739,10 +7808,18 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (BAND 6 SLICE F3's STAGE 3's FIX PASS, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **33,952 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (BAND 6 SLICE F4's PREP, the last suite run; `make guarded` collects the same ids — the gate is
+the orchestrator's): **33,961 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 SLICE F4's PREP (2026-10-23, alone in the shared tree; the wave log's entry; no flip, no object moved, the
+  table 8,584 lines byte for byte): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside
+  first, after the review's fix pass: **33,961 passed / 8 skipped, 0 failed** (`scratchpad/b6/F4/PREPFIX/make_test.log`).
+  RE-SUMMED against stage 3's fix pass's 33,960 collected: 33,969 (+9). `test_aes_desk_ours.py` 145 → 149 (+4: the
+  tool's two copy pins retired; the flip-is-the-generator and globl-exception pins, the parts' two, the door's torn
+  binding, the viewer's stops); `test_aes_lineftable.py` 644 → 645 (+1: the door header held to its generator);
+  `test_aes_ourboot.py` 127 → 131 (+4: the served door read off the build, both blobs; the fix pass's two crafts
+  of the watched run's profile).
 - BAND 6 SLICE F3, STAGE 3's FIX PASS (2026-10-23, in the shared tree; the stage's entry; two chains of the hands, two
   rows, the table 8,575 → 8,584 lines): `make test` (`PYTEST_ARGS="-n 6"`), `build/*.so` and every `__pycache__` moved aside first: **33,941 passed / 8 skipped, 11 FAILED, all `test_status`**, which this text clears (`scratchpad/b6/F3/S3FIX/logs/make_test.log`), so 33,952 pass against this STATUS. RE-SUMMED against the stage's 33,947 collected: 33,960 (+13). `test_tier3.py` 5,803 → 5,810 (+7: the door user's row, companion, price and both-blob whole runs; the plain row's row and companion); `test_aes_desk_ours.py` 143 → 145 and `test_aes_desk_rom.py` 142 → 144 (+2 each: the two chains); `test_desk_top.py` 175 → 176 and `test_desk_fun.py` 79 → 80 (+1 each: the Tier 1 cases).
 - BAND 6 SLICE F3, STAGE 3 (2026-10-22, alone in the shared tree; the wave log's entry; fun_d2desk, fun_drag, hndl_kbd

@@ -2604,14 +2604,17 @@ def _vet_the_shell_called(name, call, back, ours):
                       f"({call:#x}, a Line-F call word) nor a place in this machine's blob")
 
 
-def served_where_it_stands(memory, sp, answer, ours):
+def served_where_it_stands(memory, sp, answer, ours, door=None):
     """THE SERVED DOOR'S ACT, IN PLACE: a run in flight stands STOPPED AT THE ENTRY of a routine of `SERVED_ROUTINES`
     (a watch's stop: `memory`, the stack pointer `sp`; `ours` the blob the machine holds, or None) — vetted as a
     stopped boot is (supervisor state, called by the shell, a word answered), then the return address popped and D0's
     low word the `answer`, on the CPU where it stands; nothing else is touched. Answers its `Served` (no calls: a
     routine cannot be called over a machine whose run is in flight). What a run watched on both shores serves a
-    built-in of the desk's by, mid-stretch (`aes_ourboot.Pass.serving`)."""
+    built-in of the desk's by, mid-stretch (`aes_ourboot.Pass.serving`). `door`: `{an entry of the blob's: the
+    routine it stands for}` — where the shell's desk door enters a FLIPPED built-in at its thunk (band 6 slice F4's
+    prep, read off the build by the caller), the run stands there and that routine is the one served."""
     at = _register("pc") & BUS
+    at = (door or {}).get(at, at)
     if at not in SERVED_ROUTINES:
         raise Refused(f"THE SERVED DOOR ANSWERS A ROUTINE AT ITS ENTRY: the run stands at {at:#x} — at none of "
                       f"{[f'{each:#x}' for each in SERVED_ROUTINES]}")

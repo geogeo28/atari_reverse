@@ -10,11 +10,11 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
      workspace, by default the one this file lies in; each `--patch` (a unified diff against `recreate/`, a diet lever)
      is then applied to the copy — so a lever is measured without touching any tree but the private one.
   2. FLIP (skipped by `--unflipped`, which measures the tree as it is): `bench/linef_table.py`'s LINKED_AND_NOT_FLIPPED
-     emptied and `src/aes/lineftable.S` generated again — every linked routine's entry ours, through its thunk — and
-     sh_cmd's four built-ins (`src/aes/shell.c`) entered at their thunks on target (the desk door's `jsr`s; the host
-     library keeps the ROM's addresses; the thunks are copied into a source of the flip's own). `$fde844` (no table
-     entry) is ours already: `trapdoor.S`'s operand, relocated at band 6 slice F3 (N18). Each step's anchor is held
-     by `test_aes_desk_ours.py`.
+     emptied and `src/aes/lineftable.S` generated again — every linked routine's entry ours, through its thunk — with
+     `include/aes/lineftable.h`, the desk door's bindings: sh_cmd's four built-ins entered at the very thunks the table
+     names, on target (band 6 slice F4's prep: the generator's own, no copy). `$fde844` (no table entry) is ours
+     already: `trapdoor.S`'s operand, relocated at band 6 slice F3 (N18). The step's anchor is held by
+     `test_aes_desk_ours.py`.
   3. BUILD, FORCED: the private tree's blobs and library are removed and made again (`make` after an rsync can see a
      source older than its product: the mutation-testing rebuild trap) — the shipped blob is the one measured.
   4. THE BLOB IS FLIPPED, READ OFF ITS OWN BOUND TABLE (not with `--unflipped`): every band-6 routine with a C core and
@@ -24,7 +24,9 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
      chain, PD0's depth by the write ledgers (`aes_desk.depth_stored`: the lowest store, the measure
      `test_aes_desk_ours.py` holds), the gate (`aes_desk.PD0_BYTES` less the interrupt nest MEASURED on that blob) and
      the margin. A step whose write ledger saturated is a refusal by name (`aes_desk.depths`' rule: what it stored is
-     not known). The chains refused ON PURPOSE are DECLARED below, each with its reason.
+     not known). The chains refused ON PURPOSE are DECLARED below, each with its reason — and on the flipped state,
+     every chain with a step at a named stop the flipped blob has no C-side stop for (`aes_desk.our_stop`'s refusal),
+     read off that blob.
 
 Exits non-zero if the blob is not flipped (step 4), if a walked chain is over the gate, if a chain is refused that is
 not declared (or for another reason than its declaration reads), or if a declared refusal walks. Run from anywhere:
@@ -34,7 +36,6 @@ on the flipped state); a whole run is minutes (~10-15 at `--jobs 6`, build inclu
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -49,15 +50,8 @@ KEPT_WITHOUT_DELETION = ("build", "kept")    # recreate/'s: copied, never delete
 REBUILT = ("build/bench", "build/bench_shipped", "build/libtos102us.so")
 SHIPPED_BLOB = "build/bench_shipped/bench.bin"
 GENERATOR = "bench/linef_table.py"
-TABLE = "src/aes/lineftable.S"
-DOOR_THUNKS = "src/aes/flipped_door.S"   # the flip's own source, in the private tree alone
 EMPTIED = "\nLINKED_AND_NOT_FLIPPED.clear()   # flipped_depths.py: every linked routine flipped\n"
 EMPTIED_BEFORE = "\ndef thunk_symbol("
-# sh_cmd's four built-ins: the ROM's routine the door `jsr`s today -> the thunk the flip enters it through.
-BUILT_INS = {"AES_ROM_DESK_SHOW_FILE": "linef_to_aes_desk_show_file", "AES_ROM_DESK_PRINT_FILE": "linef_to_aes_desk_print_file",
-             "AES_ROM_DESK_FORMAT": "linef_to_aes_desk_format", "AES_ROM_DESK_COPY_DISK": "linef_to_aes_desk_copy_disk"}
-SHELL = "src/aes/shell.c"
-FLIPPED_PREFIX = "FLIPPED_"
 REFUSAL_KEPT, REFUSAL_SHOWN = 300, 160      # characters of a refusal's text: in the JSON, on the printed line
 
 # ---- THE CHAINS REFUSED ON PURPOSE, `{chain: (why, what its refusal reads)}` ----
@@ -68,23 +62,11 @@ REFUSED_ON_EITHER_STATE = {
     "files: the program double-clicked — launched": ("W6-R8: the launch loads the program over our blob", NO_IDLE_REACHED),
     "a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)": (
         "W6-R8: the disk copy reads its tracks over our blob", "Rwabs of drive 254: the model holds drive A: alone")}
-# ...and N4's on the flipped state alone: the viewer's two key waits are named stops at the ROM's addresses inside the
-# show engine's body, which is ours once unit M flips, so the walk never stops there — F4 declares their C-side stops
-# (`aes_desk.OUR_STOPS`) and takes these out. The last chain goes on from the fifth's machine.
-VIEWER_STOPS_THE_ROM_S = "N4: the viewer's key waits are the ROM's stops, inside the show engine's body (F4's)"
-REFUSED_ON_THE_FLIPPED_STATE = {name: (VIEWER_STOPS_THE_ROM_S, NO_IDLE_REACHED) for name in (
-    "files: the right arrow clicked, then the long file shown",
-    "files: the long file shown, a blank at each page's end and at its end",
-    "files: View > Sort by Size, then the long file shown",
-    "files: View > Show as Text, then the long file's line shown",
-    "file: shown, a key at its end")}
-REFUSED_ON_THE_FLIPPED_STATE["file: shown, a key at its end — the file clicked, File > Open, shown again"] = (
-    "N4: walked from 'file: shown, a key at its end', refused before it", NO_IDLE_REACHED)
-# (band 6 slice F3 stage 2's fix pass) the two chains of a folder's acts in a window restored after a show: each shows
-# its file in its own steps, the first the long file
-REFUSED_ON_THE_FLIPPED_STATE.update({name: (VIEWER_STOPS_THE_ROM_S, NO_IDLE_REACHED) for name in (
-    "files: the long file shown, then the folder AUTO double-clicked in the restored window",
-    "files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window")})
+# ...and N4's on the flipped state alone, DERIVED (band 6 slice F4's prep, ruling O3): a named stop that moves with a
+# flip (`aes_desk.OUR_STOPS_ONCE_FLIPPED` — the viewer's two key waits, inside the show engine's body) is our C's stop
+# on the flipped state, and a chain with a step at one is refused by name while the flipped blob has no symbol to stop
+# at (`aes_desk.our_stop`: `key_awaited` inlined) — `refused_on_the_flipped_state`, read off that blob.
+NO_C_SIDE_STOP = "N4: a named stop is ours on the flipped state and its C-side stop is no symbol of the flipped blob"
 LEDGER_SATURATED = "a step saturated its write ledger: what it stored is not known"
 
 
@@ -110,36 +92,10 @@ def emptied(generator):
     return generator.replace(EMPTIED_BEFORE, EMPTIED + EMPTIED_BEFORE)
 
 
-def door_thunks(table):
-    """A source of sh_cmd's four thunks, COPIED out of the generated table's text and made global: the table's own are
-    file-local, and its source may define no other `.globl` (a pin of the registry's)."""
-    copies = ["    .text"]
-    for thunk in BUILT_INS.values():
-        body = re.search(rf"^    \.type   {thunk},@function\n.*?^    \.size   {thunk},.*?$", table, re.M | re.S)
-        assert body, f"{TABLE}: no thunk {thunk}"
-        copies += [f"    .globl {FLIPPED_PREFIX}{thunk}", body.group(0).replace(thunk, FLIPPED_PREFIX + thunk)]
-    return "\n".join(copies) + "\n"
-
-
-def sh_cmd_flipped(shell):
-    """shell.c's text with sh_cmd's four built-ins entered at the copied thunks on target (the host keeps the ROM's)."""
-    defines = ["#ifdef RECREATE_HOST_DIFFERENTIAL"] + [f"#define {FLIPPED_PREFIX}{rom} {rom}" for rom in BUILT_INS]
-    defines += ["#else"] + [f"#define {FLIPPED_PREFIX}{rom} {FLIPPED_PREFIX}{thunk}" for rom, thunk in BUILT_INS.items()]
-    defines += ["#endif"]
-    for rom in BUILT_INS:
-        site = f"(image, {rom}, AES_SH_TAIL_TEXT"
-        assert shell.count(site) == 1, f"{SHELL}: sh_cmd's site of {rom} moved (F4 retires this step)"
-        shell = shell.replace(site, f"(image, {FLIPPED_PREFIX}{rom}, AES_SH_TAIL_TEXT")
-    last_include = max(match.end() for match in re.finditer(r"^#include .*$", shell, re.M))
-    return shell[:last_include] + "\n" + "\n".join(defines) + shell[last_include:]
-
-
 def flip(recreate):
     generator = recreate / GENERATOR
     generator.write_text(emptied(generator.read_text()))
     run([".venv/bin/python", GENERATOR], cwd=recreate, env=dict(os.environ, PYTHONPATH=str(recreate.parents[2] / "tools")))
-    (recreate / DOOR_THUNKS).write_text(door_thunks((recreate / TABLE).read_text()))
-    (recreate / SHELL).write_text(sh_cmd_flipped((recreate / SHELL).read_text()))
 
 
 def build(recreate):
@@ -148,9 +104,19 @@ def build(recreate):
     run(["make", SHIPPED_BLOB], cwd=recreate)
 
 
-def declared_refusals(unflipped):
-    """`{chain: (why, what its refusal reads)}` of the chains refused on purpose on the state measured."""
-    return REFUSED_ON_EITHER_STATE if unflipped else REFUSED_ON_EITHER_STATE | REFUSED_ON_THE_FLIPPED_STATE
+def refused_on_the_flipped_state(chains, stops_not_in_the_blob):
+    """`{chain: (why, what its refusal reads)}` of `chains` (`{name: aes_desk.Chain}`) with a step at a named stop of
+    `stops_not_in_the_blob` — those ours on the flipped state with no C-side stop there (a chain walked from one is
+    refused by its predecessor's refusal, which reads the same)."""
+    import aes_desk as desk
+    return {name: (NO_C_SIDE_STOP, desk.A_STOP_NOT_IN_THE_BLOB) for name, chain in chains.items()
+            if any(step.until in stops_not_in_the_blob for step in chain.steps)}
+
+
+def declared_refusals(unflipped, on_the_flipped_state=None):
+    """`{chain: (why, what its refusal reads)}` of the chains refused on purpose on the state measured:
+    `on_the_flipped_state` (`refused_on_the_flipped_state`'s) added where it is the flipped one."""
+    return REFUSED_ON_EITHER_STATE if unflipped else REFUSED_ON_EITHER_STATE | (on_the_flipped_state or {})
 
 
 def misrefused(found, declared):
@@ -202,13 +168,26 @@ def linked_still_the_rom_s(desk, generator):
 
 
 def _gate(recreate):
-    """In a worker: `(the gate, every chain, the linked routines the blob leaves the ROM's)`."""
+    """In a worker: `(the gate, every chain, the linked routines the blob leaves the ROM's, the chains refused on the
+    flipped state for a C-side stop the blob has no symbol for)`."""
     _private_imports(recreate)
     import aes_desk as desk
     import aes_stack
     import linef_table
     gate = desk.PD0_BYTES - aes_stack.nest_on_the_first_stack(desk.OUR_BLOB)
-    return gate, list(desk.CHAINS), linked_still_the_rom_s(desk, linef_table)
+    missing = stops_our_stop_refuses(desk, desk.our_blob())
+    return gate, list(desk.CHAINS), linked_still_the_rom_s(desk, linef_table), refused_on_the_flipped_state(desk.CHAINS, missing)
+
+
+def stops_our_stop_refuses(desk, blob):
+    """The named stops ours on `blob` that `aes_desk.our_stop` refuses there — its rule, asked, never restated."""
+    refused = set()
+    for stop in desk.our_stops(blob):
+        try:
+            desk.our_stop(stop, blob)
+        except desk.Refused:
+            refused.add(stop)
+    return refused
 
 
 def main(argv):
@@ -229,12 +208,12 @@ def main(argv):
         flip(recreate)
     build(recreate)
     with ProcessPoolExecutor(1) as one:
-        gate, every, not_flipped = one.submit(_gate, recreate).result()
+        gate, every, not_flipped, on_the_flipped_state = one.submit(_gate, recreate).result()
     if not_flipped and not asked.unflipped:
         print(f"\nREFUSED: the blob is NOT FLIPPED — its bound table leaves {len(not_flipped)} linked routine(s) the "
               f"ROM's: {', '.join(f'${rom:x}' for rom in not_flipped)}")
         return 1
-    declared = declared_refusals(asked.unflipped)
+    declared = declared_refusals(asked.unflipped, on_the_flipped_state)
     unknown = sorted(set(declared) - set(every))
     if unknown:
         print(f"\nREFUSED: a declared refusal names no chain of the campaign: {unknown}")

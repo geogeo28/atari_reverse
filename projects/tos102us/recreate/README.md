@@ -502,16 +502,24 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   `aes_boot.booted(..., ours=)` and `continued` (`test/derived.py`'s note): its key is the `Boot`'s `OurBoot`, the
   blob's bytes. `OUR_MACHINES` holds one per `MACHINES` key (the captures booted by OUR gem_entry, `$cc24` naming our
   table); `walked_ours(name)` walks a chain from its predecessor's machine of ours. Named stops per shore
-  (`our_stop`): the rubber box's poll is our C gr_stilldn's entry; the viewer's two waits stay the ROM's until unit M
-  flips (F4 adds their C-side stops).
-- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 116 of 118 chains): the screen and the desk's block
+  (`our_stop`): the rubber box's poll is our C gr_stilldn's entry (`OUR_STOPS`). The viewer's two key waits MOVE WITH
+  A FLIP (band 6 slice F4's prep): they lie inside the show engine's body, so each is the ROM's address while the blob
+  binds the show engine as the ROM's, and our C's `key_awaited` once it binds it as ours (`OUR_STOPS_ONCE_FLIPPED`,
+  read off the blob's own binding by `our_stops`). A stop that is ours with no symbol in the blob is refused by name:
+  an inlined key wait has no entry to stop at, so the flip makes `key_awaited` `noinline`.
+- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 118 of 120 chains): the screen and the desk's block
   (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
   and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
   EVERY inventory start, `aes_desk.charged`) but THE ONE CLASS `RUN_UNDER_BANDS_0_TO_5`: three spans a band-5 routine
   runs on the ROM's shore and ours runs as ours, short by EXACTLY one pass for each time that caller ran, counted off
   the ROM's own step profile at its call site.
 - **WHO RAN** (W6-R5): every cycle of the ROM's GEM text on our shore lies in a DECLARED, SHRINKING span — band 6's
-  routines still the ROM's (`still_the_rom_s`: read off the blob's own bound table) and six spans of bands 0–5 they
+  routines still the ROM's (`still_the_rom_s`: the rest of `flipped`, which reads each routine's binding off the blob —
+  its entry of the bound table, or a BY-VALUE CALLER's operand: ub_trampoline's `jsr` (N18), and sh_cmd's desk door,
+  whose four `jsr`s are read off the blob's listing (`transcription.desk_door_bindings`). A routine bound both ways
+  and unalike, ours by one and the ROM's by the other, is refused by name. The show / print engine's eight
+  `bsr`-only parts have no binding of their own: each is read as its built-ins are (`ENGINE_PARTS`, `{part: the
+  built-ins that reach it}`) — ours where every built-in that reaches it is ours, the ROM's while one is held) and six spans of bands 0–5 they
   reach by `bsr` / `jsr` / `jmp` / branch (`ROM_TEXT_UNDER_ROM_CALLERS`, each pinned to a chain it runs in; a span
   entered past its start — dos_free's body — declared so, `ENTERED_PAST_ITS_START`).
 - **THE FOUR STACKS' DEPTHS** per chain (`DEPTHS`, the lowest STORE of the write ledgers), PD0 under W6-R4's hard
@@ -531,12 +539,15 @@ build with EVERY linked routine of band 6 flipped.
     .venv/bin/python tools/flipped_depths.py <private dir> --unflipped --jobs 6       # the tree as it is: = `DEPTHS`
 
 It copies the project and `tools/` into the private dir (build/ and kept/ without deletion: a second run is cheap),
-applies each `--patch` (a lever measured without touching a shared file), flips (LINKED_AND_NOT_FLIPPED emptied,
-`lineftable.S` generated again, sh_cmd's four built-ins entered at copies of their thunks on target), rebuilds by force,
+applies each `--patch` (a lever measured without touching a shared file), flips (LINKED_AND_NOT_FLIPPED emptied and
+the generator run again: `lineftable.S` and the desk door's bindings `include/aes/lineftable.h` together, so sh_cmd's
+four built-ins are entered at the table's own thunks on target, and no thunk is copied), rebuilds by force,
 REFUSES IF THE BLOB IS NOT FLIPPED (read off its own bound table, as who-ran reads it), walks every chain on our shore
 and prints PD0 per chain against the gate measured on that blob. A step whose write ledger saturated is a refusal. EXIT
 NON-ZERO: the blob not flipped, a chain over the gate, a chain refused that the tool does not DECLARE (W6-R8's two on
-either state; N4's six viewer chains on the flipped state — F4 takes them out), or a declared one that walks.
+either state, and on the flipped state every chain with a step at a named stop that the flipped blob has no C-side
+stop for: DERIVED off that blob, as `our_stop` refuses it — the viewer's eight chains while `key_awaited` is inlined,
+none once the flip makes it `noinline`), or a declared one that walks.
 COST: a first copy ~700 MB and 10–15 min at `--jobs 6`; 2–3 min when the walks' derivations are kept. WHEN: every flip
 slice (F1..F4) and W3b, on its own tree, before it lands — it must exit 0; a diet lever, as a `--patch`. Its text steps,
 its three self-checks and the diet's split helpers (each a routine of the shipped ELF, `win_bldview`'s jump) are held
@@ -776,7 +787,10 @@ ROM's AES through the ROM's Line-F table on both shores).
 - **BOTH SHORES AT THE SAME CHECKPOINTS** (`aes_ourboot.both_shores(a_pass, blob)`): the ROM's own run and ours from
   one machine, each stopped at its first arrival at each `Checkpoint` — a ROM address on the ROM's shore; on ours the
   build's own entry for it (a symbol), the same OFFSET INSIDE gem_entry (the `.S` is byte-pinned), or the same ROM
-  address (deskmain, a built-in of the desk's). A `Pass` begins AT THE PRE-INIT STOP (the boot's first pass) or AT
+  address (deskmain); a built-in of the desk's stands WHERE THE DESK DOOR ENTERS IT (`AT_THE_DESK_DOOR`, read off the
+  blob by `transcription.desk_door_bindings`) — the ROM's address while the built-in is the ROM's, its thunk once it is
+  flipped, where the served door answers it too (`served_door_of`, handed to `served_where_it_stands`), so the four
+  built-in passes keep their stretches across the flip. A `Pass` begins AT THE PRE-INIT STOP (the boot's first pass) or AT
   deskmain's ENTRY THROUGH THE SERVED DOOR (ruling W4-R6, a labelled argument class: `answered_at_its_entry` — and a
   built-in of the desk's answered where the run arrives at it, `served_where_it_stands`): gem_main's teardown and
   gem_entry's second pass (deskmain answers 0), sh_cmd's four built-ins and the launch pass to dos_exec's entry
@@ -946,9 +960,15 @@ the ROM text each part stands for (`aes_event.ROM_TEXT_OF`) ran zero cycles and 
   and the stack battery's door run (`aes_stack._door_run`) — each with a RED of its own. WHO ASKS IT, and REFUSES BY
   NAME to begin while anyone holds it (`vet_the_profile_is_free`): the door boot and the stack battery's door run
   (Tier 3's paths hold and do not ask: `_profiled` nests `_call` by design). Ask a door machine BEFORE a
-  measurement's own runs begin, as `tier3._two_shores` does (a kept derivation asked beforehand runs nothing). NOT
-  IN THE LEDGER: the trap door's own battery's run (`aes_trapdoor._run`) and a test that switches the profile itself
-  by `emu.prof_enable` — each a run of its own that derives no door boot inside it; a kit accessor is owed.
+  measurement's own runs begin, as `tier3._two_shores` does (a kept derivation asked beforehand runs nothing). THE
+  OUR-BOOT'S WATCHED RUN (`aes_ourboot.watched_over`) asks and holds it too, FROM ITS FIRST TALLY TO ITS LAST, and
+  imports the tallies' module (`bench/tier3.py`) BEFORE switching it on: that module's first import in a process
+  derives kept answers, and one SAMPLED to be made again (`derived._sampled`) is a profiled step of its own
+  (`aes_desk.stepped`: reset, on, OFF) — begun inside the run's first tally, which stood outside the hold, it left the
+  ROM's shore 0 cycles in its own text on whichever worker's salt sampled one first (deterministic, and older than
+  band 6 slice F4's prep). Two labelled crafts pin both halves (`test_aes_ourboot.py`). The trap door's own battery's
+  run (`aes_trapdoor._run`) asks it too since that prep's second review. NOT IN THE LEDGER: a test that switches the
+  profile itself by `emu.prof_enable` — a run of its own that derives no door boot inside it; a kit accessor is owed.
 
 ### `aes_boot._Run` — EVERY ARRIVAL AT A STOP IS A STOP (band 5 wave 3)
 
@@ -3279,7 +3299,12 @@ TO CODE THAT HAS NO C AT ALL: everything round it that can be C is C (`src/aes/e
   the section "A BLOB'S OWN START-UP" of `test/aes_stack.py`): gem_entry is read ON ITS TWO STACKS — the first
   (`[$890e, $8994)`, 134 bytes) to the instruction where PD0's begins, PD0's from there — with seven shapes more: a
   declared run after which SP stands where it began (`ends_where_it_began`: Super); a stack's declared beginning
-  reached again by a loop; a call to a ROM address no blob links (`out_of_the_build`: the desk door's five);
+  reached again by a loop; a call to a ROM address no blob links (`out_of_the_build`: the desk door's five —
+  and, since band 6 slice F4's prep, each built-in the blob's door enters AT A THUNK OF OURS, a flipped one, under that
+  built-in's own name: `aes_stack.the_desk_door_of(elf)`, read off the build by `transcription.desk_door_thunked`. The
+  desk's frames stand where the ROM's do, the door's pad under them, so they are not the start-up's whoever's code they
+  are; without this the reading followed the thunk into the engine's C and refused it, "the stack reading does not
+  follow `addal %d3,%sp`", measured on the private full flip);
   THE DESK DOOR'S PAD (`stands_sp_at`: SP stood at a declared place READ OFF THE ROM, put back from a register — a
   door that stood it anywhere else is an instruction the reading refuses; `entered_at_depth` says where a door's
   function is entered); `__DOS`'s return through a parked address; a body cut at its own return-site label and read
@@ -3520,6 +3545,15 @@ sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskm
 - **ONE SITE EACH, DECLARED**: the five ROM routines are `tier3.ROM_CALLS_OWED_TO_A_LATER_BAND` entries beside
   ub_trampoline's — the rule "a call from C reds" is "a call from C outside the desk door reds".
   `test_aes_shell_door.py` reads the door's steps at each site off both blobs.
+- **A FLIPPED BUILT-IN IS ENTERED AT THE TABLE'S OWN THUNK** (band 6 slice F4's prep, ruling O2). The door's two
+  built-in shapes paste the routine's addrs.h NAME into `DESK_DOOR_BOUND_<name>` — where the shape's macro is spelled,
+  so the name is never expanded to an address first. That name is bound by `include/aes/lineftable.h`, which
+  `bench/linef_table.py` GENERATES with `lineftable.S` (`test_aes_lineftable.py` holds both equal to the generator):
+  the ROM's routine while the table leaves the built-in the ROM's, THE TABLE'S OWN THUNK once it is thunked — that
+  thunk then a `.globl` of the table's source, the one named exception `transcription.vet_the_table_s_globls` admits
+  (`DESK_DOOR_THUNKS`). One declaration moves the table and the door together and no thunk is copied; a torn state
+  (the table ours, the door the ROM's) cannot be generated, and the harness refuses one by name where it reads a
+  binding (`aes_desk._bound`).
 - **OFF TARGET** the five routines cannot run: the call leaves through the hook `recreate_call_desk_door`, keyed by
   the routine's ROM address (unbound, a door reached fails the run by name). AT TIER 1 THE ROM'S SHORE IS ANSWERED
   THE SAME WAY — "a ROM routine answered at its entry through a staged Line-F table" (`test/aes_shmain.py`): a RAM

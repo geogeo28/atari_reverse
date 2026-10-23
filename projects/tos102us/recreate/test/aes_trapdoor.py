@@ -35,6 +35,7 @@ from recreate_kit import rom_bench
 
 import aes
 import aes_boot
+import aes_event
 import case
 import derived
 import transcription
@@ -124,6 +125,7 @@ def _run(memory, served, registers, *, until=None, observing=None, profiled=()):
     boot's `until` is. `profiled`: the spans whose cycles are tallied."""
     floppy = aes_boot.Floppy(memory, served.disk)
     run = aes_boot._Run(memory, floppy, TRIP_INSNS if until else aes_boot.BOOT_INSNS, until=until, observing=observing)
+    aes_event.vet_the_profile_is_free("a run of the trap door's")
     emu.prof_reset()
     emu.prof_enable(bool(profiled))
     try:

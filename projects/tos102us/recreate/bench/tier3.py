@@ -2163,7 +2163,7 @@ def goes_through_the_os(row):
 # RULE, below). An AES-span cycle of OURS is refused by name wherever it is spent: our C reaches the ROM's AES by no
 # road. (V)'s shared-cycle equality still holds the OS both ran.
 # Derived, never typed: the arrivals are the blob's own calls of the twins, the rows the call graph's callers of them.
-_LISTED_JSR_ABSOLUTE = re.compile(r"^\s+([0-9a-f]+):\s+4eb9 ([0-9a-f]{4}) ([0-9a-f]{4})\s+jsr ", re.M)
+_LISTED_JSR_ABSOLUTE = transcription.LISTED_JSR_ABSOLUTE
 JSR_ABSOLUTE_BYTES = 6                 # `jsr <abs.l>`: the opcode word and the address
 
 

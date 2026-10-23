@@ -1873,6 +1873,14 @@ def the_desk_door_stands():
     return {f"moveal #{top - depth},%sp": depth for depth in the_rom_s_sp_at_the_door()}
 
 
+def the_desk_door_of(elf):
+    """THE CALLS OUT OF THE BUILD a reading of the blob at `elf` is told of: `THE_DESK_DOOR`, and each built-in the
+    blob's door enters at a thunk of ours (a flipped one: `transcription.desk_door_thunked`, band 6 slice F4's prep)
+    under that built-in's own name — the desk's frames stand where the ROM's do, the door's pad under them, and are
+    not the start-up's whoever's code they are."""
+    return {**THE_DESK_DOOR, **{ours: THE_DESK_DOOR[rom] for ours, rom in transcription.desk_door_thunked(elf).items()}}
+
+
 def _start_up_read(elf, functions, entered_at_depth):
     """One reading of the start-up's `functions` (the blob's listing, some of it replaced), told `entered_at_depth`."""
     starts = {symbol.start: symbol.name for symbol in transcription.symbol_table(elf) if symbol.kind in "Tt"}
@@ -1883,7 +1891,7 @@ def _start_up_read(elf, functions, entered_at_depth):
         calls_what_it_is_handed=TRAP_PATH_CALLS_WHAT_IT_IS_HANDED,
         takes_an_exception=excepted, leaves_its_stack_at=(THE_WAY_OUT_LEAVES,), text_bytes=aes_switch.text_bytes(elf),
         begins_a_stack={**THE_DOOR_BEGINS, **THE_PRIVATE_STACKS_BEGIN, **declared["begins_a_stack"]},
-        ends_where_it_began=declared["ends_where_it_began"], out_of_the_build=THE_DESK_DOOR, stands_sp_at=the_desk_door_stands(),
+        ends_where_it_began=declared["ends_where_it_began"], out_of_the_build=the_desk_door_of(elf), stands_sp_at=the_desk_door_stands(),
         entered_at_depth=entered_at_depth)
 
 
