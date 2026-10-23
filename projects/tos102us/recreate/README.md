@@ -570,7 +570,11 @@ do_wredraw; `aes_desktop.HELD_AT_F2`: i_find, a stage artifact F2b flips, and me
 flipped caller leaves are named BY NATURE in its rows (app_blddesk's AES_XBIOS_RETURN, drive_check's AES_BIOS_RETURN:
 their three low bytes, held at Tier 1). SINCE SLICES F2b AND F2c EVERY ONE OF THOSE HELD IS FLIPPED (F2b: i_find,
 win_icalc, win_bldview, win_shwall; F2c: the evnt_multi and objc_draw bindings, men_update and the ten waiting on them) —
-WAVE 1b IS COMPLETE, every held list above `()`. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
+WAVE 1b IS COMPLETE, every held list above `()`. SINCE SLICE F3 (three stages, the cut's split: a routine flips once
+every C callee of it is, do_wopen / pro_run with unit J for the File > Open path's depth) WAVE 2's FORTY-FOUR ARE FLIPPED
+TOO — `$fde844` by ub_trampoline's operand (N18) — and every `UNIT_<X>_WAVE_2_HELD_AT_F3` is `()` since its stage 3
+(fun_d2desk, fun_drag, hndl_kbd); what is held of band 6 is wave 4's twelve (`UNIT_M_WAVE_4`, `UNIT_N_WAVE_4`), W3a's
+cycle and W3b's deskmain. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
 routine's wait, refused by name on a plain row) and registers plain an arrival of a yielding routine whose ROM run
 enters no process (`reaches_no_binding`, measured both ways). Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
@@ -2613,7 +2617,7 @@ NOT STALE (`B <= 10 N`); the four refusals are red by name on a real row (`test_
 fitted, 10N + 1 stale, none the default's margin, a short row's not needed). The registry keeps the budget
 (`SwitchingRow.budget`), so every later derivation — the snapshot's sweeps — runs under it:
 `test_aes_event._named_rows_declaring_a_budget` reads the named rows off their batteries,
-`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (47 since band 6 slice P7, 43 at F3 stage 2's third fix pass), and each is derived again under
+`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (50 since band 6 slice F3's stage 3, 47 at slice P7, 43 at F3 stage 2's third fix pass), and each is derived again under
 its own budget to the switches it settled. A PLAIN row declares none: its path forwards no budget to `aes.register`, so
 a declaration there would be dropped in silence — `aes_deskarrive` and `aes_deskwin` refuse it by name, each pinned by a
 refusal test (`test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive` in `test_desk_fun`,

@@ -413,6 +413,8 @@ CASES_WAVE_2 = (w.Case("AES_ROM_CNX_GET", SHOWN_FILE, budget=4_000_000), w.Case(
                 # hndl_kbd: Esc with a window on top (fun_rebld: its path read again, GEMDOS replayed), and 'a' (nothing)
                 w.Case("AES_ROM_HNDL_KBD", ESCAPE, arm=lambda a: a == (0x011b,)),
                 w.Case("AES_ROM_HNDL_KBD", A_KEY, arm=lambda a: a != (0x011b,)),
+                # (stage 3's fix pass) Esc with NO window open: win_ontop 0, nothing read again
+                w.Case("AES_ROM_HNDL_KBD", aes_desk.ESC_AT_THE_IDLE, arm=lambda a: a == (0x011b,)),
                 # (the fix pass's) a key whose LOW byte is Esc's and whose scan is not: no Esc (the word compared)
                 w.Case("AES_ROM_HNDL_KBD", ESCAPE, arguments=lambda a: (ESC_ASCII_ALONE,),
                        why="the key $001b — Esc's ASCII with no scan code: hndl_kbd compares the WORD, nothing done"))
@@ -449,14 +451,12 @@ def test_cnx_get_is_gem_s_void_one_and_no_rom_caller_reads_what_it_leaves():
     assert db.calls_of(da.entry_of("AES_ROM_CNX_GET")) and not db.answer_readers(da.entry_of("AES_ROM_CNX_GET"))
 
 
-# ---- FLIPPED (band 6 slice F3, stage 2): cnx_get; hndl_kbd HELD, UNBOUND (stage 3) -----------------------------------------
-def test_cnx_get_is_flipped_and_hndl_kbd_held_unbound(blob):
-    """THE FLIP PIN of cnx_get (`aes_deskarrive.flipped`) and THE UNBOUND PIN of hndl_kbd (`aes_deskarrive.unbound`: its
-    entry the ROM's, no registry row, no function outside the unbound desk refers to a held core) — held to stage 3
-    (`aes_desktop.UNIT_K_WAVE_2_HELD_AT_F3`)."""
+# ---- FLIPPED (band 6 slice F3): cnx_get at stage 2, hndl_kbd at stage 3 ----------------------------------------------------
+def test_cnx_get_and_hndl_kbd_are_flipped(blob):
+    """THE FLIP PIN of cnx_get and hndl_kbd (`aes_deskarrive.flipped`); none held (`aes_desktop.UNIT_K_WAVE_2_HELD_AT_F3`)."""
     import aes_deskarrive as dar
+    assert not dt.UNIT_K_WAVE_2_HELD_AT_F3
     dar.flipped(blob, dt.UNIT_K_WAVE_2_FLIPPED)
-    dar.unbound(blob, dt.UNIT_K_WAVE_2_HELD_AT_F3)
 
 
 # ---- band 6 slice F3, stage 2: cnx_get's ROWS — every case at an arrival registered as A ROW THAT SWITCHES OVER ITS GEMDOS
@@ -499,3 +499,37 @@ def test_every_arrival_of_cnx_get_is_a_door_user_s_row_under_its_case_s_budget()
     assert all(row.door and row.budget == BY_LABEL_WAVE_2[name].budget for name, row in ROWS_WAVE_2.items())
     names = {aes_switching.row_name(row) for row in ROWS_WAVE_2.values()}
     assert names == set(DOOR_USERS_PRICED_WAVE_2) == set(DOOR_USERS_WHOLE_RUN_WAVE_2) and len(names) == 5
+
+
+# ---- band 6 slice F3, stage 3: hndl_kbd's ROWS — every case at an arrival registered. Esc with a window on top reads
+# the top window again (fun_rebld: its path searched, GEMDOS REPLAYED, `aes_desksupp.registered_row`, said in the row's
+# name): A ROW THAT SWITCHES. 'a' at the desk's idle, and Esc there with no window open (stage 3's fix pass), reach no
+# binding (hndl_kbd returns at once): PLAIN ROWS (`aes_deskwin.register_row`). The class stays Tier 1's.
+HNDL_KBD_AT_ARRIVALS = [name for name, each in BY_LABEL_WAVE_2.items() if each.name == "AES_ROM_HNDL_KBD" and not each.why]
+HNDL_KBD_SWITCHING = frozenset(name for name in HNDL_KBD_AT_ARRIVALS
+                               if (BY_LABEL_WAVE_2[name].chain, BY_LABEL_WAVE_2[name].name) in TRAPS_K)
+ROWS_STAGE_3 = {name: ds.registered_row(BY_LABEL_WAVE_2[name], replayed=True, door_user=True) if name in HNDL_KBD_SWITCHING
+                else w.register_row(BY_LABEL_WAVE_2[name], False)
+                for name in HNDL_KBD_AT_ARRIVALS}
+# DOOR USERS (MEASURED, the table's second count: 11 calls of a rebound entry — fun_rebld's window rebuilt), read by
+# `test_tier3.py`
+DOOR_USERS_PRICED_STAGE_3 = {
+    "aes_hndl_kbd, arrival 1 of window: Esc typed (the top window read again); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        ((347548, 608388), (340710, 596140), 11, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_STAGE_3 = {
+    "aes_hndl_kbd, arrival 1 of window: Esc typed (the top window read again); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
+        {"bench": (1835046, 1600234), "bench_shipped": (1835046, 1603074)},
+}
+
+
+def test_every_arrival_of_hndl_kbd_is_a_row_its_esc_a_door_user_s_and_its_idle_key_a_plain_one():
+    """EVERY CASE AT AN ARRIVAL OF hndl_kbd A ROW: Esc's a door user's that switches, under no declared budget (its run
+    is inside the default's margin), pinned for `test_tier3.py`; the idle's two keys ('a', and Esc with no window
+    open: stage 3's fix pass) plain rows (no binding reached)."""
+    import aes_switching
+    switching = {name: row for name, row in ROWS_STAGE_3.items() if hasattr(row, "door")}
+    assert set(switching) == set(HNDL_KBD_SWITCHING) and (len(ROWS_STAGE_3), len(switching)) == (3, 1)
+    assert all(row.door and row.budget is None for row in switching.values())
+    names = {aes_switching.row_name(row) for row in switching.values()}
+    assert names == set(DOOR_USERS_PRICED_STAGE_3) == set(DOOR_USERS_WHOLE_RUN_STAGE_3)

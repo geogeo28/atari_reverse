@@ -177,10 +177,9 @@ LINKED_AND_NOT_FLIPPED = {}
 # ---- end of group G1's wave-2 ----
 # ---- band 6 wave 2, group G2 (units H `src/desk/deskfun.c`, G `deskfpd.c`, M `deskutil.c`) ----
 # (unit G's pn_close and pn_active FLIPPED at band 6 slice F3, stage 1)                                         # F3 S1-A
-_UNIT_H = "unit H: an operation's driver, held at Tier 1 at its arrivals"
 # (unit H's nine — fun_rebld, fun_mkdir, fun_op, fun_ddst, fun_wdst, fun_win2win, fun_win2desk, fun_disk,   # F3 S2-A
 # fun_desk2win — FLIPPED at band 6 slice F3, stage 2)                                                          # F3 S2-A
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_FUN_{routine}": _UNIT_H for routine in ("D2DESK", "DRAG")})      # F3 S3
+# (unit H's last two, fun_d2desk and fun_drag, FLIPPED at band 6 slice F3, stage 3: the unit whole)             # F3 S3
 # (unit M's cart_sfirst and cart_snext FLIPPED at band 6 slice F3, stage 1)                                    # F3 S1-A
 # ---- end of group G2's wave-2 ----
 # ---- band 6 wave 2, group G3 (units I `src/desk/deskwin.c`, J `desksupp.c`, K `desktop.c`, L `deskview.c`) ----
@@ -190,8 +189,7 @@ LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_FUN_{routine}": _UNIT_H for routin
 # (unit L's five — win_blt, win_slide, win_arrow, win_srtall, win_bdall — FLIPPED at band 6 slice F3, stage 1)  # F3 S1-B
 # (unit J's seven — do_diropen, do_dopen, do_fopen, desk_do_format, close_window, close_folder, fun_close — FLIPPED at
 # band 6 slice F3, stage 2)                                                                                     # F3 S2-B
-_UNIT_K = "unit K: a helper of the desk's main loop, held at Tier 1 at its arrivals"
-LINKED_AND_NOT_FLIPPED.update({"AES_ROM_HNDL_KBD": _UNIT_K})                                                     # F3 S3
+# (hndl_kbd FLIPPED at band 6 slice F3, stage 3)                                                                # F3 S3
 # (cnx_get FLIPPED at band 6 slice F3, stage 2)                                                                 # F3 S2-B
 # ---- end of group G3's wave-2 ----
 # ---- band 6 wave 2, group G4 (units A `src/desk/deskapp.c`, B `deskact.c`) ----

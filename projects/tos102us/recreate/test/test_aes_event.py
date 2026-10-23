@@ -2213,8 +2213,9 @@ def _named_rows_declaring_a_budget():
     return {aes_switching.row_name(row) for row in rows}
 
 
-NAMED_ROWS_DECLARING_A_BUDGET = 47      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
+NAMED_ROWS_DECLARING_A_BUDGET = 50      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
                                         # + 4 (P7: unit J's parked arrivals under their cases' budgets)
+                                        # + 3 (S3: fun_d2desk's disk copy OK'd, fun_drag's copy and delete)
 
 
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
@@ -4805,7 +4806,10 @@ ROWS_THAT_SWITCH = {
     "aes_do_diropen": 7, "aes_do_dopen": 4, "aes_desk_do_format": 1, "aes_close_window": 3, "aes_fun_close": 5, "aes_pro_run": 3,
     "aes_do_wopen": 5, "aes_cnx_get": 5, "aes_do_fopen": 4, "aes_close_folder": 2,
     # ---- end of stage 2 B's ----
-    # ---- band 6 slice F3, stage 3 ----
+    # ---- band 6 slice F3, stage 3 ---- (`test_desk_fun.py`'s drivers: fun_d2desk's four — five since the stage's fix pass,
+    # the destination among the selection — and fun_drag's four, door users every one, three under their declared
+    # budgets; `test_desk_top.py`: hndl_kbd's Esc, a door user — its idle's two keys plain rows)
+    "aes_desk_fun_d2desk": 5, "aes_desk_fun_drag": 4, "aes_hndl_kbd": 1,
     # ---- end of stage 3's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
@@ -5617,7 +5621,17 @@ SLOTS_HELD_WHERE_PARKED = {
                      "AES_ACT_CHG_RECT"),
     "aes_close_folder": ("AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_OPEN_FRAME"),
     # ---- end of stage 2 B's ----
-    # ---- band 6 slice F3, stage 3 ----
+    # ---- band 6 slice F3, stage 3 ---- (MEASURED by the audit below: the union over each door user's rows of the slots held
+    # where its process was parked — fun_d2desk's own frame over its alerts and the disk copy's launch, fun_drag's over the
+    # drivers it calls, hndl_kbd's Esc over fun_rebld's window rebuilt)
+    "aes_desk_fun_d2desk": ("AES_DESK_FUN_D2DESK_FRAME", "AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME", "AES_GR_STILLDN_RECTANGLE",
+                            "AES_GR_STILLDN_ANSWERS", "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME", "AES_DESK_WIN_FRAME",
+                            "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME"),
+    "aes_desk_fun_drag": ("AES_DESK_DIR_RECT", "AES_DESK_FUN_OP_FRAME", "AES_DESK_FUN_WIN2WIN_FRAME", "AES_FM_DO_FRAME",
+                          "AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME",
+                          "AES_DESK_FUN_MSG", "AES_GR_STILLDN_RECTANGLE", "AES_GR_STILLDN_ANSWERS", "AES_GR_WATCHBOX_RECT",
+                          "AES_FM_BUTTON_FRAME", "AES_DESK_FUN_D2DESK_FRAME", "AES_FM_ALERT_FRAME", "AES_DESK_FUN_DESK2WIN_FRAME"),
+    "aes_hndl_kbd": ("AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
     # ---- end of stage 3's ----
 }
 A_SLOT_PER_PROCESS = ", process "

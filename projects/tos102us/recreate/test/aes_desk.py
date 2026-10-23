@@ -232,14 +232,19 @@ def icon_index(machine, name):
     return _the_one(machine, f"named {name!r}", lambda text, _letter: text == name)
 
 
+def drive_index(machine, letter):
+    """...and THE drive icon bearing `letter` (two drives read alike: the letter in the ICONBLK tells them apart)."""
+    return _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter)
+
+
 def icon_point(machine, name):
     """A point of the image of the icon reading `name` (a file, a folder, the trash) that is in sight (`_point_in_sight`)."""
     return _point_in_sight(machine, icon_index(machine, name), name)
 
 
 def drive_point(machine, letter):
-    """...and of the drive icon bearing `letter` (two drives read alike: the letter in the ICONBLK tells them apart)."""
-    return _point_in_sight(machine, _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter), f"drive {letter}:")
+    """...and of the drive icon bearing `letter` (`drive_index`)."""
+    return _point_in_sight(machine, drive_index(machine, letter), f"drive {letter}:")
 
 
 def _is_selected(machine, index):
@@ -251,7 +256,7 @@ def icon_is_selected(machine, name):
 
 
 def drive_is_selected(machine, letter):
-    return _is_selected(machine, _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter))
+    return _is_selected(machine, drive_index(machine, letter))
 
 
 def top_window(machine):
@@ -516,10 +521,11 @@ def above(name):
 
 def past(name):
     """...and one past its right edge, inside its last row: where that box ends (a box grows right and down)."""
-    def point(machine):
-        x, y, width, height = _icon_box(machine, name)
-        return x + width + BOX_MARGIN, y + height - 1
-    return point
+    return lambda machine: _past_the_box(*_icon_box(machine, name))
+
+
+def _past_the_box(x, y, width, height):
+    return x + width + BOX_MARGIN, y + height - 1
 
 
 def rubber_box(from_point_of, to_point_of):
@@ -667,7 +673,7 @@ BOX_START_ABOVE = 3                     # how far above drive B:'s object a box 
 def above_drive(letter):
     """A point of the bare desktop just above the object of the drive icon bearing `letter`, at its left edge."""
     def point(machine):
-        x, y, _width, _height = box(machine.ram, desk_tree(machine), _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter))
+        x, y, _width, _height = box(machine.ram, desk_tree(machine), drive_index(machine, letter))
         return x, y - BOX_START_ABOVE
     return point
 
@@ -694,7 +700,7 @@ def drive_corner(letter):
     taller than its image and label, and this point lies on neither (a click objc_find gives the icon and gr_obfind's
     act_chkobj does not)."""
     def point(machine):
-        index = _the_one(machine, f"drive {letter}:'s", lambda _text, its: its == letter)
+        index = drive_index(machine, letter)
         x, y, _width, _height = box(machine.ram, desk_tree(machine), index)
         return x + DRIVE_CORNER_INSET, y + DRIVE_CORNER_INSET
     return point
@@ -1119,6 +1125,30 @@ CHAINS.update({
         (OPEN_SELECTION, SHOW_FILE, CLOSE_TO_THE_PARENT, OPEN_A_FOLDER)),
 })
 # ---- end of slice F3 stage 2's fix pass ----
+# ---- band 6 slice F3 stage 3's fix pass: TWO ARMS OF THE STAGE'S THREE NO CHAIN REACHED (review RS3's finding 1) ----
+# Esc typed with NO window open: hndl_kbd's Esc arm with win_ontop 0 (nothing read again). Drives A: and B: boxed, A:
+# dragged onto B:: fun_d2desk's walk of the selection meets the destination's own icon FIRST (the desktop's objects run
+# the trash, B:, A:) and skips it, then asks the copy of A: onto B: (the alert, Return: Cancel, its default). (B: and
+# the trash boxed, the trash dragged onto B:, TRIED AND NOT KEPT: the trash comes first, refused before B: is met.)
+# The box begins at A:'s object's corner, on neither its image nor its label: no bare desktop lies above A:, under the
+# menu bar.
+ESC_AT_THE_IDLE = "Esc typed at the desk's idle (no window open)"
+BOXED_A_ONTO_B = "drives A: and B: boxed, drive A: dragged onto drive B:, Return"
+
+
+def past_drive(letter):
+    """...and a point one past the right edge of the drive icon bearing `letter`, inside its last row: where a box round
+    it ends."""
+    return lambda machine: _past_the_box(*box(machine.ram, desk_tree(machine), drive_index(machine, letter)))
+
+
+CHAINS.update({
+    ESC_AT_THE_IDLE: Chain(INF_ICONS, typed("Esc", SCAN_ESCAPE), (KEY_HANDLER,)),
+    BOXED_A_ONTO_B: Chain(INF_ICONS, (*rubber_box(drive_corner("A"), past_drive("B")),
+                                      *dragged("drive A:'s icon", drive("A"), "drive B:", drive("B")), *RETURN),
+                          (RUBBER_BOX_BINDING, ICON_DRAG, addrs.AES_ROM_DESK_FUN_D2DESK)),
+})
+# ---- end of slice F3 stage 3's fix pass ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK

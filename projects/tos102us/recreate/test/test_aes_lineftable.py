@@ -118,6 +118,8 @@ FLIPPED_AT_F3 = {
     "S2B": (10, 10, 0),     # unit J's seven, pro_run, do_wopen, cnx_get; none entered (UNENTERED's ten)
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 (fun_d2desk, fun_drag, hndl_kbd) ----
+    "S3": (3, 3, 1),        # unit H's last two, unit K's hndl_kbd; 1 entered (hndl_kbd, by its idle keys' plain rows);
+                            # fun_d2desk and fun_drag in UNENTERED
     # ---- end of stage 3's ----
 }
 FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values())
@@ -716,7 +718,9 @@ UNENTERED = {
         "DO_DIROPEN", "DO_DOPEN", "DO_FOPEN", "DESK_DO_FORMAT", "CLOSE_WINDOW", "CLOSE_FOLDER", "FUN_CLOSE", "PRO_RUN", "DO_WOPEN",
         "CNX_GET")},
     # ---- end of stage 2 B's ----
-    # ---- band 6 slice F3, stage 3 ----
+    # ---- band 6 slice F3, stage 3 ---- THE TWO FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`; hndl_kbd's idle key's plain row enters its own)
+    **{f"AES_ROM_DESK_FUN_{driver}": [INTERRUPTED] for driver in ("D2DESK", "DRAG")},
     # ---- end of stage 3's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
@@ -937,13 +941,13 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     # (units C, F, E: FLIPPED at band 6 slice F3, stage 1 — `$fde844` with them, by its operand: N18)
     # ---- end of group G1's wave-2 ----
     # ---- band 6 wave 2, group G2 (units H, G, M) ----
-    ("aes_deskfun", "UNIT_H_WAVE_2_HELD_AT_F3"): 2,       # fun_d2desk, fun_drag (stage 3); the nine flipped at F3 stage 2
+    ("aes_deskfun", "UNIT_H_WAVE_2_HELD_AT_F3"): 0,       # none: the nine flipped at F3 stage 2, fun_d2desk and fun_drag at stage 3
     # (units G, M: FLIPPED at band 6 slice F3, stage 1)
     # ---- end of group G2's wave-2 ----
     # ---- band 6 wave 2, group G3 (units I, J, K, L) ----
     ("aes_deskwin", "UNIT_I_WAVE_2_HELD_AT_F3"): 0,      # none: desk_clear, desk_verify flipped at F3 stage 1, pro_run, do_wopen at stage 2
     ("aes_desksupp", "UNIT_J_WAVE_2_HELD_AT_F3"): 0,     # none: the seven flipped at F3 stage 2
-    ("aes_desktop", "UNIT_K_WAVE_2_HELD_AT_F3"): 1,      # hndl_kbd (stage 3); cnx_get flipped at F3 stage 2
+    ("aes_desktop", "UNIT_K_WAVE_2_HELD_AT_F3"): 0,      # none: cnx_get flipped at F3 stage 2, hndl_kbd at stage 3
     ("aes_deskview", "UNIT_L_WAVE_2_HELD_AT_F3"): 0,     # none: the five flipped at F3 stage 1
     # ---- end of group G3's wave-2 ----
     # ---- band 6 wave 2, group G4 (units A, B) ----

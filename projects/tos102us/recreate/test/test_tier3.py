@@ -3497,8 +3497,8 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {
         BENCH_BLOB: (1102608, 1030164), SHIPPED_BLOB: (1102608, 1019284)},
-    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1147728), SHIPPED_BLOB: (1237428, 1133966)},
-    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1227922), SHIPPED_BLOB: (1331494, 1213214)},
+    MN_DO_ACROSS_THE_DESK_S_TURN: {BENCH_BLOB: (1237428, 1147646), SHIPPED_BLOB: (1237428, 1133884)},
+    MN_DO_ACROSS_TWO_TURNS: {BENCH_BLOB: (1331494, 1227758), SHIPPED_BLOB: (1331494, 1213050)},
     "aes_gr_wait, the pixel the mouse is on, left by the mouse": {BENCH_BLOB: (212120, 203296), SHIPPED_BLOB: (212120, 201634)},
     "aes_gr_rubbox, the corner at the mouse; stretched, then released": {BENCH_BLOB: (297138, 277612), SHIPPED_BLOB: (297138, 275082)},
     "aes_gr_dragbox, held at the mouse; moved, then released": {BENCH_BLOB: (275878, 256388), SHIPPED_BLOB: (275878, 253996)},
@@ -3582,7 +3582,10 @@ for _pinned in ((test_desk_supp.DOOR_USERS_PRICED_WAVE_2, test_desk_supp.DOOR_US
     DOOR_USERS_PRICED.update(_pinned[0])
     DOOR_USERS_WHOLE_RUN.update(_pinned[1])
 # ---- end of stage 2 B's ----
-# ---- band 6 slice F3, stage 3 ----
+# ---- band 6 slice F3, stage 3 ---- (fun_d2desk's and fun_drag's door users in `test_desk_fun.py`'s DRIVER_* dicts, read
+# above; hndl_kbd's Esc, `test_desk_top.py`'s `*_STAGE_3`)
+DOOR_USERS_PRICED.update(test_desk_top.DOOR_USERS_PRICED_STAGE_3)
+DOOR_USERS_WHOLE_RUN.update(test_desk_top.DOOR_USERS_WHOLE_RUN_STAGE_3)
 # ---- end of stage 3's ----
 
 

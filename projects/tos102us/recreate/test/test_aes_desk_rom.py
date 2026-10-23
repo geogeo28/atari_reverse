@@ -428,6 +428,9 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 slice F3 stage 2's fix pass (a folder's acts in a window restored after a show) ----
     "band 6 slice F3 stage 2's fix pass": (2, 18),     # the long file shown, AUTO opened; INSIDE.TXT shown, File > Close
     # ---- end of slice F3 stage 2's fix pass ----
+    # ---- band 6 slice F3 stage 3's fix pass (two arms of the stage's three no chain reached) ----
+    "band 6 slice F3 stage 3's fix pass": (2, 8),      # Esc at the idle, no window; A: and B: boxed, A: dragged onto B:
+    # ---- end of slice F3 stage 3's fix pass ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -541,6 +544,9 @@ REACHED_BY_BLOCK = {
     # ---- band 6 slice F3 stage 2's fix pass ----
     "band 6 slice F3 stage 2's fix pass": 0,
     # ---- end of slice F3 stage 2's fix pass ----
+    # ---- band 6 slice F3 stage 3's fix pass ----
+    "band 6 slice F3 stage 3's fix pass": 0,
+    # ---- end of slice F3 stage 3's fix pass ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 

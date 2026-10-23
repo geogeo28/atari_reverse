@@ -131,7 +131,7 @@ import aes_event
 import case
 import layouts
 import vdi
-from aes_desk import SCAN_A, SCAN_RETURN
+from aes_desk import BOXED_A_ONTO_B, SCAN_A, SCAN_RETURN
 
 RETURN_KEY, RETURN_TWICE = fun.keys_typed(SCAN_RETURN), fun.keys_typed(SCAN_RETURN, SCAN_RETURN)
 TYPED_A, TYPED_A_TAKEN = fun.keys_typed(SCAN_A, SCAN_RETURN), fun.keys_typed(SCAN_A, SCAN_RETURN, SCAN_RETURN)
@@ -304,6 +304,9 @@ CASES_WAVE_2 = (
     Case2(fun.FUN_D2DESK, D2DESK_TRASH, ALERT_OK_CLICKED), Case2(fun.FUN_D2DESK, D2DESK_COPY, RETURN_KEY),
     Case2(fun.FUN_D2DESK, D2DESK_COPY, ALERT_OK_CLICKED, budget=CLICKED_COPY_INSNS),
     Case2(fun.FUN_D2DESK, D2DESK_ICON_ON_ICON, RETURN_KEY),
+    # (stage 3's fix pass) the destination among the selection: A: and B: boxed, A: onto B: — B:'s own icon met first
+    # and skipped, then the copy of A: asked (Return: Cancel)
+    Case2(fun.FUN_D2DESK, BOXED_A_ONTO_B, RETURN_KEY),
     Case2(fun.FUN_D2DESK, D2DESK_COPY, RETURN_KEY, why="the destination the cartridge's icon: refused",
           laid=("drive B:'s icon typed the cartridge's", _typed_cartridge(_of_object(0)))),
     Case2(fun.FUN_D2DESK, D2DESK_COPY, RETURN_KEY, why="a source the cartridge's icon: refused as the trash is",
@@ -435,7 +438,7 @@ def test_a_driver_from_its_arrival_is_the_rom_s(name):
         assert made == fun.in_place(_arrival2(each), each.wake.receptions(each.chain) if each.wake else ()).functions
 
 
-ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 31, 19
+ARRIVALS_WAVE_2, CLASSES_WAVE_2 = 32, 19
 
 
 def test_every_driver_has_a_case_at_an_arrival_of_its_own():
@@ -475,17 +478,15 @@ def test_fun_disk_s_emptied_arrival_finds_no_file():
     assert replay.functions[-1] == fun._dd.FSFIRST and replay.answers[-1] == EFILNF & aes.LONG_MASK
 
 
-# ---- FLIPPED (band 6 slice F3, stage 2, author A): the drivers but fun_d2desk and fun_drag, HELD UNBOUND to stage 3 ----
-def test_the_drivers_are_flipped_and_two_held_unbound(blob):
-    """THE FLIP PIN of the nine (`aes_deskarrive.flipped`: each core called by its own thunk of the table, its entry
-    ours through it) and THE UNBOUND PIN of fun_d2desk and fun_drag (`aes_deskarrive.unbound`: their entries the ROM's,
-    no registry row, no function outside the unbound desk refers to a held core) — held to stage 3
-    (`aes_deskfun.UNIT_H_WAVE_2_HELD_AT_F3`)."""
+# ---- FLIPPED (band 6 slice F3): the nine drivers at stage 2 (author A), fun_d2desk and fun_drag at stage 3 ----------------
+def test_the_drivers_are_flipped(blob):
+    """THE FLIP PIN of the eleven (`aes_deskarrive.flipped`: each core called by its own thunk of the table, its entry
+    ours through it); none held (`aes_deskfun.UNIT_H_WAVE_2_HELD_AT_F3`)."""
+    assert not fun.UNIT_H_WAVE_2_HELD_AT_F3
     da.flipped(blob, fun.UNIT_H_WAVE_2_FLIPPED)
-    da.unbound(blob, fun.UNIT_H_WAVE_2_HELD_AT_F3)
 
 
-# ---- band 6 slice F3, stage 2: THE DRIVERS' ROWS -------------------------------------------------------------------------
+# ---- band 6 slice F3, stages 2 and 3: THE DRIVERS' ROWS (fun_d2desk's and fun_drag's since stage 3) -----------------------
 # EVERY CASE AT AN ARRIVAL OF A FLIPPED DRIVER REGISTERED (`aes_deskarrive.register_row`) OVER ITS OWN STAGING — the
 # orchestrator's ruling (c), stage 1's row kind: the arrival's megabyte whole but the harness's window, where GEMDOS is
 # reached the ROM's own run in place laid over it as the copy engine's recorder's script (`aes_deskdir.replayed`,
@@ -566,6 +567,27 @@ DRIVER_DOOR_USERS_PRICED = {
         ((144998, 230448), (124262, 196668), 7, (0, 0, 0)),
     "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
         ((1309510, 1898632), (1256326, 1810626), 22, (0, 0, 0)),
+    # ---- band 6 slice F3, stage 3 ----
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged to the trash, Return; the alert's OK clicked":
+        ((211748, 318988), (161926, 241246), 9, (0, 0, 0)),
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged onto drive B:, Return; Return":
+        ((206104, 302544), (185368, 268764), 7, (0, 0, 0)),
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged onto drive B:, Return; the alert's OK clicked":
+        ((563342, 749178), (513520, 671436), 9, (0, 0, 0)),
+    "aes_desk_fun_d2desk, arrival 0 of the trash dragged onto drive A:, Return; Return":
+        ((144508, 228138), (123772, 194358), 7, (0, 0, 0)),
+    # (stage 3's fix pass) the destination among the selection
+    "aes_desk_fun_d2desk, arrival 0 of drives A: and B: boxed, drive A: dragged onto drive B:, Return; Return":
+        ((207738, 305836), (187002, 272056), 7, (0, 0, 0)),
+    "aes_desk_fun_drag, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        ((885884, 1333572), (853080, 1278668), 17, (0, 0, 0)),
+    "aes_desk_fun_drag, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        ((873762, 1324102), (811872, 1225236), 19, (0, 0, 0)),
+    "aes_desk_fun_drag, arrival 0 of drive A: dragged onto drive B:, Return; Return":
+        ((206178, 303130), (185442, 269350), 7, (0, 0, 0)),
+    "aes_desk_fun_drag, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
+        ((145198, 231034), (124462, 197254), 7, (0, 0, 0)),
+    # ---- end of stage 3's ----
 }
 DRIVER_DOOR_USERS_WHOLE_RUN = {
     "aes_desk_fun_rebld, arrival 0 of file: File > Show Info, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
@@ -612,6 +634,27 @@ DRIVER_DOOR_USERS_WHOLE_RUN = {
         {"bench": (1319720, 1253584), "bench_shipped": (1319720, 1247230)},
     "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
         {"bench": (7802976, 7372224), "bench_shipped": (7802976, 7345458)},
+    # ---- band 6 slice F3, stage 3 ----
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged to the trash, Return; the alert's OK clicked":
+        {"bench": (1672810, 1594234), "bench_shipped": (1672810, 1581666)},
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged onto drive B:, Return; Return":
+        {"bench": (1805486, 1738198), "bench_shipped": (1805486, 1726022)},
+    "aes_desk_fun_d2desk, arrival 0 of drive A: dragged onto drive B:, Return; the alert's OK clicked":
+        {"bench": (3958430, 3863016), "bench_shipped": (3958430, 3835778)},
+    "aes_desk_fun_d2desk, arrival 0 of the trash dragged onto drive A:, Return; Return":
+        {"bench": (1314226, 1249928), "bench_shipped": (1314226, 1243516)},
+    # (stage 3's fix pass) the destination among the selection
+    "aes_desk_fun_d2desk, arrival 0 of drives A: and B: boxed, drive A: dragged onto drive B:, Return; Return":
+        {"bench": (1810806, 1741878), "bench_shipped": (1810806, 1729724)},
+    "aes_desk_fun_drag, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
+        {"bench": (5310600, 4960704), "bench_shipped": (5310600, 4951744)},
+    "aes_desk_fun_drag, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
+        {"bench": (5323500, 4970174), "bench_shipped": (5323500, 4960896)},
+    "aes_desk_fun_drag, arrival 0 of drive A: dragged onto drive B:, Return; Return":
+        {"bench": (1806072, 1738272), "bench_shipped": (1806072, 1726096)},
+    "aes_desk_fun_drag, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
+        {"bench": (1320306, 1253782), "bench_shipped": (1320306, 1247430)},
+    # ---- end of stage 3's ----
 }
 DRIVER_NO_DOOR_PREMISES = {
     "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
@@ -625,7 +668,10 @@ DRIVER_NO_DOOR_WHOLE_RUN = {
     "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
         {"bench": (530436, 495000), "bench_shipped": (530436, 495538)},
 }
-DRIVER_ROWS_MADE, DRIVER_BUDGETED = 23, 14      # every case at an arrival of the nine flipped (none LAID); those past the margin
+# every case at an arrival of the eleven flipped (none LAID) — the nine's 23 (14 budgeted) and, since stage 3, fun_d2desk's
+# 4 (5 since its fix pass: the destination among the selection) and fun_drag's 4 (3 budgeted: the disk copy OK'd,
+# fun_drag's copy and delete); those past the margin
+DRIVER_ROWS_MADE, DRIVER_BUDGETED = 32, 17
 
 
 def test_every_driver_case_at_an_arrival_is_a_row_and_its_pins_are_the_rows():

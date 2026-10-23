@@ -31,12 +31,12 @@ PINNED = {
         "bench_shipped": ((233428, 337824, 11740),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the next wait; the menu left, a click off it": {
-        "bench": ((41658, 55780, 0), (40876, 54798, 0),),
-        "bench_shipped": ((38662, 55780, 2140), (37876, 54798, 2140),),
+        "bench": ((41786, 55990, 0), (41004, 55008, 0),),
+        "bench_shipped": ((38790, 55990, 2140), (38004, 55008, 2140),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); then a title, the menu left, a click off it": {
-        "bench": ((41658, 55780, 0),),
-        "bench_shipped": ((38662, 55780, 2140),),
+        "bench": ((41786, 55990, 0),),
+        "bench_shipped": ((38790, 55990, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
         "bench": ((274618, 388404, 0),),

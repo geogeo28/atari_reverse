@@ -36,9 +36,9 @@ SIGNATURES_WAVE_2 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_2.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_H_WAVE_2 = tuple(SIGNATURES_WAVE_2)
-# FLIPPED at band 6 slice F3 (stage 2) but two: fun_d2desk and fun_drag HELD to stage 3 (each calls unit I's pro_run,
-# flipped at stage 2 by its other author — the cut's split).
-UNIT_H_WAVE_2_HELD_AT_F3 = (FUN_D2DESK, FUN_DRAG)
+# FLIPPED at band 6 slice F3: the nine at stage 2, fun_d2desk and fun_drag at stage 3 (each calls unit I's pro_run,
+# flipped at stage 2 by its other author — the cut's split) — the unit whole, none held.
+UNIT_H_WAVE_2_HELD_AT_F3 = ()
 UNIT_H_WAVE_2_FLIPPED = tuple(name for name in UNIT_H_WAVE_2 if name not in UNIT_H_WAVE_2_HELD_AT_F3)
 # THE DRIVERS THAT REACH GEMDOS (pn_active's searches, Dcreate, the copy engine's calls) take it, on both shores, from
 # unit C's recorder replaying the ROM's own run in place (`aes_deskdir`'s ENGINE, `in_place`, `replayed` — group G1's):
