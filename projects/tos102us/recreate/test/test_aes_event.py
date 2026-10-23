@@ -2213,7 +2213,8 @@ def _named_rows_declaring_a_budget():
     return {aes_switching.row_name(row) for row in rows}
 
 
-NAMED_ROWS_DECLARING_A_BUDGET = 43      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
+NAMED_ROWS_DECLARING_A_BUDGET = 47      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
+                                        # + 4 (P7: unit J's parked arrivals under their cases' budgets)
 
 
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
@@ -4753,9 +4754,10 @@ ROWS_THAT_SWITCH = {
     "aes_win_top": 2, "aes_zoom_closed": 2,
     # ---- end of group G1's ----
     # ---- band 6 slice F2, group G2 (units A, K, J) ----
-    # units A, K and J flipped (`test_desk_app.py`, `test_desk_top.py`, `test_desk_supp.py`): 36 rows that switch, none a door user's
+    # units A, K and J flipped (`test_desk_app.py`, `test_desk_top.py`, `test_desk_supp.py`): 38 rows that switch, none a door user's
+    # (drive_check's two arrivals holding its own park since band 6 slice P7)
     "aes_app_tran": 2, "aes_app_rdicon": 2, "aes_app_blddesk": 4, "aes_men_list": 19, "aes_do_viewmenu": 4, "aes_cnx_put": 2,
-    "aes_drive_check": 3,
+    "aes_drive_check": 5,
     # ---- end of group G2's ----
     # ---- band 6 slice F2, group G3 (units B, G) ---- (`test_desk_act.py`: 9, none a door user's)
     "aes_gr_obfind": 6, "aes_gr_plns": 3,
@@ -4794,13 +4796,14 @@ ROWS_THAT_SWITCH = {
     "aes_desk_fun_win2win": 1, "aes_desk_fun_win2desk": 2, "aes_desk_fun_disk": 2, "aes_desk_fun_desk2win": 2, "aes_app_save": 4,
     # ---- end of stage 2 A's ----
     # ---- band 6 slice F3, stage 2, author B ---- (`test_desk_supp.py`: unit J's 17 door users', over GEMDOS replayed but the
-    # format's and the cartridge's, 14 under their declared budgets — the parked class NOT A ROW; since the stage's third
-    # fix pass do_fopen's two, close_folder's and fun_close's folder arm in a window restored after a show, the BIOS
-    # park named by nature where the ROM's run stores it; `test_desk_win.py`: pro_run's and do_wopen's 8,
+    # format's and the cartridge's, 14 under their declared budgets; since the stage's third fix pass do_fopen's two,
+    # close_folder's and fun_close's folder arm in a window restored after a show, the BIOS park named by nature where the
+    # ROM's run stores it; since band 6 slice P7 the parked class's five, 4 under their budgets — 26 in all, 18 budgeted;
+    # `test_desk_win.py`: pro_run's and do_wopen's 8,
     # do_wopen's 2 door users under their budgets, 6 with no
     # door; `test_desk_top.py`: cnx_get's 5 door users under their budgets)
-    "aes_do_diropen": 7, "aes_do_dopen": 3, "aes_desk_do_format": 1, "aes_close_window": 3, "aes_fun_close": 4, "aes_pro_run": 3,
-    "aes_do_wopen": 5, "aes_cnx_get": 5, "aes_do_fopen": 2, "aes_close_folder": 1,
+    "aes_do_diropen": 7, "aes_do_dopen": 4, "aes_desk_do_format": 1, "aes_close_window": 3, "aes_fun_close": 5, "aes_pro_run": 3,
+    "aes_do_wopen": 5, "aes_cnx_get": 5, "aes_do_fopen": 4, "aes_close_folder": 2,
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ----
     # ---- end of stage 3's ----
@@ -4891,10 +4894,12 @@ BY_NATURE_CENSUS = {
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
                            # ---- band 6 slice F2, group G2 (units A, K, J) ---- app_blddesk's every row, drive_check's three
                            # — and (band 6 slice F3, stage 2, author B) do_dopen's two under drive_check's floppy replayed;
-                           # (its third fix pass) do_fopen's two, close_folder's and fun_close's folder arm after a show
+                           # (its third fix pass) do_fopen's two, close_folder's and fun_close's folder arm after a show;
+                           # (band 6 slice P7) the seven arriving with drive_check's own park held: drive_check's two,
+                           # do_dopen's, do_fopen's two, close_folder's and fun_close's
                            THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4},
-                           THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 3, "aes_do_dopen": 2, "aes_do_fopen": 2, "aes_close_folder": 1,
-                                                  "aes_fun_close": 1},
+                           THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 5, "aes_do_dopen": 3, "aes_do_fopen": 4, "aes_close_folder": 2,
+                                                  "aes_fun_close": 2},
                            # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
@@ -4975,10 +4980,42 @@ STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS = {
 }
 
 
+# ...AND A ROW'S OWN BYTES STORED WITH THE VALUE ITS MACHINE HOLDS (band 6 slice P7, the orchestrator's ruling: F3 stage 2's
+# ruling (a), stores not changes, carried to this census): the arrivals whose machine already holds drive_check's own BIOS
+# park (`test_desk_supp.PARK_HELD_AT_ARRIVAL`, `PARK_HELD_WAVE_2`, each read off its arrival) — the ROM's run stores it
+# again, equal. A CLASS BACKED BY THE STORE, stale-guarded both ways (`_vet_a_row_s_own`): a row of it is held to the ROM
+# run's WRITE LEDGER storing every byte it names (`aes_switching.its_own_unstored`, the companion's own spelling) and to
+# changing none of them; a row outside it, to changing one. So no row joins it by a value comparison alone.
+def _a_row_s_own_stored_unchanged():
+    import aes_switching
+    import test_desk_supp
+    return frozenset(aes_switching.row_name(row) for row in (*(test_desk_supp.ROWS[chain] for chain in test_desk_supp.PARK_HELD_AT_ARRIVAL),
+                                                             *(test_desk_supp.ROWS_WAVE_2[name] for name in test_desk_supp.PARK_HELD_WAVE_2)))
+
+
+def _vet_a_row_s_own(name, row, staged, the_rom_s, stored_unchanged):
+    """A ROW'S OWN by-nature spans (`row.also_dropped`) held to the ROM's scheduled run `the_rom_s` over `staged`: each
+    dropped where the run CHANGES a byte of it — or, on a row named STORED UNCHANGED (`stored_unchanged`), changed
+    nowhere and every byte STORED, read off the run's write ledger, never off the value alone."""
+    import aes_switching
+    stored_unchanged_here = name in stored_unchanged
+    for lo, hi, _why in row.also_dropped:
+        changed_any = any(the_rom_s.memory[at] != the_rom_s.started[at] for at in range(lo, hi))
+        if stored_unchanged_here:
+            assert not changed_any, f"{name}: its own by-nature bytes are no longer stored unchanged — the exemption is stale"
+        else:
+            assert changed_any, f"{name}: its own by-nature drop, of which the ROM's run changes nothing"
+    if stored_unchanged_here:
+        unstored = aes_switching.its_own_unstored(row, staged, the_rom_s)
+        assert not unstored, (f"{name}: named stored unchanged, and never stored by the ROM's run: "
+                              f"{[f'{at:#x}' for at in unstored]}")
+
+
 def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_the_census_says_which():
     """THE SWITCHING ROWS' LAYER OF THE ONE CENSUS, held to AN INDEPENDENT SPELLING of its own kind: the ROM's
     scheduled run of each registered row over its UNSETTLED machine (`aes_switch.scheduled` — not the registrar's
-    kept derivation, nor its replay's ledger) and what that run CHANGED in the windows that differ by nature. Every
+    kept derivation, nor its replay's ledger: but for the rows named stored unchanged, `_vet_a_row_s_own`) and what that
+    run CHANGED in the windows that differ by nature. Every
     such byte lies in a drop the registry holds for the row — but the dispatcher's own save word, which both builds
     park alike and the row compares (all of it but the X flag, on the two rows that declare it) — every drop holds
     one, and which routines' rows drop which kind is the table's.
@@ -4990,10 +5027,11 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     import aes_takeover
     import test_boot_snapshot  # noqa: F401  (every battery registered)
     registered, census = case.tier3_dropped(), {}
+    stored_unchanged = _a_row_s_own_stored_unchanged()
     assert aes_event.SWITCHING_ROWS, "the premise: the batteries register rows that switch"
     for name, held in aes_event.SWITCHING_ROWS.items():
         row = held.row
-        staged = aes.staged(row.name, row.arguments, merge_pokes(row.machine(), aes_event.savptr_in_the_band()))
+        staged = aes_switching._staged(row)
         the_rom_s = aes_switching.scheduled(row, staged)
         uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
         kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
@@ -5018,11 +5056,10 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             census.setdefault(THE_DESK_S_PARKED, collections.Counter())[routines.core_symbol(row.name)] += 1
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
         # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
-        # kind, dropped only where the ROM's run changes it.
+        # kind, dropped only where the ROM's run changes it, but on THE ROWS NAMED STORED UNCHANGED (above).
+        _vet_a_row_s_own(name, row, staged, the_rom_s, stored_unchanged)
         for lo, hi, why in row.also_dropped:
             assert (lo, hi, why) in registered[name], f"{name}: its own by-nature bytes are not among its drops"
-            assert any(the_rom_s.memory[at] != the_rom_s.started[at] for at in range(lo, hi)), (
-                f"{name}: its own by-nature drop, of which the ROM's run changes nothing")
             census.setdefault(A_ROW_S_OWN + why.split(":")[0], collections.Counter())[routines.core_symbol(row.name)] += 1
         drops = [(lo, hi) for lo, hi, why in registered[name]
                  if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses
@@ -5064,6 +5101,30 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
         f"the rows that switch drop {census} — a row NEWLY under a bracket is dropped with no ruling: write it into "
         f"BY_NATURE_CENSUS with the reason it is right")
+
+
+@pytest.mark.parametrize("held_by", ("a byte named and never stored", "a row whose run changes its park"))
+def test_the_stored_unchanged_class_is_refused_off_its_ledger_and_off_a_change(held_by):
+    """THE CLASS STORED UNCHANGED REFUSES, standing (`_vet_a_row_s_own`): every registered row passes it, so only a
+    dishonest one shows it can refuse. A class row's park name widened one byte down onto `$95ad`, which its ROM run
+    never stores and so leaves EQUAL — refused off the WRITE LEDGER (a class read off the value alone passes it); and a
+    row whose ROM run CHANGES the park (drive_check over `A: File > Open`) joined to the class — refused as stale."""
+    import aes_switching
+    import test_desk_supp
+    never_stored = held_by.endswith("never stored")
+    row = test_desk_supp.ROWS[test_desk_supp.PARK_HELD_AT_ARRIVAL[0] if never_stored else "A: File > Open"]
+    staged = aes_switching._staged(row)
+    the_rom_s = aes_switching.scheduled(row, staged)
+    name = aes_switching.row_name(row)
+    if never_stored:
+        _vet_a_row_s_own(name, row, staged, the_rom_s, {name})     # the premise: the honest class row passes
+        never = test_desk_supp.NEVER_STORED
+        row = row._replace(also_dropped=((never, never + 1, "widened onto a byte the ROM never stores"), *row.also_dropped))
+        refusal = f"never stored by the ROM's run: ['{never:#x}']"
+    else:
+        refusal = "the exemption is stale"
+    with pytest.raises(AssertionError, match=re.escape(refusal)):
+        _vet_a_row_s_own(name, row, staged, the_rom_s, {name})
 
 
 def _the_qpb_addresses_dropped(name, drops, the_rom_s):
@@ -5545,8 +5606,10 @@ SLOTS_HELD_WHERE_PARKED = {
        for routine in ("do_diropen", "do_dopen")},
     "aes_desk_do_format": ("AES_DESK_SUPP_FRAME", "AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
     "aes_close_window": ("AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME"),
-    "aes_fun_close": ("AES_DESK_FUN_CLOSE_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME",
-                      "AES_DESK_VIEW_FRAME"),
+    # (fun_close's union in the order its rows first hold each slot: moved at band 6 slice P7 by its folder arm's parked
+    # row, the set unchanged)
+    "aes_fun_close": ("AES_DESK_FUN_CLOSE_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_SUPP_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME",
+                      "AES_DESK_OPEN_FRAME"),
     "aes_cnx_get": ("AES_DESK_CNX_GET_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_OPEN_FRAME"),
     "aes_do_wopen": ("AES_DESK_BIND_FRAME", "AES_DESK_WIN_FRAME", "AES_DESK_OPEN_FRAME", "AES_ACT_CHG_RECT"),
     # (the stage's third fix pass: do_fopen's and close_folder's rows in a window restored after a show)

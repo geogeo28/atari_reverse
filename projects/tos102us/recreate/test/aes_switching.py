@@ -1110,14 +1110,25 @@ def _its_own_by_nature(row, staged, reference):
     same (the orchestrator's ruling at band 6 slice F3 stage 2's third fix pass: the BIOS door's park, `$fe1bb2` over
     the viewer's `$fed7de`, stores `$95af`'s `$fe` again) — so the census asks the ledger, never whether the value
     changed."""
-    named = frozenset(at for lo, hi, _why in row.also_dropped for at in range(lo, hi))
+    named = _its_own_bytes(row)
     if not named:
         return named
-    _watch, _final, writes = _replay_of(row, staged, reference)
-    unstored = sorted(at for at in named if at not in writes)
+    unstored = its_own_unstored(row, staged, reference)
     assert not unstored, (
         f"{row_name(row)}: named by nature, and never stored by the ROM's run: {[f'{at:#x}' for at in unstored]}")
     return named
+
+
+def _its_own_bytes(row):
+    return frozenset(at for lo, hi, _why in row.also_dropped for at in range(lo, hi))
+
+
+def its_own_unstored(row, staged, reference):
+    """The bytes `row` names as its own by nature that the ROM's run `reference` over `staged` NEVER STORES, in order —
+    read off the write ledger of its replay (`_replay_of`), never off whether a value changed. The one spelling of a
+    store for both censuses: the companion's (`_its_own_by_nature`) and the switching rows' (`test_aes_event`)."""
+    _watch, _final, writes = _replay_of(row, staged, reference)
+    return sorted(at for at in _its_own_bytes(row) if at not in writes)
 
 
 def _vetted_qpbs(row, made, image):

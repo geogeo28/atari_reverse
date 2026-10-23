@@ -97,24 +97,23 @@ def test_no_caller_in_the_rom_reads_what_drive_check_leaves_in_d0():
 # named by nature (`aes_desksupp.BIOS_DOOR_PARKED`); its classes stay Tier 1's. Its pins — DATA, measured by the table's
 # own measurement (`aes_switching.priced_by_the_table`) and each blob's second differential (`aes_switching.measured_on`)
 # from the rows as registered; re-pinned from a recorded run, never by hand.
-#   * NO ROW, by name (`NOT_A_ROW`): the two arrivals whose machine ALREADY HOLDS drive_check's own park in AES_BIOS_RETURN
-#     (the chain's earlier drive_check left it: `RWABS_BACK`) — the ROM's run stores the value the machine holds. Until
-#     band 6 slice F3 stage 2's third fix pass the census asked for a CHANGED value and refused the name there; it reads
-#     the ROM run's STORES since (`aes_switching._its_own_by_nature`, the orchestrator's ruling (a)), and both arrivals
-#     then register (MEASURED there: the companion and both blobs' second differentials pass) — held NOT A ROW all the
-#     same, unregistered: the orchestrator ruled at F3 stage 2 that they register in a slice of their own (new rows,
-#     outside that fix pass, which registered the four arrivals off the park alone). Tier 1 holds both cases; the three
-#     other arrivals are rows, at the same price.
-NOT_A_ROW = {chain: "AES_BIOS_RETURN already holds drive_check's own park, which the ROM's run stores again: registrable "
-                    "under the stores census (measured), unregistered, held for a slice of their own"
-             for chain in ("file: File > Show Info, Return", "window: A: opened again (two windows)")}
-ROWS = {chain: ds.register_row(da.arrival(ds.DRIVE_CHECK, chain)) for chain in CHAINS if chain not in NOT_A_ROW}
+#   * THE PARK HELD AT THE ARRIVAL (`PARK_HELD_AT_ARRIVAL`): the two arrivals whose machine ALREADY HOLDS drive_check's
+#     own park in AES_BIOS_RETURN (the chain's earlier drive_check left it: `RWABS_BACK`) — the ROM's run stores the value
+#     the machine holds, a store all the same: the census reads the ROM run's STORES (`aes_switching._its_own_by_nature`,
+#     since band 6 slice F3 stage 2's third fix pass), so both are rows naming the park as the other three do. NOT A ROW
+#     until band 6 slice P7 registered them (the orchestrator's ruling at F3 stage 2: a slice of their own).
+PARK_HELD_AT_ARRIVAL = ("file: File > Show Info, Return", "window: A: opened again (two windows)")
+ROWS = {chain: ds.register_row(da.arrival(ds.DRIVE_CHECK, chain)) for chain in CHAINS}
 NO_DOOR_PREMISES = {
     "aes_drive_check, arrival 0 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
     "aes_drive_check, arrival 0 of A: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
     "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_drive_check, arrival 0 of file: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
+    "aes_drive_check, arrival 0 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         ((), 0, 0xae5e, (0xae5e, 0xae5e), None, ()),
 }
 NO_DOOR_PRICED = {
@@ -124,6 +123,10 @@ NO_DOOR_PRICED = {
         ((15544, 23356), None, None, (0, 0, 0)),
     "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         ((15544, 23356), None, None, (0, 0, 0)),
+    "aes_drive_check, arrival 0 of file: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((15544, 23356), None, None, (0, 0, 0)),
+    "aes_drive_check, arrival 0 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((15544, 23356), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     "aes_drive_check, arrival 0 of A: File > Open; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
@@ -132,13 +135,17 @@ NO_DOOR_WHOLE_RUN = {
         {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
     "aes_drive_check, arrival 0 of A: opened; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
+    "aes_drive_check, arrival 0 of file: File > Show Info, Return; GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
+    "aes_drive_check, arrival 0 of window: A: opened again (two windows); GEMDOS SCRIPTED: band 5's recording trap answers the ROM's own run's answers; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (83132, 76728), "bench_shipped": (83132, 76736)},
 }
 
 
 def test_every_case_at_an_arrival_is_a_row_that_switches_with_no_door_and_its_pins_are_the_rows():
     import aes_switching
     names = {aes_switching.row_name(row) for row in ROWS.values()}
-    assert len(ROWS) == len(CHAINS) - len(NOT_A_ROW) == 3 and all(row.door is None and row.also_dropped == ds.BIOS_DOOR_PARKED for row in ROWS.values())
+    assert len(ROWS) == len(CHAINS) == 5 and all(row.door is None and row.also_dropped == ds.BIOS_DOOR_PARKED for row in ROWS.values())
     assert names == set(NO_DOOR_PREMISES) == set(NO_DOOR_PRICED) == set(NO_DOOR_WHOLE_RUN)
 
 
@@ -158,13 +165,13 @@ def test_the_census_refuses_a_park_name_widened_onto_a_byte_the_rom_s_run_never_
         aes_switching.companion(widened)
 
 
-@pytest.mark.parametrize("chain", NOT_A_ROW)
-def test_a_case_with_no_row_arrives_with_drive_check_s_own_park_in_the_bios_return(chain):
-    """WHY THERE IS NO ROW (`NOT_A_ROW`), READ OFF THE ARRIVAL: AES_BIOS_RETURN holds the return of drive_check's own BIOS
-    door call already — and on every row's arrival it holds another."""
-    held = lambda arrived: case.long_in(arrived.boot.ram, aes.AES_BIOS_RETURN) & da.BUS
-    assert held(da.arrival(ds.DRIVE_CHECK, chain)) == ds.RWABS_BACK
-    assert all(held(da.arrival(ds.DRIVE_CHECK, other)) != ds.RWABS_BACK for other in CHAINS if other not in NOT_A_ROW)
+def test_the_rows_arriving_with_drive_check_s_own_park_in_the_bios_return_are_the_class_s():
+    """THE CLASS THE STORES CENSUS ADMITS (`PARK_HELD_AT_ARRIVAL`, band 6 slice P7), READ OFF EACH ARRIVAL: AES_BIOS_RETURN
+    holds the return of drive_check's own BIOS door call already at exactly these two — on every other arrival it holds
+    another — and each is a row naming the park all the same."""
+    held = lambda chain: case.long_in(da.arrival(ds.DRIVE_CHECK, chain).boot.ram, aes.AES_BIOS_RETURN) & da.BUS
+    assert {chain for chain in CHAINS if held(chain) == ds.RWABS_BACK} == set(PARK_HELD_AT_ARRIVAL)
+    assert all(ROWS[chain].also_dropped == ds.BIOS_DOOR_PARKED for chain in PARK_HELD_AT_ARRIVAL)
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)
@@ -387,18 +394,16 @@ def test_the_wave_2_routines_are_flipped(blob):
 #     the viewer's BIOS door left `$fed7de` — and its byte `$95af` is `$fe` in both values, a byte the old census (a
 #     CHANGED value) refused, which the ROM's run stores all the same (read off each arrival: the class's test, below);
 #     without the name the shipped glue's park (`$06`) differs there.
-#   * NOT A ROW, by name (`PARKED_NOT_A_ROW_WAVE_2`): the arrivals under drive_check whose machine ALREADY HOLDS
-#     drive_check's own park in AES_BIOS_RETURN — drive_check's own `NOT_A_ROW` class: the ROM's run stores the value the
-#     machine holds. Registrable under the stores census (MEASURED at the third fix pass: each companion and both blobs'
-#     second differentials pass), and held unregistered for a slice of their own (the orchestrator's ruling at F3 stage 2;
-#     that pass registered the four arrivals off the park alone).
-_PARKED = ("AES_BIOS_RETURN already holds drive_check's own park, which the ROM's run stores again: registrable under the "
-           "stores census (measured), unregistered, held for a slice of their own (drive_check's NOT_A_ROW)")
-PARKED_NOT_A_ROW_WAVE_2 = {f"{routine} — arrival 1 of {chain}; {ds.REPLAYED}": _PARKED
-                           for routine, chain in (("do_dopen", TWO_WINDOWS), ("do_fopen", FOLDER_OPENED), ("do_fopen", FOLDER_CLOSED),
-                                                  ("close_folder", FOLDER_CLOSED), ("fun_close", FOLDER_CLOSED))}
+#   * THE PARK HELD AT THE ARRIVAL (`PARK_HELD_WAVE_2`): the arrivals under drive_check whose machine ALREADY HOLDS
+#     drive_check's own park in AES_BIOS_RETURN — drive_check's own `PARK_HELD_AT_ARRIVAL` class: the ROM's run stores the
+#     value the machine holds, a store all the same, so each is a row naming the park. NOT A ROW until band 6 slice P7
+#     registered them (the orchestrator's ruling at F3 stage 2: a slice of their own; that stage's third fix pass
+#     measured them registrable and registered the four arrivals off the park alone).
+PARK_HELD_WAVE_2 = frozenset(f"{routine} — arrival 1 of {chain}; {ds.REPLAYED}"
+                             for routine, chain in (("do_dopen", TWO_WINDOWS), ("do_fopen", FOLDER_OPENED), ("do_fopen", FOLDER_CLOSED),
+                                                    ("close_folder", FOLDER_CLOSED), ("fun_close", FOLDER_CLOSED)))
 AT_ARRIVALS_WAVE_2 = [name for name, each in BY_LABEL_WAVE_2.items() if not each.why]
-DOOR_USERS_WAVE_2 = frozenset(name for name in AT_ARRIVALS_WAVE_2 if name not in PARKED_NOT_A_ROW_WAVE_2)
+DOOR_USERS_WAVE_2 = frozenset(AT_ARRIVALS_WAVE_2)
 X_FLAG_DIFFERS_WAVE_2 = frozenset()
 
 
@@ -409,7 +414,7 @@ def _registered_wave_2(name):
                              door_user=name in DOOR_USERS_WAVE_2, x_flag_differs=name in X_FLAG_DIFFERS_WAVE_2, budget=each.budget)
 
 
-ROWS_WAVE_2 = {name: _registered_wave_2(name) for name in AT_ARRIVALS_WAVE_2 if name in DOOR_USERS_WAVE_2}
+ROWS_WAVE_2 = {name: _registered_wave_2(name) for name in AT_ARRIVALS_WAVE_2}
 # ---- THE WAVE-2 ROWS' PINS — DATA, MEASURED by the table's own measurement (`aes_switching.priced_by_the_table`) and by
 # each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
 DOOR_USERS_PRICED_WAVE_2 = {
@@ -456,6 +461,17 @@ DOOR_USERS_PRICED_WAVE_2 = {
         ((746008, 1137540), (743872, 1133472), 12, (0, 0, 0)),
     "aes_fun_close, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         ((762196, 1161474), (760060, 1157406), 12, (0, 0, 0)),
+    # (band 6 slice P7: the arrivals under drive_check holding its own park — the BIOS park named by nature)
+    "aes_do_dopen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((1251600, 1795240), (1242862, 1779164), 16, (0, 0, 0)),
+    "aes_do_fopen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((753624, 1151916), (751488, 1147848), 12, (0, 0, 0)),
+    "aes_do_fopen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((486082, 822452), (483946, 818384), 12, (0, 0, 0)),
+    "aes_close_folder, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((684796, 1059476), (682660, 1055408), 12, (0, 0, 0)),
+    "aes_fun_close, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        ((700418, 1082606), (698282, 1078538), 12, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN_WAVE_2 = {
     "aes_do_diropen, arrival 1 of A: File > Open; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
@@ -500,13 +516,24 @@ DOOR_USERS_WHOLE_RUN_WAVE_2 = {
         {"bench": (4397548, 4082848), "bench_shipped": (4397548, 4077952)},
     "aes_fun_close, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
         {"bench": (4479648, 4158232), "bench_shipped": (4479648, 4153374)},
+    # (band 6 slice P7: the arrivals under drive_check holding its own park — the BIOS park named by nature)
+    "aes_do_dopen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (6501158, 6093368), "bench_shipped": (6501158, 6095678)},
+    "aes_do_fopen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (4448120, 4129654), "bench_shipped": (4448120, 4128032)},
+    "aes_do_fopen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (2750564, 2454036), "bench_shipped": (2750564, 2454538)},
+    "aes_close_folder, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (4014714, 3708284), "bench_shipped": (4014714, 3706766)},
+    "aes_fun_close, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
+        {"bench": (4096010, 3783114), "bench_shipped": (4096010, 3781622)},
 }
 
 
-def test_the_wave_2_rows_are_the_cases_at_arrivals_but_the_parked_and_each_is_a_door_user():
+def test_the_wave_2_rows_are_the_cases_at_arrivals_and_each_is_a_door_user():
     """EVERY CASE AT AN ARRIVAL A ROW THAT SWITCHES THROUGH ITS DOOR, pinned in `DOOR_USERS_*_WAVE_2`, its budget its Tier 1
-    case's — but the parked ones; every routine of the seven with a row (do_fopen and close_folder since the stage's
-    third fix pass)."""
+    case's — the parked ones too since band 6 slice P7; every routine of the seven with a row (do_fopen and close_folder
+    since F3 stage 2's third fix pass)."""
     import aes_switching
     assert sorted(ROWS_WAVE_2) == sorted(DOOR_USERS_WAVE_2) and all(row.door for row in ROWS_WAVE_2.values())
     assert all(row.budget == BY_LABEL_WAVE_2[name].budget for name, row in ROWS_WAVE_2.items())
@@ -515,7 +542,7 @@ def test_the_wave_2_rows_are_the_cases_at_arrivals_but_the_parked_and_each_is_a_
     assert {name for name, row in ROWS_WAVE_2.items() if row.x_flag_differs} == set(X_FLAG_DIFFERS_WAVE_2)
     assert {BY_LABEL_WAVE_2[name].name for name in ROWS_WAVE_2} == set(ds.UNIT_J_WAVE_2)
     budgeted = [name for name, row in ROWS_WAVE_2.items() if row.budget]
-    assert (len(ROWS_WAVE_2), len(budgeted), len(PARKED_NOT_A_ROW_WAVE_2)) == (21, 14, 5)
+    assert (len(ROWS_WAVE_2), len(budgeted), len(PARK_HELD_WAVE_2)) == (26, 18, 5)
 
 
 def _parks_drive_check_s_own(name):
@@ -523,11 +550,19 @@ def _parks_drive_check_s_own(name):
     return case.long_in(w.arrival_of(each).boot.ram, aes.AES_BIOS_RETURN) & da.BUS == ds.RWABS_BACK
 
 
-def test_the_parked_cases_are_exactly_the_arrivals_under_drive_check_holding_its_own_park():
-    """WHY THERE IS NO ROW (`PARKED_NOT_A_ROW_WAVE_2`), READ OFF EACH ARRIVAL: of the cases whose replay runs drive_check,
-    those whose AES_BIOS_RETURN holds the return of drive_check's own BIOS door call already — and only those."""
-    under = [name for name in AT_ARRIVALS_WAVE_2 if TRAPS_J_CASE(BY_LABEL_WAVE_2[name]) and _floppy(BY_LABEL_WAVE_2[name])]
-    assert set(PARKED_NOT_A_ROW_WAVE_2) == {name for name in under if _parks_drive_check_s_own(name)} and len(under) > 5
+def _rows_under_drive_check():
+    return [name for name in ROWS_WAVE_2 if TRAPS_J_CASE(BY_LABEL_WAVE_2[name]) and _floppy(BY_LABEL_WAVE_2[name])]
+
+
+def test_the_rows_arriving_with_drive_check_s_own_park_are_exactly_the_class_s():
+    """THE CLASS THE STORES CENSUS ADMITS (`PARK_HELD_WAVE_2`, band 6 slice P7), READ OFF EACH ARRIVAL: of the rows whose
+    replay runs drive_check, those whose AES_BIOS_RETURN holds the return of drive_check's own BIOS door call already —
+    and only those — every byte the park's name covers held as the park holds it, each a row naming the park."""
+    under = _rows_under_drive_check()
+    assert set(PARK_HELD_WAVE_2) == {name for name in under if _parks_drive_check_s_own(name)} and len(under) > 5
+    every_named_byte = [at for lo, hi, _why in ds.BIOS_DOOR_PARKED for at in range(lo, hi)]
+    assert all(_the_park_s_bytes_held(name) == every_named_byte for name in PARK_HELD_WAVE_2)
+    assert all(ROWS_WAVE_2[name].also_dropped == ds.BIOS_DOOR_PARKED for name in PARK_HELD_WAVE_2)
 
 
 def _the_park_s_bytes_held(name):
@@ -547,7 +582,7 @@ def test_the_rows_in_a_window_restored_after_a_show_name_the_park_over_a_byte_th
     runs drive_check, those whose AES_BIOS_RETURN holds a byte the park's name covers as the park does without holding
     the park — exactly the four in a window the desk restored after a show, each over `$95af` alone, each a row naming
     the park (a value-change census refuses each of them there)."""
-    under = [name for name in ROWS_WAVE_2 if TRAPS_J_CASE(BY_LABEL_WAVE_2[name]) and _floppy(BY_LABEL_WAVE_2[name])]
+    under = [name for name in _rows_under_drive_check() if name not in PARK_HELD_WAVE_2]
     shared = {name: _the_park_s_bytes_held(name) for name in under if _the_park_s_bytes_held(name)}
     assert len(shared) == SHOWN_THEN_FOLDER_ROWS and all(held == A_BYTE_THE_ROM_STORES_UNCHANGED for held in shared.values())
     assert {BY_LABEL_WAVE_2[name].chain for name in shared} == {SHOWN_THEN_FOLDER_OPENED, SHOWN_THEN_FOLDER_CLOSED}

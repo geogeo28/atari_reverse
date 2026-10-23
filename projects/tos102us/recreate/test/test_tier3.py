@@ -3408,9 +3408,9 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     BESIDE THE STACK, as a direct row's: exactly the QPB addresses the vet answered in this run, each dropped by the
     row by name (a wait on a pipe that blocked and was woken, or was cancelled: `_the_qpb_vets_answered`) — AND THE
     BYTES THE ROW DECLARES ITS OWN BY NATURE (`aes_switching.SwitchingRow.also_dropped`: bytes both builds store,
-    each its own — named by 16 registered rows: ct_mouse's missing argument under a menu (hctl_rect's three, and one
-    case at Tier 1 only), the XBIOS door's park (app_blddesk's four) and the BIOS door's park (drive_check's three,
-    do_dopen's two, do_fopen's two, close_folder's and fun_close's folder arm); each required stored by the ROM's run,
+    each its own — named by 23 registered rows: ct_mouse's missing argument under a menu (hctl_rect's three, and one
+    case at Tier 1 only), the XBIOS door's park (app_blddesk's four) and the BIOS door's park (drive_check's five,
+    do_dopen's three, do_fopen's four, close_folder's two and fun_close's two); each required stored by the ROM's run,
     `aes_switching._its_own_by_nature`, and held where it is declared), exactly those."""
     left_out, differing = [], aes_event.differing
 

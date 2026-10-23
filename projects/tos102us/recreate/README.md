@@ -1041,9 +1041,19 @@ foreign window, the ROM's own code on both shores. What that taught, each held b
   (the BIOS door's park over `$95af`, `$fe` before and after). MEASURED NARROWNESS: of the 530 registered rows that
   switch, the 16 that name bytes (drive_check's 3, app_blddesk's 4, hctl_rect's 3, do_dopen's 2, the four new) and the
   one Tier-1-only stale-count case have the same excused set under both censuses but the four new rows; the 514 others
-  name none. The same reading admits the seven arrivals that hold drive_check's own park (`test_desk_supp.NOT_A_ROW`,
-  `PARKED_NOT_A_ROW_WAVE_2`: the ROM's run stores the park again; measured, each companion and both blobs pass) — held
-  unregistered, by name, for a slice of their own (the orchestrator's ruling). A mutant that turns the census back to
+  name none. The same reading admits the seven arrivals that hold drive_check's own park
+  (`test_desk_supp.PARK_HELD_AT_ARRIVAL` ×2, `PARK_HELD_WAVE_2` ×5, each class read off its arrivals: the ROM's run
+  stores the park again, `fe 1b b2` over `fe 1b b2`), and band 6 slice P7 REGISTERED THEM. The switching rows' own census
+  (`test_aes_event.test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_the_census_says_which`)
+  still asks for a CHANGED byte of a row's own drop on every row but one class, for which it reads the store: named
+  beside the save word's pair (`STORED_WITH_THE_VALUE_THE_MACHINE_HOLDS`), A ROW'S OWN BYTES STORED WITH THE VALUE ITS
+  MACHINE HOLDS. That class is backed by the store and guarded both ways (`test_aes_event._vet_a_row_s_own`): a row in
+  it must change none of its bytes, or the exemption is stale, and every byte it names must be one the ROM run's write
+  ledger stores (`aes_switching.its_own_unstored`, the companion's own spelling), so no row joins the class on a value
+  comparison alone. `test_the_stored_unchanged_class_is_refused_off_its_ledger_and_off_a_change` keeps both refusals
+  in the suite: a class row widened onto `$95ad` (never stored, so equal) is refused off the ledger, and a row whose
+  run changes the park is refused as stale when it is joined to the class. (At P7: 537 registered rows that switch, 23
+  that name bytes, 514 that name none.) A mutant that turns the census back to
   value-change reddens the four rows; one that makes the C store a named byte the ROM's run never stores is refused by
   the census. THE REFUSAL STANDS IN THE SUITE (the fourth fix pass): every registered name is honest, so
   `test_desk_supp.test_the_census_refuses_a_park_name_widened_onto_a_byte_the_rom_s_run_never_stores` takes
@@ -2603,7 +2613,7 @@ NOT STALE (`B <= 10 N`); the four refusals are red by name on a real row (`test_
 fitted, 10N + 1 stale, none the default's margin, a short row's not needed). The registry keeps the budget
 (`SwitchingRow.budget`), so every later derivation — the snapshot's sweeps — runs under it:
 `test_aes_event._named_rows_declaring_a_budget` reads the named rows off their batteries,
-`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (43 since F3 stage 2's third fix pass), and each is derived again under
+`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (47 since band 6 slice P7, 43 at F3 stage 2's third fix pass), and each is derived again under
 its own budget to the switches it settled. A PLAIN row declares none: its path forwards no budget to `aes.register`, so
 a declaration there would be dropped in silence — `aes_deskarrive` and `aes_deskwin` refuse it by name, each pinned by a
 refusal test (`test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive` in `test_desk_fun`,
