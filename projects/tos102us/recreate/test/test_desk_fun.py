@@ -693,11 +693,9 @@ def test_a_driver_row_s_declared_budget_is_its_tier_1_case_s_own():
     assert {name: row.budget for name, row in DRIVER_ROWS.items()} == {name: BY_LABEL_WAVE_2[name].budget for name in DRIVER_ROWS}
 
 
-def test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive():
-    """A PLAIN ROW DECLARES NO BUDGET (`aes_deskarrive.register_row`): its path forwards none to `aes.register`, so a
-    declaration there would be dropped in silence — it is refused by name, before anything is registered."""
-    with pytest.raises(AssertionError, match="a plain row declares no derivation budget"):
-        da.register_row(da.Case(*SHORT_CASE, yields=False), budget=aes_event.DERIVATION_INSNS + 1)
+# (A PLAIN ROW'S BUDGET through `aes_deskarrive.register_row`: refused at slice F3 for every plain row, forwarded since band
+# 6 slice F4 — the user's ruling of 2026-10-23 — and held by `aes.register`; its refusals by name are
+# `test_desk_disk.py`'s and `test_desk_util.py`'s.)
 
 
 @pytest.mark.parametrize("name", DRIVER_NO_DOOR_PREMISES)

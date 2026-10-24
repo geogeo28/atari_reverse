@@ -345,7 +345,10 @@ import test_desk_util                                       # noqa: E402,F401  (
 # ---- end of stage 2 B's ----
 # ---- band 6 slice F3, stage 3 ----
 # ---- end of stage 3's ----
-import test_aes_gemsuper                                  # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
+# ---- band 6 slice F4 ---- (unit M's engine rows: `test_desk_util`, imported above)
+import test_desk_disk                                       # noqa: E402,F401  (unit N, flipped: its rows at the hands' arrivals)
+# ---- end of slice F4's ----
+import test_aes_gemsuper                                 # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
 import abi                                                 # noqa: E402
@@ -732,7 +735,8 @@ def _once_per_session(compute):
 def run_original(row, over_noise=False):
     """The ORIGINAL's run of one `VERIFIED_CASES` row over its pokes, as `emu.run` answers — `(final, writes, regs)`:
     `emu.run` itself, or for a row taken through interrupts its watched replay (`aes_event.replayed`), refused as
-    `emu.run` refuses a run the model could not serve. `over_noise`: the snapshot's MASK holds noise (the sweep below),
+    `emu.run` refuses a run the model could not serve — under the row's declared budget where it has one (a named plain
+    row's: `case.row_cap`). `over_noise`: the snapshot's MASK holds noise (the sweep below),
     so such a row's deliveries are DERIVED AGAIN over it (`aes_event.rederived`) — an interrupt's own code reads the
     machine too, and a delivery derived over the pristine snapshot would hide what it read."""
     name, entry, regs, pokes, psg_seed, io_seed, schedule, stop_pc = fields(row)
@@ -743,7 +747,8 @@ def run_original(row, over_noise=False):
         if over_noise:
             delivered = aes_event.rederived(name)
         return aes_event.replayed(make_image(pokes), entry, delivered, regs, io_seed)
-    return emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed, io_seed=io_seed, schedule=schedule, stop_pc=stop_pc)
+    return emu.run(make_image(pokes), entry, regs, psg_seed=psg_seed, io_seed=io_seed, schedule=schedule, stop_pc=stop_pc,
+                   **case.row_cap(name))
 
 
 # A SCHEDULE HERE IS READ-TRIGGERED, and the case below refuses any other kind. These rows are run at

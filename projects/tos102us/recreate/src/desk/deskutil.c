@@ -112,8 +112,9 @@ static void rawcio_string(uint8_t *image, uint32_t text)
         (void)aes_dos_rawcio(image, AES_SHOW_STRING_RETURN, (int16_t)(int8_t)bus_byte(image, text));
 }
 
-/* A key awaited by Crawio($ff) until its answer's WORD is not 0: the key's ASCII and the byte above it. */
-static int16_t key_awaited(uint8_t *image, uint32_t return_site)
+/* A key awaited by Crawio($ff) until its answer's WORD is not 0: the key's ASCII and the byte above it. Never inlined:
+ * its entry is where the viewer's chains stop on our shore (`test/aes_desk.py`'s OUR_STOPS_ONCE_FLIPPED). */
+__attribute__((noinline)) static int16_t key_awaited(uint8_t *image, uint32_t return_site)
 {
     int16_t key;
 

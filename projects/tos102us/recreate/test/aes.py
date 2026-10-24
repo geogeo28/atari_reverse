@@ -666,12 +666,54 @@ def stored_nothing(result):
     return not case.written_by(result.info["writes"]).keys() - set(mask)
 
 
-def _settled_mask_word(name, arguments, pokes, io_seed):
-    image = make_image(staged(name, vdi.as_signed(name, arguments), pokes))
-    _final, writes, _regs = emu.run(image, getattr(addrs, name), io_seed=io_seed)
+def _mask_word_written(writes):
     if AES_LINEF_MASK_WORD not in writes:
         return None
     return writes[AES_LINEF_MASK_WORD] << 8 | writes[AES_LINEF_MASK_WORD + 1]
+
+
+def _settled_mask_word(name, arguments, pokes, io_seed):
+    image = make_image(staged(name, vdi.as_signed(name, arguments), pokes))
+    _final, writes, _regs = emu.run(image, getattr(addrs, name), io_seed=io_seed)
+    return _mask_word_written(writes)
+
+
+@derived.kept
+def _settled_under_a_budget(name, arguments, pokes, budget):
+    """...the mask word of a run past the oracle's own cap, capped at the row's declared `budget` — and the
+    instructions it spent, which the budget is held to (`vet_a_plain_row_s_budget`)."""
+    image = make_image(staged(name, vdi.as_signed(name, arguments), pokes))
+    _final, writes, regs = emu.run(image, getattr(addrs, name), max_insns=budget)
+    return _mask_word_written(writes), regs["ninsns"]
+
+
+def vet_a_plain_row_s_budget(row_name, entry, insns, budget):
+    """A NAMED PLAIN ROW'S DECLARED BUDGET (the user's ruling of 2026-10-23, widening "rows may declare budget" of
+    2026-10-21 to a plain row): its original spent `insns` under `budget`, which is held as a case's own cap is
+    (`aes_event._vet_a_case_s_cap`) — NEEDED (the oracle's own cap, DIFFERENTIAL_INSNS, does not cover the run),
+    FITTED (DERIVATION_MARGIN times the run) and NOT STALE (at most DERIVATION_STALE times that) — refused by the
+    row's name."""
+    import aes_event
+    try:
+        aes_event._vet_a_case_s_cap(entry, insns, budget)
+    except AssertionError as refused:
+        raise AssertionError(f"{row_name}: a plain row's declared budget refused — {refused}") from None
+
+
+# The kit's refusal of a run past its cap names only the entry address (`emu.run`'s message, matched as its tests do).
+RUN_PAST_ITS_CAP = "did not reach rts within"
+
+
+@contextlib.contextmanager
+def refused_past_its_cap_by_name(row_name):
+    """...A SETTLING RUN PAST ITS CAP — undeclared (the oracle's own) or declared below the run — refused BY THE ROW'S
+    NAME: the kit's refusal, and that one only, raised again with the row named."""
+    try:
+        yield
+    except RuntimeError as refused:
+        if RUN_PAST_ITS_CAP not in str(refused):
+            raise
+        raise RuntimeError(f"{row_name}: the settling run passes its cap — {refused}") from refused
 
 
 @derived.kept
@@ -694,11 +736,11 @@ def settled_mask_word(name, arguments, pokes, io_seed=None):
 COMPANION_UNPOISONED = {"poison": False}
 
 
-def undropped(name, arguments, pokes, hook=None, io_seed=None, answer_compared=True):
+def undropped(name, arguments, pokes, hook=None, io_seed=None, answer_compared=True, budget=None):
     """A priced row's Tier 3 COMPANION: the SAME machine — the mask word staged at the value the run leaves, which the
-    ROM's run then rewrites with itself — as a differential with NOTHING dropped."""
+    ROM's run then rewrites with itself — as a differential with NOTHING dropped (under the row's declared `budget`)."""
     return run_function(name, arguments, pokes, dropped_windows=(), hook=hook, io_seed=io_seed,
-                        answer_compared=answer_compared, **COMPANION_UNPOISONED)
+                        answer_compared=answer_compared, **COMPANION_UNPOISONED, **case.cap_of(budget))
 
 
 # ---- (e) the registry --------------------------------------------------------------------------------------------
@@ -708,7 +750,8 @@ CASES = ROWS.cases
 UNPRICED = ROWS.unpriced
 
 
-def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None, answer_compared=True):
+def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None, answer_compared=True,
+             budget=None):
     """One `VERIFIED_CASES` row of `name` over the frame of `arguments`, named `<core>, <label>`. A DIRECT row is
     priced; if the ROM's run stores the mask word, the row stages it at the value the run leaves and drops it at
     Tier 3, with its companion (a routine calling out with its `hook`, `run_function`'s). A row THROUGH
@@ -716,19 +759,29 @@ def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, 
     nine) is priced like any other: `rom_bench` enters its C lower by the bytes that do not fit. `io_seed` declares
     the I/O bytes the run reads (`case.run`'s), for a routine that reaches the hardware through the OS.
     `answer_compared` False for an arm on which the ROM sets no D0 (`run_function`'s): the row and its companion
-    compare no answer."""
+    compare no answer. `budget`: A NAMED PLAIN ROW past the oracle's own cap DECLARES ITS OWN (the user's ruling of
+    2026-10-23) — held both ways before anything is registered (`vet_a_plain_row_s_budget`), recorded with the row
+    (`case.row_cap`: every run of its original asks it) and its companion's cap."""
     row_name = f"{routines.core_symbol(name)}, {label}"
     if through_line_f:
+        assert budget is None, f"{row_name}: a row through Line-F is unpriced and declares no budget"
         return ROWS.register(row_name, LINE_F_CALLER_AT, staged(name, arguments, pokes, through_line_f=True),
                              priced=False, io_seed=io_seed, answered=answer_compared)
-    settled = settled_mask_word(name, arguments, pokes, io_seed)
+    if budget is None:
+        with refused_past_its_cap_by_name(row_name):
+            settled = settled_mask_word(name, arguments, pokes, io_seed)
+    else:
+        assert io_seed is None, f"{row_name}: a budgeted plain row declares no I/O"
+        with refused_past_its_cap_by_name(row_name):
+            settled, spent = _settled_under_a_budget(name, tuple(arguments), pokes, budget)
+        vet_a_plain_row_s_budget(row_name, getattr(addrs, name), spent, budget)
     if settled is None:
         return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
-                             answered=answer_compared)
+                             answered=answer_compared, budget=budget)
     pokes = merge_pokes(pokes, field_pokes("AES", LINEF_MASK_WORD=settled))
     return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
-                         dropped=LINE_F_MASK_WINDOW, answered=answer_compared,
-                         undropped=functools.partial(undropped, name, arguments, pokes, hook, io_seed, answer_compared))
+                         dropped=LINE_F_MASK_WINDOW, answered=answer_compared, budget=budget,
+                         undropped=functools.partial(undropped, name, arguments, pokes, hook, io_seed, answer_compared, budget))
 
 
 # ---- (f) what the snapshot mask is checked against ------------------------------------------------------------------

@@ -259,6 +259,11 @@ PRINTED, NOT_PRINTED, NO_KEY = -1, 0, 0                 # Cprnout's answers; Cra
 EFILNF = aes.signed(addrs.parse(aes.INCLUDE / "gemdos" / "process.h")["GEMDOS_EFILNF"], bits=32)
 FULL_BUFFER_BUDGET = 40_000_000        # ...a whole buffer of 4,096 bytes drawn in one line
 RETRIED_BUDGET = 2_500_000             # the printer retried, then cancelled: the derivation spent 359,926 (5 N..10 N)
+# THE SHOW'S ARRIVALS, each its plain run's own budget (band 6 slice F4: its row declares the same — the user's ruling of
+# 2026-10-23), each between 5 N and 10 N of its ROM run's N instructions, measured:
+SHOWN_BUDGET = 2_000_000               # the INF shown, a key at its end (221,516; shown again, 221,693)
+LONG_SHOWN_BUDGET = 8_000_000          # the long file shown a page at a time (1,290,674)
+KEY_AT_A_MORE_BUDGET = 3_000_000       # ...a key typed at its first "-MORE-" (450,723 .. 471,669)
 
 
 def typed(*scans):
@@ -451,23 +456,23 @@ ENGINE_CASES = (
     # ---- ARRIVALS: the INF shown, a key at its end; the long file shown a page at a time; the printer not ready —
     # Cancel, and Retry (not ready again) then Cancel; the INF shown AGAIN, the engine's words as the first show left
     # them (-1, 1, 529)
-    EngineCase(SHOW_FILE, SHOWN), EngineCase(SHOW_FILE, LONG_SHOWN),
+    EngineCase(SHOW_FILE, SHOWN, budget=SHOWN_BUDGET), EngineCase(SHOW_FILE, LONG_SHOWN, budget=LONG_SHOWN_BUDGET),
     EngineCase(PRINT_FILE, NOT_READY, ("Cancel",)),
     EngineCase(PRINT_FILE, NOT_READY, ("Retry", "Cancel"), budget=RETRIED_BUDGET),
-    EngineCase(SHOW_FILE, SHOWN_AGAIN),
+    EngineCase(SHOW_FILE, SHOWN_AGAIN, budget=SHOWN_BUDGET),
     # ---- THE VIEWER'S KEYS at its first "-MORE-", TYPED AT THE STOP (the long file's chain, arrivals): q (upcased: Q),
     # ^C (Control held), Return (a line, then "-MORE-" again: q), F1 (ASCII 0: the wait goes on — `tst.w` — then q),
     # x (nothing: "-MORE-" again — q)
     EngineCase(SHOW_FILE, LONG_SHOWN, waits=at_the_first_more(Q), hand="q typed at the first -MORE-",
-               made=_made_past_the_first_more(*QUIT_MADE)),
+               budget=KEY_AT_A_MORE_BUDGET, made=_made_past_the_first_more(*QUIT_MADE)),
     EngineCase(SHOW_FILE, LONG_SHOWN, waits=at_the_first_more(CTRL_C), hand="^C typed at the first -MORE-",
-               made=_made_past_the_first_more(*QUIT_MADE)),
+               budget=KEY_AT_A_MORE_BUDGET, made=_made_past_the_first_more(*QUIT_MADE)),
     EngineCase(SHOW_FILE, LONG_SHOWN, waits=at_the_first_more(RETURN, Q), hand="Return typed at the first -MORE-, then q",
-               made=_made_past_the_first_more(*MORE_AGAIN, *QUIT_MADE)),
+               budget=KEY_AT_A_MORE_BUDGET, made=_made_past_the_first_more(*MORE_AGAIN, *QUIT_MADE)),
     EngineCase(SHOW_FILE, LONG_SHOWN, waits=at_the_first_more(F1, Q), hand="F1 (ASCII 0) typed at the first -MORE-, then q",
-               made=_made_past_the_first_more(CRAWIO, *QUIT_MADE)),
+               budget=KEY_AT_A_MORE_BUDGET, made=_made_past_the_first_more(CRAWIO, *QUIT_MADE)),
     EngineCase(SHOW_FILE, LONG_SHOWN, waits=at_the_first_more(X, Q), hand="x typed at the first -MORE-, then q",
-               made=_made_past_the_first_more(*MORE_AGAIN, *QUIT_MADE)),
+               budget=KEY_AT_A_MORE_BUDGET, made=_made_past_the_first_more(*MORE_AGAIN, *QUIT_MADE)),
     # ---- THE BUFFER: a file of 4,096 bytes and one more (two Freads: the buffer read whole, then one byte short), its
     # bytes >= $80 and $FF among them; a file of EXACTLY 4,096 (its refill reads 0 — and the ROM shows the buffer
     # again from its first byte, `$fed6f6..$fed734`, the index never compared with the new count: reviewer A's A1)
@@ -584,5 +589,135 @@ def test_the_strings_the_engine_names_are_the_rom_s_and_the_printer_s_alert_merg
     assert b"%" not in alert and alert.endswith(b"[Cancel|Retry]")
 
 
-def test_the_engine_is_linked_and_unbound(blob):
-    arrive.unbound(blob, du.UNIT_M_WAVE_4)
+# ---- FLIPPED (band 6 slice F4): the two built-ins, the engine's eight parts with them (`aes_desk.parts_flipped`) ------------
+def test_the_engine_is_flipped(blob):
+    """THE FLIP PIN of the two built-ins (`aes_deskarrive.flipped`: each core called by its own thunk of the table, its
+    entry ours through it — sh_cmd's desk door names the same thunks); none held (`aes_deskutil.UNIT_M_WAVE_4_HELD_AT_F4`)."""
+    assert not du.UNIT_M_WAVE_4_HELD_AT_F4
+    arrive.flipped(blob, du.UNIT_M_WAVE_4)
+
+
+# ---- band 6 slice F4: THE ENGINE'S ROWS — every case at an arrival registered ---------------------------------------------
+# OVER ITS TIER 1 CASE'S OWN STAGING: the arrival's megabyte whole but the harness's window (`aes_deskarrive.row_machine_of`),
+# the engine's GEMDOS REPLAYED with the bytes the ROM's Fread read LAID (the case's layers, `engine_layers`).
+#   * THE SHOW'S EIGHT ARE PLAIN ROWS: no process is entered (the viewer's keys are the replay's at its stops, not
+#     wakes) — the engine's host twins the companion's hook, savptr in the band (`aes_event.savptr_in_the_band`: the
+#     trap's save lands where neither shore compares). Every one runs past the oracle's own cap, so EACH NAMED ROW
+#     DECLARES ITS TIER 1 CASE'S OWN BUDGET (the user's ruling of 2026-10-23, "rows may declare budget" widened to a
+#     named plain row: held both ways by `aes.register`, recorded with the row — `case.row_cap` — for every run of its
+#     original).
+#   * THE PRINT'S TWO ARE ROWS THAT SWITCH through their door (the not-ready alert: fm_alert, fm_do), its buttons
+#     clicked at the row's idles; Retry's under its case's budget. Pinned in `DOOR_USERS_*_WAVE_4`, read by
+#     `test_tier3.py`. (The two PRINTED chains' arrivals, ~1,060 calls against the recorder's 46-entry ledger, stay
+#     Tier 1's labelled class: the bigger ledger is not authorized — R-H-2, the user's.)
+# The classes stay Tier 1's.
+AT_ARRIVALS_WAVE_4 = {engine_label(each): each for each in ENGINE_CASES if not each.why}
+
+
+def engine_row_label(each):
+    """A row's label: the case's but its routine's name, which the row's name begins with."""
+    return engine_label(each).removeprefix(f"{short_of(each.name)} — ")
+
+
+def _row_machine(each):
+    """The case's arrival, and a row's machine of it: the arrival's megabyte but the window, the case's layers laid."""
+    arrived, _replay, layers = engine_layers(each)
+    return arrived, case.merge_pokes(arrive.row_machine_of(arrived), layers)
+
+
+def _registered_plain(each, label, budget):
+    """A show's PLAIN ROW over its row machine, savptr in the band, the engine's twins its companion's hook."""
+    arrived, pokes = _row_machine(each)
+    return aes.register(label, each.name, arrived.arguments, case.merge_pokes(pokes, aes_event.savptr_in_the_band()),
+                        hook=du.show_hook, budget=budget)
+
+
+def _engine_row(each):
+    if not each.clicks:
+        return _registered_plain(each, engine_row_label(each), each.budget)
+    arrived, pokes = _row_machine(each)
+    row = aes_event.woken_row(engine_row_label(each), each.name, arrived.arguments, lambda: pokes, _clicks_at_idle(each.clicks),
+                              objects=True, answered=True, budget=each.budget)
+    return aes_event.register_woken(row)
+
+
+ENGINE_ROWS = {name: _engine_row(each) for name, each in AT_ARRIVALS_WAVE_4.items()}
+PLAIN_ENGINE_ROWS = frozenset(name for name, each in AT_ARRIVALS_WAVE_4.items() if not each.clicks)
+DOOR_USERS_PRICED_WAVE_4 = {
+    "aes_desk_print_file, arrival 0 of file: File > Open, Print clicked (the printer not ready) [GEMDOS REPLAYED: the ROM's own run in place — its answers; the bytes the ROM's Fread read, laid where it read them]; the alert's Cancel clicked":
+        ((240602, 355002), (190722, 277206), 9, (0, 0, 0)),
+    "aes_desk_print_file, arrival 0 of file: File > Open, Print clicked (the printer not ready) [GEMDOS REPLAYED: the ROM's own run in place — its answers; the bytes the ROM's Fread read, laid where it read them]; the alert's Retry then Cancel clicked":
+        ((476868, 704146), (377088, 548536), 18, (0, 0, 0)),
+}
+DOOR_USERS_WHOLE_RUN_WAVE_4 = {
+    "aes_desk_print_file, arrival 0 of file: File > Open, Print clicked (the printer not ready) [GEMDOS REPLAYED: the ROM's own run in place — its answers; the bytes the ROM's Fread read, laid where it read them]; the alert's Cancel clicked":
+        {"bench": (1817012, 1740942), "bench_shipped": (1817012, 1721352)},
+    "aes_desk_print_file, arrival 0 of file: File > Open, Print clicked (the printer not ready) [GEMDOS REPLAYED: the ROM's own run in place — its answers; the bytes the ROM's Fread read, laid where it read them]; the alert's Retry then Cancel clicked":
+        {"bench": (3630774, 3480142), "bench_shipped": (3630774, 3440960)},
+}
+
+
+def test_every_engine_case_at_an_arrival_is_a_row_the_show_s_plain_the_print_s_door_users():
+    """EVERY CASE AT AN ARRIVAL A ROW: the show's eight plain, the print's two rows that switch through their door —
+    pinned in `DOOR_USERS_*_WAVE_4`, exactly."""
+    import aes_switching
+    assert (len(ENGINE_ROWS), len(PLAIN_ENGINE_ROWS)) == (10, 8)
+    assert {AT_ARRIVALS_WAVE_4[name].name for name in PLAIN_ENGINE_ROWS} == {SHOW_FILE}
+    switching = {aes_switching.row_name(row) for name, row in ENGINE_ROWS.items() if name not in PLAIN_ENGINE_ROWS}
+    assert all(ENGINE_ROWS[name].door for name in ENGINE_ROWS if name not in PLAIN_ENGINE_ROWS)
+    assert switching == set(DOOR_USERS_PRICED_WAVE_4) == set(DOOR_USERS_WHOLE_RUN_WAVE_4)
+
+
+def test_an_engine_row_s_declared_budget_is_its_tier_1_case_s_own():
+    """EACH ROW DECLARES ITS TIER 1 CASE'S OWN BUDGET — identity, not the rule's range: the show's plain rows' as
+    `aes.register` recorded them (`case.row_budgets`), the print's on the row; none where the case declares none."""
+    plain = {name: case.row_budgets().get(ENGINE_ROWS[name][0]) for name in PLAIN_ENGINE_ROWS}
+    switching = {name: ENGINE_ROWS[name].budget for name in ENGINE_ROWS if name not in PLAIN_ENGINE_ROWS}
+    assert {**plain, **switching} == {name: each.budget for name, each in AT_ARRIVALS_WAVE_4.items()}
+    assert all(plain.values())
+
+
+# ---- A NAMED PLAIN ROW'S DECLARED BUDGET, HELD BOTH WAYS (the user's ruling of 2026-10-23): over the INF shown (its ROM
+# run measured SHOWN_RUN instructions), each declaration the rule refuses is refused by the row's name at its registration,
+# before anything is registered — not fitted, stale, undeclared, below the run. (Unneeded: `test_desk_disk.py`'s util_redraw; unnamed —
+# a plain budget no battery names — `test_aes_event.py`'s census.)
+SHOWN_RUN = 221_516
+SHOWN_ARRIVAL = engine_label(EngineCase(SHOW_FILE, SHOWN, budget=SHOWN_BUDGET))
+
+
+def _registered_with(budget):
+    return _registered_plain(AT_ARRIVALS_WAVE_4[SHOWN_ARRIVAL], "a budget probed", budget)
+
+
+PLAIN_BUDGET_REFUSED = {
+    "not fitted (under five times the run)": (SHOWN_RUN * aes_event.DERIVATION_MARGIN - 1,
+                                              r"a plain row's declared budget refused — .* margin of 5: raise"),
+    "stale (over ten times the run)": (SHOWN_RUN * aes_event.DERIVATION_MARGIN * aes_event.DERIVATION_STALE + 1,
+                                       r"a plain row's declared budget refused — .* the declaration is stale — .* at most"),
+}
+
+
+@pytest.mark.parametrize("which", PLAIN_BUDGET_REFUSED)
+def test_a_named_plain_row_s_budget_is_refused_by_name_where_the_rule_refuses_it(which):
+    budget, said = PLAIN_BUDGET_REFUSED[which]
+    registered = len(aes.CASES)
+    with pytest.raises(AssertionError, match=said):
+        _registered_with(budget)
+    assert len(aes.CASES) == registered
+
+
+PAST_ITS_CAP_REFUSED = {
+    "undeclared (the oracle's own cap)": (None, aes_event.DIFFERENTIAL_INSNS),
+    "declared below the run": (SHOWN_RUN - 1, SHOWN_RUN - 1),
+}
+
+
+@pytest.mark.parametrize("which", PAST_ITS_CAP_REFUSED)
+def test_a_plain_row_whose_settling_run_passes_its_cap_is_refused_by_name(which):
+    """...and UNDECLARED, or DECLARED BELOW THE RUN: the settling run of the INF shown stops at its cap — the kit's
+    refusal, raised again by the row's name (`aes.refused_past_its_cap_by_name`) — before anything is registered."""
+    budget, cap = PAST_ITS_CAP_REFUSED[which]
+    registered = len(aes.CASES)
+    with pytest.raises(RuntimeError, match=rf"^aes_desk_show_file, a budget probed: .* did not reach rts within {cap} "):
+        _registered_with(budget)
+    assert len(aes.CASES) == registered

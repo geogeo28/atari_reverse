@@ -103,6 +103,10 @@ import test_desk_top                                       # noqa: E402  (unit K
 # ---- end of stage 2 B's ----
 # ---- band 6 slice F3, stage 3: its batteries whose door users' rows are pinned there ----
 # ---- end of stage 3's ----
+# ---- band 6 slice F4: its batteries whose door users' rows are pinned there ----
+import test_desk_disk                                      # noqa: E402  (unit N: the dialogs' and alerts' door users)
+import test_desk_util                                      # noqa: E402  (unit M: the printer's not-ready alert)
+# ---- end of slice F4's ----
 import test_boot_snapshot                                 # noqa: E402
 
 
@@ -1258,7 +1262,8 @@ def test_a_call_into_the_rom_s_aes_text_owed_to_a_later_band_is_one_site_in_the_
         assert routine not in aes_event.ENTRIES
         # (a body of ours HELD UNBOUND — `linef_table.LINKED_HELD_NO_TABLE_ENTRY`, band 6 wave 2's R-W2-4: the desk's
         # userdef draw; and, band 6 wave 4, `LINKED_AND_NOT_FLIPPED`'s desk built-ins the desk door enters: Format,
-        # the disk copy, show and print — is linked and reached by nothing: its call is relocated at the binding)
+        # the disk copy, show and print, until slice F4 flipped them — is linked and reached by nothing: its call is
+        # relocated at the binding)
         held = {*linef_table.LINKED_HELD_NO_TABLE_ENTRY, *linef_table.LINKED_AND_NOT_FLIPPED}
         assert not [name for name in dir(addrs) if getattr(addrs, name) == routine and routines.is_routine(name)
                     and (name.lower() in ranges or routines.core_symbol(name) in ranges)
@@ -3587,6 +3592,11 @@ for _pinned in ((test_desk_supp.DOOR_USERS_PRICED_WAVE_2, test_desk_supp.DOOR_US
 DOOR_USERS_PRICED.update(test_desk_top.DOOR_USERS_PRICED_STAGE_3)
 DOOR_USERS_WHOLE_RUN.update(test_desk_top.DOOR_USERS_WHOLE_RUN_STAGE_3)
 # ---- end of stage 3's ----
+# ---- band 6 slice F4 ---- (unit N's door users, `test_desk_disk.py`'s `*_WAVE_4`; the printer's, `test_desk_util.py`'s)
+for _battery in (test_desk_disk, test_desk_util):
+    DOOR_USERS_PRICED.update(_battery.DOOR_USERS_PRICED_WAVE_4)
+    DOOR_USERS_WHOLE_RUN.update(_battery.DOOR_USERS_WHOLE_RUN_WAVE_4)
+# ---- end of slice F4's ----
 
 
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():

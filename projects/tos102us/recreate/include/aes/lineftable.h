@@ -8,8 +8,8 @@
 #ifndef TOS102US_AES_LINEFTABLE_H
 #define TOS102US_AES_LINEFTABLE_H
 
-#define DESK_DOOR_BOUND_AES_ROM_DESK_SHOW_FILE AES_ROM_DESK_SHOW_FILE   /* the ROM's */
-#define DESK_DOOR_BOUND_AES_ROM_DESK_PRINT_FILE AES_ROM_DESK_PRINT_FILE   /* the ROM's */
-#define DESK_DOOR_BOUND_AES_ROM_DESK_FORMAT AES_ROM_DESK_FORMAT   /* the ROM's */
-#define DESK_DOOR_BOUND_AES_ROM_DESK_COPY_DISK AES_ROM_DESK_COPY_DISK   /* the ROM's */
+#define DESK_DOOR_BOUND_AES_ROM_DESK_SHOW_FILE linef_to_aes_desk_show_file   /* ours, through a thunk */
+#define DESK_DOOR_BOUND_AES_ROM_DESK_PRINT_FILE linef_to_aes_desk_print_file   /* ours, through a thunk */
+#define DESK_DOOR_BOUND_AES_ROM_DESK_FORMAT linef_to_aes_desk_format   /* ours, through a thunk */
+#define DESK_DOOR_BOUND_AES_ROM_DESK_COPY_DISK linef_to_aes_desk_copy_disk   /* ours, through a thunk */
 #endif /* TOS102US_AES_LINEFTABLE_H */

@@ -146,13 +146,13 @@ THE_BOXES = ("a rubber box on the desktop, round the trash", "a rubber box on th
 
 
 def test_each_named_stop_has_its_address_on_our_shore():
-    """N4: THE RUBBER BOX'S POLL IS OUR gr_stilldn's ENTRY (band 3's C), the viewer's two key waits the ROM's own
-    (the show engine is the ROM's on our machine until unit M flips) — and each rubber box chain stands there twice,
-    at no idle, before OUR idle."""
+    """N4: THE RUBBER BOX'S POLL IS OUR gr_stilldn's ENTRY (band 3's C), the viewer's two key waits OUR C's
+    `key_awaited` (the show engine ours since band 6 slice F4: `aes_desk.OUR_STOPS_ONCE_FLIPPED`), never the ROM's own
+    — and each rubber box chain stands there twice, at no idle, before OUR idle."""
     blob = desk.our_blob()
     assert desk.our_stop(desk.RUBBER_BOX_POLL) == blob.entry("aes_gr_stilldn") != desk.STOPS[desk.RUBBER_BOX_POLL]
     for stop in (desk.VIEWER_AT_A_PAGE_S_END, desk.VIEWER_AT_THE_FILE_S_END):
-        assert desk.our_stop(stop) == desk.STOPS[stop]
+        assert desk.our_stop(stop) == blob.entry("key_awaited") != desk.STOPS[stop]
     for name in THE_BOXES:
         first, second, last = desk.walked_ours(name).steps
         for stepped in (first, second):
@@ -205,7 +205,10 @@ BAND_6_FLIPPED_AT_F3 = {
     "S3": 3,                # fun_d2desk, fun_drag, hndl_kbd
     # ---- end of stage 3's ----
 }
-BAND_6_FLIPPED = 56 + sum(BAND_6_FLIPPED_AT_F2.values()) + sum(BAND_6_FLIPPED_AT_F3.values())
+# ...and slice F4 (wave 4): unit M's two built-ins and unit N's ten by their table entries (the built-ins by sh_cmd's
+# door too), the engine's eight `bsr`-only parts with their built-ins (`aes_desk.parts_flipped`)
+BAND_6_FLIPPED_AT_F4 = 12 + 8
+BAND_6_FLIPPED = 56 + sum(BAND_6_FLIPPED_AT_F2.values()) + sum(BAND_6_FLIPPED_AT_F3.values()) + BAND_6_FLIPPED_AT_F4
 
 
 def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text_they_reach_each_run():
@@ -439,6 +442,31 @@ NOT_ENTERED_ON_OUR_SHORE = {
     "AES_ROM_APP_AFIND": "its every ROM caller flipped (the last at band 6 slice F3, stage 3: fun_d2desk): called by our C alone "
                          "on our shore",
     # ---- end of stage 3's ----
+    # ---- band 6 slice F4 ---- (who-ran's on the slice's tree; each one's ROM callers read off the GEM text:
+    # `aes_deskarrive.rom_callers`) — unit N's helpers, called by Format's and the copy's C alone now; the four built-ins
+    # are entered by sh_cmd's door (`aes_desk.BY_VALUE_CALLERS`)...
+    **{name: f"its every ROM caller flipped (the last at band 6 slice F4: {callers}): called by our C alone on our shore"
+       for name, callers in {
+           "AES_ROM_DESK_UTIL_OPEN": "desk_format, desk_copy_disk",
+           "AES_ROM_DESK_UTIL_SHOW": "desk_format, desk_copy_disk, util_bars, copy_tracks",
+           "AES_ROM_DESK_UTIL_REDRAW": "desk_format, util_error", "AES_ROM_DESK_UTIL_BARS": "desk_format, desk_copy_disk",
+           "AES_ROM_DESK_UTIL_ERROR": "desk_format, desk_copy_disk, copy_tracks", "AES_ROM_DESK_COPY_TRACKS": "desk_copy_disk",
+           "AES_ROM_DOS_AVAIL": "desk_copy_disk, viewer_line; dir_op at slice F3",
+           "AES_ROM_DOS_RAWCIO": "the engine's parts show_or_print, viewer_loop, viewer_more, viewer_line, rawcio_string"}.items()},
+    # ...two no run reaches at all: Format's bad-sector arm, which no disk of the device model takes (Flopfmt answers 0)
+    "AES_ROM_DESK_FAT_MARK": "its one ROM caller, desk_format (flipped at band 6 slice F4), calls it in its bad-sector arm alone, "
+                             "which no run of the device model reaches (Tier 1 holds it over argument classes)",
+    "AES_ROM_DESK_FAT_SWAP": "its one ROM caller, fat_mark (flipped at band 6 slice F4), is reached by no run (above)",
+    # ...one whose ROM callers but one are flipped, and that one reaches it on no walked chain
+    "AES_ROM_DESK_RSRC_GADDR": "its ROM callers flipped (the last on a walked chain at band 6 slice F4: util_open) but desk_open "
+                               "`$fe1568`'s (the ROM's), whose walked runs never reach its call: called by our C alone on our shore",
+    # ...and THE ENGINE'S EIGHT `bsr`-ONLY PARTS (R-W4-5): static C inside the two built-ins, flipped with them
+    # (`aes_desk.parts_flipped`) — no table entry, so no entry of ours to enter: their ROM spans running no cycle is the hold
+    **{f"AES_ROM_DESK_{part}": "a `bsr`-only part of the show / print engine (no table entry: R-W4-5), flipped with its "
+                               "built-ins at band 6 slice F4: static C inside them, no entry of ours to enter"
+       for part in ("SHOW_OR_PRINT", "SHOW_NEXT_BYTE", "VIEWER_LOOP", "VIEWER_MORE", "VIEWER_PAGE", "VIEWER_LINE",
+                    "RAWCIO_STRING", "PRINT_CHAR")},
+    # ---- end of slice F4's ----
 }
 
 
@@ -910,13 +938,13 @@ DEPTHS = {
     'text view: drive A: dragged to a bare spot of the desktop': (1268, 0, 254, 0),
     "A: File > Format, the warning's OK (the FORMAT dialog)": (1314, 668, 254, 0),
     'A: File > Format, OK, EXIT clicked': (956, 308, 254, 0),
-    'A: File > Format, OK, FORMAT clicked (formatted)': (880, 0, 254, 0),
+    'A: File > Format, OK, FORMAT clicked (formatted)': (958, 0, 254, 0),      # 880 before band 6 slice F4
     "A: formatted, the alert's OK, EXIT clicked": (956, 308, 254, 0),
     "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1400, 308, 254, 0),
     'drive A: onto drive B:, OK, then Return (EXIT, the default)': (956, 308, 240, 0),
     'file: File > Open, Print clicked (the printer not ready)': (1536, 308, 254, 0),
     'file: the printer not ready, Cancel': (1268, 308, 254, 0),
-    'file: the printer not ready, Retry (not ready again)': (822, 0, 254, 0),
+    'file: the printer not ready, Retry (not ready again)': (898, 0, 254, 0),  # 822 before band 6 slice F4
     'file: the printer not ready, five seconds, Retry (printed)': (1268, 308, 254, 0),
     'file: File > Open, five seconds, Print clicked (printed)': (1536, 308, 254, 0),
     'file: shown, a key at its end — the file clicked, File > Open, shown again': (1536, 668, 254, 0),

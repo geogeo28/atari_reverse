@@ -992,9 +992,10 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # ---- end of group G4's wave-2 ----
     # ---- band 6 wave 4, group G1 (unit M: `src/desk/deskutil.c`) ----
     # the show / print engine's keys upcased — at "-MORE-" and between two bytes printed (the parts that call it, the
-    # viewer's and the print loop's, inlined into their built-in; line_shown and char_put stay functions of their own,
-    # as the build's call graph reads); aes_toupper has C callers already: no new thunk
-    ("aes_desk_show_file", "aes_toupper"), ("aes_desk_print_file", "aes_toupper"),
+    # viewer's and the print loop's, inlined into the engine's shown_or_printed — since band 6 slice F4 kept out of its
+    # two built-ins, `key_awaited` made `noinline` for the viewer's stops; line_shown and char_put stay functions of
+    # their own, as the build's call graph reads); aes_toupper has C callers already: no new thunk
+    ("shown_or_printed", "aes_toupper"),
     # ---- end of group G1's wave-4 ----
     # ---- band 6 wave 4, group G2 (unit N: `src/desk/deskdisk.c`) ---- (ruling R-W4-6: aes_crit_err, `$fee364`'s, has
     # no C caller before this group — its pair here makes the ONE new shipped-glue thunk, `glue.S`'s hash said)

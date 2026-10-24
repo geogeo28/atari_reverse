@@ -243,18 +243,23 @@ class Rows:
         self.cases, self.unpriced = [], []
         self.tier3_dropped, self.tier3_undropped = {}, {}
         self.unanswered = set()
+        self.budgets = {}
         ROW_REGISTRIES.append(self)
 
     def register(self, name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True,
-                 dropped=(), undropped=None, answered=True, delivered=None):
+                 dropped=(), undropped=None, answered=True, delivered=None, budget=None):
         """One `VERIFIED_CASES` row (`verified_row`), recorded and returned so the battery drives the same tuple.
         `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with it — the
         zero-argument differential that still compares those bytes over the row's machine (a `Result`), which is
         what makes dropping them at Tier 3 safe. `answered` False for a row whose routine sets no D0 on its arm — it
         leaves its caller's, which no C is handed — so Tier 3 compares no answer (`tier3_unanswered`). `delivered`
-        the interrupts a row is taken through (`verified_row`)."""
+        the interrupts a row is taken through (`verified_row`). `budget`: the instructions every run of the row's
+        ORIGINAL by `emu.run` may spend, where the oracle's own cap does not serve — a NAMED PLAIN ROW's, declared and
+        held where it is registered (`aes.register`); every consumer that runs the row's original asks `row_cap`."""
         row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule, delivered)
         (self.cases if priced else self.unpriced).append(row)
+        if budget is not None:
+            self.budgets[name] = budget
         if not answered:
             self.unanswered.add(name)
         if dropped:
@@ -278,6 +283,22 @@ def tier3_undropped():
 def tier3_unanswered():
     """...and the rows whose answer is not compared (`Rows.register`'s `answered`)."""
     return frozenset(name for rows in ROW_REGISTRIES for name in rows.unanswered)
+
+
+def row_budgets():
+    """...and `{row name: its declared budget}`: the rows whose original runs past the oracle's own cap
+    (`Rows.register`'s `budget`)."""
+    return {name: budget for rows in ROW_REGISTRIES for name, budget in rows.budgets.items()}
+
+
+def cap_of(budget):
+    """The `emu.run` keywords a declared `budget` makes the cap of a run (None: the oracle's own)."""
+    return {} if budget is None else {"max_insns": budget}
+
+
+def row_cap(name):
+    """...and those a run of row `name`'s ORIGINAL takes: its declared budget, or none."""
+    return cap_of(row_budgets().get(name))
 
 
 def registered_case(name):

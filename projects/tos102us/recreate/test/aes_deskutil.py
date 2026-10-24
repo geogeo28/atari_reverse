@@ -33,6 +33,7 @@ SIGNATURES_WAVE_4 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_4.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_M_WAVE_4 = tuple(SIGNATURES_WAVE_4)
+UNIT_M_WAVE_4_HELD_AT_F4 = ()             # none: both built-ins FLIPPED at band 6 slice F4
 SHOW_FILE, PRINT_FILE = UNIT_M_WAVE_4
 
 # THE ENGINE'S GEMDOS, REPLAYED — wave 2's one mechanism: `aes_deskdir.in_place`'s walk (its named STOPS: the viewer

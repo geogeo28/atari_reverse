@@ -2199,9 +2199,11 @@ def test_an_in_process_door_case_s_declared_budget_is_held_from_above_too():
 # the margin (14), dir_op's seven copies, do_wfull's shrink arm.
 def _named_rows_declaring_a_budget():
     import test_desk_dir
+    import test_desk_disk
     import test_desk_fun
     import test_desk_supp
     import test_desk_top
+    import test_desk_util
     import test_desk_win
     import aes_switching
     rows = [*(row for row in test_desk_fun.DRIVER_ROWS.values() if row.budget),
@@ -2209,13 +2211,18 @@ def _named_rows_declaring_a_budget():
             *(row for row in test_desk_win.ROWS.values() if getattr(row, "budget", None)),
             # (band 6 slice F3, stage 2, author B: unit J's openers and closers, do_wopen's new windows, cnx_get's restarts)
             *(row for battery in (test_desk_supp.ROWS_WAVE_2, test_desk_win.ROWS_STAGE_2, test_desk_top.ROWS_WAVE_2)
-              for row in battery.values() if row.budget)]
+              for row in battery.values() if row.budget),
+            # (band 6 slice F4: unit N's formats and copies, print_file's Retry — the rows that switch; a plain row's is
+            # `case.row_budgets`', below)
+            *(row for battery in (test_desk_disk.ROWS, test_desk_util.ENGINE_ROWS)
+              for row in battery.values() if getattr(row, "budget", None))]
     return {aes_switching.row_name(row) for row in rows}
 
 
-NAMED_ROWS_DECLARING_A_BUDGET = 50      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
+NAMED_ROWS_DECLARING_A_BUDGET = 58      # 22 (S2-A: unit H's 14, dir_op's 7, do_wfull's 1) + 21 (S2-B: unit J's 14, do_wopen's 2, cnx_get's 5)
                                         # + 4 (P7: unit J's parked arrivals under their cases' budgets)
                                         # + 3 (S3: fun_d2desk's disk copy OK'd, fun_drag's copy and delete)
+                                        # + 8 (F4: Format's three formats, the copy's two, copy_tracks' two, the printer's Retry)
 
 
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
@@ -2244,6 +2251,52 @@ def test_a_named_row_s_declared_budget_serves_its_every_later_derivation(row_nam
     be refused by name without it) — the same switches its registration settled."""
     held = aes_event.SWITCHING_ROWS[row_name]
     assert held.row.budget and aes_event.rederived(row_name) == held.switches
+
+
+# ...AND SINCE THE USER'S RULING OF 2026-10-23 A NAMED PLAIN ROW past the oracle's own cap declares one too
+# (`aes.register`'s `budget=`: needed, fitted, not stale, held there by the row's name — `test_desk_util.py`,
+# `test_desk_disk.py`). NAMED: every plain row that declares a budget is read off its battery here, by name; one no
+# battery names is refused by name (`vet_every_plain_budget_is_named`). Each battery's: desk_show_file's eight.
+def _named_plain_rows_declaring_a_budget():
+    import test_desk_util
+    return {test_desk_util.ENGINE_ROWS[name][0] for name in test_desk_util.PLAIN_ENGINE_ROWS}
+
+
+NAMED_PLAIN_ROWS_DECLARING_A_BUDGET = 8     # (F4: desk_show_file's eight arrivals)
+A_PLAIN_BUDGET_NOT_NAMED = "a plain row declares a budget and no battery names it"
+
+
+def vet_every_plain_budget_is_named(declared, named):
+    """Every plain row that declares a budget (`case.row_budgets`) is a NAMED one, read off its battery — refused by
+    the rows' names else."""
+    unnamed = sorted(set(declared) - set(named))
+    assert not unnamed, f"{A_PLAIN_BUDGET_NOT_NAMED}: {unnamed}"
+
+
+def test_every_plain_row_declaring_a_budget_is_named_and_counted():
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    named = _named_plain_rows_declaring_a_budget()
+    vet_every_plain_budget_is_named(case.row_budgets(), named)
+    assert set(case.row_budgets()) == named and len(named) == NAMED_PLAIN_ROWS_DECLARING_A_BUDGET
+
+
+def test_a_plain_row_declaring_a_budget_no_battery_names_is_refused_by_name():
+    """RED: a plain row's budget in the registry that no battery names (a registration that went round the census) —
+    refused by its name."""
+    unnamed = "aes_desk_util_redraw, a plain row no battery names"
+    with pytest.raises(AssertionError, match=f"{A_PLAIN_BUDGET_NOT_NAMED}: \\['{unnamed}'\\]"):
+        vet_every_plain_budget_is_named({**case.row_budgets(), unnamed: aes_event.DIFFERENTIAL_INSNS + 1},
+                                        _named_plain_rows_declaring_a_budget())
+
+
+@pytest.mark.parametrize("row_name", sorted(_named_plain_rows_declaring_a_budget()))
+def test_a_named_plain_row_s_declared_budget_serves_its_every_later_run(row_name):
+    """...each NAMED plain row's original run again as every consumer runs it (`test_boot_snapshot.run_original`,
+    under `case.row_cap`): it returns under its budget, past the oracle's own cap."""
+    import test_boot_snapshot
+    row = case.registered_case(row_name)
+    _final, _writes, regs = test_boot_snapshot.run_original(row)
+    assert aes_event.DIFFERENTIAL_INSNS < regs["ninsns"] <= case.row_budgets()[row_name] // aes_event.DERIVATION_MARGIN
 
 
 # ---- A SESSION PRICED BY ITS SLICES: the ROM's own fs_input, the oracle on both shores ------------------------------------
@@ -4811,6 +4864,12 @@ ROWS_THAT_SWITCH = {
     # budgets; `test_desk_top.py`: hndl_kbd's Esc, a door user — its idle's two keys plain rows)
     "aes_desk_fun_d2desk": 5, "aes_desk_fun_drag": 4, "aes_hndl_kbd": 1,
     # ---- end of stage 3's ----
+    # ---- band 6 slice F4 ---- (`test_desk_disk.py`: unit N's every case at an arrival but util_redraw's two plain rows —
+    # 13 door users, the dialogs and alerts, 7 under their declared budgets; 9 with no door, the draws; `test_desk_util.py`:
+    # print_file's two door users, Retry's under its budget — the show's eight are plain rows)
+    "aes_desk_util_open": 2, "aes_desk_util_show": 6, "aes_desk_util_bars": 2, "aes_desk_util_error": 1,
+    "aes_desk_copy_tracks": 2, "aes_desk_format": 4, "aes_desk_copy_disk": 3, "aes_desk_print_file": 2,
+    # ---- end of slice F4's ----
     # ...and the screen manager's handlers (`test_aes_gemctrl.py`): a gadget watched or dragged, an arrow repeated,
     # the menu worked, the button waited up — the screen manager the row's process. (THE REGISTRY's drops of these —
     # this census's subject — are what their Tier 1 companions stage and compare over the ROM's arrival's machine;
@@ -4902,8 +4961,10 @@ BY_NATURE_CENSUS = {
                            # (band 6 slice P7) the seven arriving with drive_check's own park held: drive_check's two,
                            # do_dopen's, do_fopen's two, close_folder's and fun_close's
                            THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4},
+                           # (band 6 slice F4) Format's three formats and the copy's two copies: their floppy replayed
+                           # reaches the BIOS
                            THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 5, "aes_do_dopen": 3, "aes_do_fopen": 4, "aes_close_folder": 2,
-                                                  "aes_fun_close": 2},
+                                                  "aes_fun_close": 2, "aes_desk_format": 3, "aes_desk_copy_disk": 2},
                            # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
@@ -5633,6 +5694,17 @@ SLOTS_HELD_WHERE_PARKED = {
                           "AES_FM_BUTTON_FRAME", "AES_DESK_FUN_D2DESK_FRAME", "AES_FM_ALERT_FRAME", "AES_DESK_FUN_DESK2WIN_FRAME"),
     "aes_hndl_kbd": ("AES_DESK_FUN_REBLD_FRAME", "AES_DESK_BIND_FRAME", "AES_DESK_OPEN_FRAME", "AES_DESK_VIEW_FRAME", "AES_DESK_FUN_MSG"),
     # ---- end of stage 3's ----
+    # ---- band 6 slice F4 ---- (MEASURED by the audit below, over each door user's rows: util_show's dialog under fm_do and
+    # its button's watch, util_error's alert; Format's and the copy's own frame and util_open's rectangle — held across the
+    # dialog's and the alerts' waits — over the same; the printer's not-ready alert)
+    "aes_desk_util_show": ("AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT", "AES_FM_BUTTON_FRAME"),
+    "aes_desk_format": ("AES_DESK_UTIL_FRAME", "AES_DESK_UTIL_OPEN_RECT", "AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT",
+                        "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_desk_copy_disk": ("AES_DESK_UTIL_FRAME", "AES_DESK_UTIL_OPEN_RECT", "AES_FM_DO_FRAME", *STILLDN_S, "AES_GR_WATCHBOX_RECT",
+                           "AES_FM_BUTTON_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_desk_util_error": ("AES_FM_DO_FRAME", "AES_FM_ALERT_FRAME"),
+    "aes_desk_print_file": FM_ALERT_S,
+    # ---- end of slice F4's ----
 }
 A_SLOT_PER_PROCESS = ", process "
 

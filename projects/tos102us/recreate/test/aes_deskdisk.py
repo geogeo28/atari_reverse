@@ -27,6 +27,7 @@ SIGNATURES_WAVE_4 = {
 for _name, (_restype, _frame) in SIGNATURES_WAVE_4.items():
     aes.declare_alcyon(_name, _restype, (IMAGE, *_frame))
 UNIT_N_WAVE_4 = tuple(SIGNATURES_WAVE_4)
+UNIT_N_WAVE_4_HELD_AT_F4 = ()             # none: the ten FLIPPED at band 6 slice F4
 
 # FORMAT AND THE COPY REACH GEMDOS (their Mallocs, Mfrees, Format's Dfree): on both shores of a case, unit C's recorder
 # replaying the ROM's own run in place (`aes_deskdir`'s ENGINE, `in_place`, `replayed` — wave 2's one mechanism; Dfree

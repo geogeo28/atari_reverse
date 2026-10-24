@@ -122,7 +122,9 @@ FLIPPED_AT_F3 = {
                             # fun_d2desk and fun_drag in UNENTERED
     # ---- end of stage 3's ----
 }
-FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values())
+# BAND 6 SLICE F4 (wave 4's twelve): the same triple. (The engine's eight `bsr`-only parts have no entry and no thunk.)
+FLIPPED_AT_F4 = (12, 12, 2)    # unit M's two, unit N's ten; 2 entered (show_file, util_redraw: by their plain rows) — UNENTERED's ten
+FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4)
 ENTRIES_FLIPPED_SINCE_F1 = sum(entries for entries, _thunks, _entered in FLIPPED_SINCE_F1)
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_SINCE_F1,
             THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_SINCE_F1}
@@ -481,8 +483,9 @@ class ThroughTheTable(tier3.RomBench, _EnteredAtTheLineFCaller):
         self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
         self.through_the_table = True
         try:
-            return self._both_sides(aes.LINE_F_CALLER_AT, symbol, dict(regs), pokes, (psg_seed, None, io_seed), run_ours, vet_ours,
-                                    (0, 0), schedule=schedule, dropped=dropped)
+            with tier3.originals_capped_by_the_row_s_budget(name):     # (a named plain row's declared budget)
+                return self._both_sides(aes.LINE_F_CALLER_AT, symbol, dict(regs), pokes, (psg_seed, None, io_seed), run_ours,
+                                        vet_ours, (0, 0), schedule=schedule, dropped=dropped)
         finally:
             self.through_the_table = False
 
@@ -737,6 +740,13 @@ UNENTERED = {
     # `test_aes_desk_ours.py`; hndl_kbd's idle key's plain row enters its own)
     **{f"AES_ROM_DESK_FUN_{driver}": [INTERRUPTED] for driver in ("D2DESK", "DRAG")},
     # ---- end of stage 3's ----
+    # ---- band 6 slice F4 ---- THE EIGHT FLIPPED WHOSE EVERY ROW SWITCHES (entered on our shore instead,
+    # `test_aes_desk_ours.py`: the built-ins by sh_cmd's door; show_file's and util_redraw's plain rows enter theirs) — and
+    # fat_mark and fat_swap, flipped ⚠️ VERIFIED-BUT-UNPRICED with no row (no run of the device model reaches them)
+    **{f"AES_ROM_DESK_{routine}": [INTERRUPTED] for routine in (
+        "PRINT_FILE", "UTIL_OPEN", "UTIL_SHOW", "UTIL_BARS", "UTIL_ERROR", "COPY_TRACKS", "FORMAT", "COPY_DISK")},
+    **{f"AES_ROM_DESK_{routine}": [NO_CASE] for routine in ("FAT_MARK", "FAT_SWAP")},
+    # ---- end of slice F4's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group and F3 stage-author adds its own entered count on its line of FLIPPED_AT_F2 / FLIPPED_AT_F3)
@@ -971,10 +981,10 @@ LINKED_AND_NOT_FLIPPED_UNITS = {
     # ---- end of group G4's wave-2 ----
     # ---- band 6 wave 4: each unit's WAVE-4 list (`UNIT_<X>_WAVE_4`, its own block of the unit's module) and count ----
     # ---- band 6 wave 4, group G1 (unit M) ----
-    ("aes_deskutil", "UNIT_M_WAVE_4"): 2,
+    ("aes_deskutil", "UNIT_M_WAVE_4_HELD_AT_F4"): 0,     # none: show_file and print_file flipped at slice F4
     # ---- end of group G1's wave-4 ----
     # ---- band 6 wave 4, group G2 (unit N) ----
-    ("aes_deskdisk", "UNIT_N_WAVE_4"): 10,
+    ("aes_deskdisk", "UNIT_N_WAVE_4_HELD_AT_F4"): 0,     # none: the ten flipped at slice F4
     # ---- end of group G2's wave-4 ----
 }
 LINKED_AND_NOT_FLIPPED_ROUTINES = sum(LINKED_AND_NOT_FLIPPED_UNITS.values())

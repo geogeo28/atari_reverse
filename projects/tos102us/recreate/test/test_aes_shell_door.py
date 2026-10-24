@@ -1,7 +1,7 @@
 """THE DESK DOOR ON TARGET (`include/aes/deskdoor.h`), read off both blobs' own instructions.
 
-sh_main and sh_cmd call six routines out of the shell: the ROM's deskmain and the desk's four built-ins (band 6's:
-the ROM's own addresses) and dos_exec (ours: `gemdosif.S`). RULING W4-R4, THE ROM-DEPTH RULE: at each of them PD0's
+sh_main and sh_cmd call six routines out of the shell: the ROM's deskmain, the desk's four built-ins (band 6's: the
+ROM's own addresses until slice F4, their thunks of the table since) and dos_exec (ours: `gemdosif.S`). RULING W4-R4, THE ROM-DEPTH RULE: at each of them PD0's
 stack pointer is the ROM's. The door makes it so — it keeps our SP, stands the SP where the ROM's own frames leave
 it, lays the ROM's frame, calls, and puts ours back — and HALTS, never shifts, where our own frames run deeper than
 the ROM's or the call is made on another stack than PD0's.
@@ -90,13 +90,16 @@ Site = namedtuple("Site", "holder target rom_sp slot frame")
 STORE_A0, STORE_A1, PUSH_A0, PUSH_D1_W = 0x2E88, 0x2E89, 0x2F08, 0x3F01
 FILE_FRAME, DISK_FRAME, DOS_EXEC_FRAME = (STORE_A0,), (STORE_A1, PUSH_A0), (STORE_A1, PUSH_D1_W, PUSH_A0)
 DOS_EXEC = "aes_rom_dos_exec"
+# The desk's four built-ins, ours since band 6 slice F4: sh_cmd's door `jsr`s each one's thunk of the table
+# (`transcription.DESK_DOOR_THUNKS`, bound by the generated `include/aes/lineftable.h`).
+DOOR_THUNK = {name: thunk for thunk, name in transcription.DESK_DOOR_THUNKS.items()}
 SITES = {
     "deskmain": Site("aes_sh_main", addrs.AES_ROM_DESKMAIN, SP_IN_SH_MAIN, 0, ()),
     "dos_exec": Site("aes_sh_main", DOS_EXEC, SP_IN_SH_MAIN, SCRATCH_SLOT, DOS_EXEC_FRAME),
-    "show a file": Site("aes_sh_cmd", addrs.AES_ROM_DESK_SHOW_FILE, SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
-    "print a file": Site("aes_sh_cmd", addrs.AES_ROM_DESK_PRINT_FILE, SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
-    "format": Site("aes_sh_cmd", addrs.AES_ROM_DESK_FORMAT, SP_IN_SH_CMD, SCRATCH_SLOT, DISK_FRAME),
-    "copy a disk": Site("aes_sh_cmd", addrs.AES_ROM_DESK_COPY_DISK, SP_IN_SH_CMD, SCRATCH_SLOT, DISK_FRAME),
+    "show a file": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_SHOW_FILE"], SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
+    "print a file": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_PRINT_FILE"], SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
+    "format": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_FORMAT"], SP_IN_SH_CMD, SCRATCH_SLOT, DISK_FRAME),
+    "copy a disk": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_COPY_DISK"], SP_IN_SH_CMD, SCRATCH_SLOT, DISK_FRAME),
 }
 KEEP_SP, CMPA_L_SP, BCS_S, BLS_S, TRAP_7, MOVEA_L_SP, PUT_SP_BACK = 0x260F, 0xBFFC, 0x65, 0x63, 0x4E47, 0x2E7C, 0x2E43
 _A_LINE = re.compile(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{4} )+)", re.M)
@@ -152,15 +155,16 @@ def test_a_call_out_of_the_shell_is_the_door_s_steps_round_the_rom_s_frame(name,
         f"{name}: the door is taken with an earlier call's arguments still pushed (popped right after it)")
     if isinstance(site.target, int):    # ...the ROM's routine: the blob's one `jsr` of it (`tier3.rom_calls_owed`)
         assert list(bench_tier3().rom_calls_owed(elf).values()).count(target) == 1
-    else:                               # ...dos_exec, ours: nothing else of the build calls the `.S`'s entry
+    else:                               # ...an entry of ours (dos_exec's `.S`, a built-in's thunk): nothing else calls it
         assert [function for function, callees in transcription.call_graph(elf).items() if site.target in callees] == [site.holder]
 
 
 @EACH_BLOB
-def test_the_five_rom_routines_are_the_ones_tier_3_declares_owed(blob):
+def test_the_rom_routines_the_door_calls_are_the_ones_tier_3_declares_owed(blob):
     """THE ONE-SITE RULE, extended to the door (`bench/tier3.py`, ROM_CALLS_OWED_TO_A_LATER_BAND; `test_tier3.py`
     holds every entry to one site in its function): the blob's `jsr`s into the AES's ROM text that the table names
-    are exactly ub_trampoline's one and the door's five, each held by the function declared."""
+    are exactly the door's ROM routines — deskmain alone since band 6 slice F4 flipped the four built-ins —, each held
+    by the function declared."""
     owed = bench_tier3().rom_calls_owed(BLOBS[blob]())
     the_door_s = {routine: holder for routine, (holder, _why) in bench_tier3().ROM_CALLS_OWED_TO_A_LATER_BAND.items()
                   if holder in ("aes_sh_main", "aes_sh_cmd")}

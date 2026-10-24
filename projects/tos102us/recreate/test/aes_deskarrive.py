@@ -231,14 +231,15 @@ def register_row(each, *, answered=True, door=True, x_flag_differs=False, pokes=
     child doors (`aes_event.CHILD_DOORS`: the staging's twins in its companion's fork). `budget`: a row that switches
     whose run is past the default derivation margin DECLARES its own (the user's ruling of 2026-10-21, "rows may
     declare budget": held both ways by every derivation of the row, `aes_event._vet_the_margin` / `_vet_not_stale`);
-    a plain row declares none (refused by name). The row."""
+    since the user's ruling of 2026-10-23 a NAMED PLAIN ROW past the oracle's own cap declares one too, forwarded to
+    `aes.register` and held both ways there (`aes.vet_a_plain_row_s_budget`: an unneeded one, an unfitted one and a
+    stale one each refused by the row's name, before anything is registered). The row."""
     arrived = arrival_of(each)
     machine = pokes if pokes is not None else row_machine_of(arrived)
     said = label_said or label(each)
     answered = answered and vdi.ALCYON[each.name].restype is not None
     if not each.yields:
-        assert budget is None, f"{said}: a plain row declares no derivation budget"
-        return aes.register(said, each.name, arrived.arguments, machine, hook=hook, answer_compared=answered)
+        return aes.register(said, each.name, arrived.arguments, machine, hook=hook, answer_compared=answered, budget=budget)
     wake = WAKES.get(each.wake, {}) if at_idle is None else {"at_idle": at_idle}
     row = row_of(arrived, said, answered, pokes=machine, budget=budget, **wake)._replace(x_flag_differs=x_flag_differs)
     return aes_event.register_woken(row if door else row._replace(door=None, child_doors=row.door.doors))

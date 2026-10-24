@@ -204,13 +204,11 @@ LINKED_AND_NOT_FLIPPED = {}
 # print engine's eight `bsr`-only parts are static C inside the engine (ruling R-W4-5): no entry of theirs here, nor
 # in LINKED_HELD_NO_TABLE_ENTRY ----
 # ---- band 6 wave 4, group G1 (unit M `src/desk/deskutil.c`) ----
-LINKED_AND_NOT_FLIPPED.update({name: "unit M: the show / print engine's two built-ins, held at Tier 1 at their arrivals"
-                               for name in ("AES_ROM_DESK_SHOW_FILE", "AES_ROM_DESK_PRINT_FILE")})
+# (unit M's two built-ins, desk_show_file and desk_print_file, FLIPPED at band 6 slice F4 — the engine's eight parts
+# with them, read as flipped where their built-ins are: `test/aes_desk.py`'s ENGINE_PARTS)                         # F4
 # ---- end of group G1's wave-4 ----
 # ---- band 6 wave 4, group G2 (unit N `src/desk/deskdisk.c`) ----
-LINKED_AND_NOT_FLIPPED.update({f"AES_ROM_DESK_{routine}": "unit N: the disk utilities, held at Tier 1 at their arrivals"
-                               for routine in ("UTIL_OPEN", "UTIL_SHOW", "UTIL_REDRAW", "FAT_SWAP", "UTIL_BARS", "UTIL_ERROR",
-                                               "FAT_MARK", "COPY_TRACKS", "FORMAT", "COPY_DISK")})
+# (unit N's ten FLIPPED at band 6 slice F4: the unit whole)                                                         # F4
 # ---- end of group G2's wave-4 ----
 # ---- end of band 6 wave 4's ----
 

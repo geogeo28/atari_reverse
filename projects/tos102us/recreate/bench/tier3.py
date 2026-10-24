@@ -23,6 +23,7 @@ unless `PERF_ACCEPTED` carries it, and every pinned row still measuring what it 
 file also refuses a verified case with NO row here. This file prints; that file decides.
 """
 import argparse
+import contextlib
 import ctypes
 import functools
 import os
@@ -2182,13 +2183,11 @@ ROM_CALLS_OWED_TO_A_LATER_BAND = {}
 # the ROM's caller gives it. Declared like the transcription's, and held by the same test to the same rule: ONE site
 # each, inside the function named. A call of one from any other C, a second site, or a call of any other routine of
 # the AES's text reds there — "a call from C reds" is now "a call from C outside the desk door reds".
+# (Since band 6 slice F4 the four built-ins are ours: sh_cmd's door `jsr`s their thunks — `include/aes/lineftable.h`,
+# generated — so their entries went; deskmain, W3b's, is the one left.)
 _THE_DESK_DOOR_S = "band 6: the desk's range, called through the desk door (`include/aes/deskdoor.h`)"
 ROM_CALLS_OWED_TO_A_LATER_BAND.update({
     addrs.AES_ROM_DESKMAIN: ("aes_sh_main", f"{_THE_DESK_DOOR_S} — the desktop itself"),
-    addrs.AES_ROM_DESK_SHOW_FILE: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fe`"),
-    addrs.AES_ROM_DESK_PRINT_FILE: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fd`"),
-    addrs.AES_ROM_DESK_FORMAT: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fc`"),
-    addrs.AES_ROM_DESK_COPY_DISK: ("aes_sh_cmd", f"{_THE_DESK_DOOR_S} — sh_cmd's `$fb`"),
 })
 # ---- end of slice SH's block ------------------------------------------------------------------------------------------------
 
@@ -4500,9 +4499,10 @@ def _foreign_inside_the_slice(who, our_marks, original_marks, kinds=frozenset())
 
 
 def _original_own_cycles(row):
-    """The ROM's own cycles over `row`'s case: the ORIGINAL run alone, profiled, inside `AES_OWN_SPANS`."""
+    """The ROM's own cycles over `row`'s case: the ORIGINAL run alone, profiled, inside `AES_OWN_SPANS` (under the row's
+    declared budget, a named plain row's: `case.row_cap`)."""
     _profiled(lambda: emu.run(make_image(row.pokes), row.entry, dict(row.regs or {}), psg_seed=row.psg_seed,
-                              io_seed=row.io_seed, schedule=row.schedule))
+                              io_seed=row.io_seed, schedule=row.schedule, **case.row_cap(row.registered)))
     return _cycles_in(AES_OWN_SPANS)
 
 
@@ -4920,6 +4920,24 @@ def _measure_transcription(row, bench):
                                        io_seed=row.io_seed, staged_entry=row.staged_entry, shared_entry=row.shared_entry)
 
 
+@contextlib.contextmanager
+def originals_capped_by_the_row_s_budget(registered):
+    """A NAMED PLAIN ROW'S DECLARED BUDGET (`case.row_cap`, the user's ruling of 2026-10-23) as the cap of every
+    unwatched run of its ORIGINAL inside a measurement of the row registered as `registered` — the kit's
+    `_both_sides` runs it by `emu.run` at the oracle's own 200,000, which the row's run is past; nothing changes for a
+    row that declares none."""
+    cap = case.row_cap(registered)
+    if not cap:
+        yield
+        return
+    run = emu.run
+    emu.run = functools.partial(run, **cap)
+    try:
+        yield
+    finally:
+        emu.run = run
+
+
 def measure(row, bench, sessions=None):
     """One row's `Measurement` — which is also its second differential, so this raises on a target
     build that does not equal the original. `sessions` (a `Sessions`, made over this `bench`): the holder's
@@ -4940,7 +4958,8 @@ def measure(row, bench, sessions=None):
     _VETTED.clear()
     OUR_RUN.clear()
     DOOR_SPLIT.clear()
-    measured = _measured_on_its_path(row, bench)
+    with originals_capped_by_the_row_s_budget(row.registered):
+        measured = _measured_on_its_path(row, bench)
     vet_our_run_kept_out_of_the_aes(row, bench, measured)
     assert not drops_held_to_our_run(row) or _VETTED, (
         f"{row.symbol} / {row.case}: the row drops bytes OUR run must have stored too (an SR save word, a QPB's "

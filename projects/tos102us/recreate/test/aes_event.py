@@ -3383,7 +3383,7 @@ DOOR_USER_ROWS = []
 
 
 def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, objects=None, answer_compared=True,
-             also_dropped=()):
+             also_dropped=(), door_user=True):
     """One priced `VERIFIED_CASES` row of a door user, named `<core>, <label>` — over `pokes` with `savptr` moved into
     the stack band, so the trap's save lands where neither the row nor its companion compares it and Tier 3 drops
     nothing for it (the cost is the same: the trap saves the same frame, elsewhere). SETTLED BY THE ONE SPELLING
@@ -3392,13 +3392,15 @@ def register(label, name, arguments, pokes, *, drawing=False, io_seed=None, obje
     leaves and dropped at Tier 3 by name, with the companion that drops nothing. `objects` and `answer_compared` as
     `run_event`'s and `aes.register`'s. `also_dropped`: `((lo, hi, why), ...)` THIS ROW's own Tier 3 drops beside
     them — bytes both builds store, each its own by nature (the marshal's copy back of its caller's stack words) —
-    which the same companion compares, nothing dropped."""
+    which the same companion compares, nothing dropped. `door_user` False for a PLAIN DRAWING ROW that calls no
+    rebound entry (util_redraw's): registered the same way, kept out of `DOOR_USER_ROWS`."""
     machine, hook = merge_pokes(pokes, savptr_in_the_band()), door_hook(drawing, objects)
     settled_pokes, drops = settled_where_stored(machine, _stored_by_a_door_row(name, arguments, machine, io_seed),
                                                 WORDS_BY_NATURE)
     drops = tuple(drops) + tuple(also_dropped)
     row_name = f"{routines.core_symbol(name)}, {label}"
-    DOOR_USER_ROWS.append(row_name)
+    if door_user:
+        DOOR_USER_ROWS.append(row_name)
     companion = functools.partial(aes.undropped, name, arguments, settled_pokes, hook, io_seed, answer_compared)
     return aes.ROWS.register(row_name, getattr(addrs, name), aes.staged(name, arguments, settled_pokes), io_seed=io_seed,
                              dropped=drops, answered=answer_compared, undropped=companion if drops else None)

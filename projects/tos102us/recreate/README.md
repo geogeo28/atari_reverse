@@ -506,7 +506,9 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   A FLIP (band 6 slice F4's prep): they lie inside the show engine's body, so each is the ROM's address while the blob
   binds the show engine as the ROM's, and our C's `key_awaited` once it binds it as ours (`OUR_STOPS_ONCE_FLIPPED`,
   read off the blob's own binding by `our_stops`). A stop that is ours with no symbol in the blob is refused by name:
-  an inlined key wait has no entry to stop at, so the flip makes `key_awaited` `noinline`.
+  an inlined key wait has no entry to stop at, so the flip made `key_awaited` `noinline` (band 6 slice F4,
+  `src/desk/deskutil.c`): the viewer's eight chains walk on our shore, stopped at its entry
+  (`test_each_named_stop_has_its_address_on_our_shore`, the pin inverted).
 - **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 118 of 120 chains): the screen and the desk's block
   (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
   and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
@@ -531,7 +533,8 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
 ### W6-R4 ON THE FLIPPED STATE — `tools/flipped_depths.py` (band 6 slice D)
 
 The suite's `DEPTHS` are the shipped blob's AS IT IS (since band 6 slice F2c: units O and D and wave 1b's hundred
-flipped, nothing of them held — `test_aes_desk_ours.py` re-derives them on that partial flip). The hard gate binds every flip that
+flipped, nothing of them held — `test_aes_desk_ours.py` re-derives them on that partial flip; SINCE SLICE F4 EVERY LINKED ROUTINE OF BAND 6 IS
+FLIPPED, so the suite's state IS the flipped state the tool measures — W3a and W3b aside: not linked). The hard gate binds every flip that
 deepens a path (the user's R1), so each flip slice is measured BEFORE it lands on the state it is heading for: a private
 build with EVERY linked routine of band 6 flipped.
 
@@ -546,8 +549,8 @@ REFUSES IF THE BLOB IS NOT FLIPPED (read off its own bound table, as who-ran rea
 and prints PD0 per chain against the gate measured on that blob. A step whose write ledger saturated is a refusal. EXIT
 NON-ZERO: the blob not flipped, a chain over the gate, a chain refused that the tool does not DECLARE (W6-R8's two on
 either state, and on the flipped state every chain with a step at a named stop that the flipped blob has no C-side
-stop for: DERIVED off that blob, as `our_stop` refuses it — the viewer's eight chains while `key_awaited` is inlined,
-none once the flip makes it `noinline`), or a declared one that walks.
+stop for: DERIVED off that blob, as `our_stop` refuses it — the viewer's eight chains while `key_awaited` was inlined,
+none since slice F4 made it `noinline`), or a declared one that walks.
 COST: a first copy ~700 MB and 10–15 min at `--jobs 6`; 2–3 min when the walks' derivations are kept. WHEN: every flip
 slice (F1..F4) and W3b, on its own tree, before it lands — it must exit 0; a diet lever, as a `--patch`. Its text steps,
 its three self-checks and the diet's split helpers (each a routine of the shipped ELF, `win_bldview`'s jump) are held
@@ -584,14 +587,20 @@ win_icalc, win_bldview, win_shwall; F2c: the evnt_multi and objc_draw bindings, 
 WAVE 1b IS COMPLETE, every held list above `()`. SINCE SLICE F3 (three stages, the cut's split: a routine flips once
 every C callee of it is, do_wopen / pro_run with unit J for the File > Open path's depth) WAVE 2's FORTY-FOUR ARE FLIPPED
 TOO — `$fde844` by ub_trampoline's operand (N18) — and every `UNIT_<X>_WAVE_2_HELD_AT_F3` is `()` since its stage 3
-(fun_d2desk, fun_drag, hndl_kbd); what is held of band 6 is wave 4's twelve (`UNIT_M_WAVE_4`, `UNIT_N_WAVE_4`), W3a's
-cycle and W3b's deskmain. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
+(fun_d2desk, fun_drag, hndl_kbd); SINCE SLICE F4 WAVE 4's TWENTY ARE FLIPPED TOO — unit M's two built-ins and unit N's ten by their table entries (the
+four built-ins by sh_cmd's desk door too, which `jsr`s the same thunks), the engine's eight `bsr`-only parts with their
+built-ins (`aes_desk.ENGINE_PARTS`) — and `UNIT_M_WAVE_4_HELD_AT_F4` / `UNIT_N_WAVE_4_HELD_AT_F4` are `()`; fat_swap
+and fat_mark flipped ⚠️ VERIFIED-BUT-UNPRICED (no run of the device model reaches Format's bad-sector arm). What is
+held of band 6 is W3a's cycle (the 17 + `$fe2172`) and W3b's deskmain; `LINKED_AND_NOT_FLIPPED` is empty. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
 routine's wait, refused by name on a plain row) and registers plain an arrival of a yielding routine whose ROM run
 enters no process (`reaches_no_binding`, measured both ways). Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
 DESK CALLS THE ROUTINE. Each group's case machinery is its test module beside its units' signatures —
 `aes_deskwin.py` (G1), `aes_deskapp.py` (G2, with `aes_desktop.py`, `aes_desksupp.py`), `aes_deskact.py` (G3, with
-`aes_deskfpd.py`), `aes_deskarrive.py` (G4) — each an arrival of the kind below, a row that switches where the routine
+`aes_deskfpd.py`), `aes_deskarrive.py` (G4) — and wave 4's own,
+`test_desk_disk.py` (unit N: rows that switch through `aes_event.woken_row`, door users or with no door as measured,
+util_redraw's two the event layer's plain drawing kind) and `test_desk_util.py` (unit M: the show's eight NAMED PLAIN
+rows under their declared budgets, the print's two door users) — each an arrival of the kind below, a row that switches where the routine
 reaches a binding of unit D's, else the plain differential.
 
 - **AN ARRIVAL** (`aes_deskleaves.arrival(At(routine, chain, step, nth))`; `aes_deskbind.arrival(short, chain, nth)`,
@@ -2637,12 +2646,40 @@ NOT STALE (`B <= 10 N`); the four refusals are red by name on a real row (`test_
 fitted, 10N + 1 stale, none the default's margin, a short row's not needed). The registry keeps the budget
 (`SwitchingRow.budget`), so every later derivation — the snapshot's sweeps — runs under it:
 `test_aes_event._named_rows_declaring_a_budget` reads the named rows off their batteries,
-`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (50 since band 6 slice F3's stage 3, 47 at slice P7, 43 at F3 stage 2's third fix pass), and each is derived again under
-its own budget to the switches it settled. A PLAIN row declares none: its path forwards no budget to `aes.register`, so
-a declaration there would be dropped in silence — `aes_deskarrive` and `aes_deskwin` refuse it by name, each pinned by a
-refusal test (`test_a_plain_row_declaring_a_budget_is_refused_by_name_by_aes_deskarrive` in `test_desk_fun`,
-`..._by_aes_deskwin` in `test_desk_win`; `aes_desksupp.registered_row` has no plain path). The default
-(`DERIVATION_INSNS`, 1.5 M) is unchanged.
+`NAMED_ROWS_DECLARING_A_BUDGET` pins their count (58 since band 6 slice F4 — Format's three formats, the copy's two,
+copy_tracks' two and the printer's Retry; 50 at slice F3's stage 3, 47 at slice P7, 43 at F3 stage 2's third fix pass),
+and each is derived again under its own budget to the switches it settled.
+
+A NAMED PLAIN ROW MAY DECLARE ONE TOO (since band 6 slice F4, THE USER'S RULING of 2026-10-23, widening the rule of
+2026-10-21). A plain row has no derivation: its runs are the oracle's own — the settling run, the companion, the
+sweeps' runs of its original, the table's — each capped by `emu.run` at `DIFFERENTIAL_INSNS` (200,000). A plain row
+whose run is past that (desk_show_file's eight arrivals, 221,516 – 1,290,674 instructions) declares `budget=` on
+`aes.register` (forwarded by `aes_deskarrive.register_row`'s plain path, which refused every plain budget until F4),
+under the same three rules, held there BEFORE ANYTHING IS REGISTERED and refused by the row's name
+(`aes.vet_a_plain_row_s_budget`, the case cap's rule `aes_event._vet_a_case_s_cap`): NEEDED (the run is past
+`DIFFERENTIAL_INSNS`), FITTED (`5 N <= B`), NOT STALE (`B <= 10 N`). Its value is ITS TIER 1 CASE'S OWN — the same
+`budget` its plain differential runs under, pinned by identity (`test_desk_util.
+test_an_engine_row_s_declared_budget_is_its_tier_1_case_s_own`). The registry records it with the row
+(`case.Rows.register(budget=)`, read by `case.row_budgets` / `case.row_cap`), and EVERY RUN OF THE ROW'S ORIGINAL ASKS
+IT: the companion (`aes.undropped`), the sweeps (`test_boot_snapshot.run_original`), the table's own run
+(`tier3._original_own_cycles`) and the kit's unwatched original inside a measurement (`tier3.
+originals_capped_by_the_row_s_budget`, which caps the kit's `emu.run` for that row's measurement alone — the kit's
+`_both_sides` takes no cap of its own; also asked by `test_aes_lineftable`'s run through the caller). NAMED: every
+plain row that declares a budget is read off its battery by name (`test_aes_event._named_plain_rows_declaring_a_budget`,
+`NAMED_PLAIN_ROWS_DECLARING_A_BUDGET` = 8), and a plain budget no battery names is refused by name
+(`vet_every_plain_budget_is_named`). The refusals are red by the row's name: an UNNEEDED one on util_redraw
+(`test_desk_disk.test_an_unneeded_budget_on_a_plain_row_is_refused_by_name_by_aes_deskarrive`), NOT FITTED and STALE
+over the INF shown (`test_desk_util.PLAIN_BUDGET_REFUSED`), UNDECLARED and DECLARED BELOW THE RUN over the INF shown
+(the kit's "did not reach rts within N" at the cap, raised again with the row named by
+`aes.refused_past_its_cap_by_name`: `test_desk_util.PAST_ITS_CAP_REFUSED`); UNNAMED is checked by the census's unit
+test on a crafted dict (`test_aes_event.test_a_plain_row_declaring_a_budget_no_battery_names_is_refused_by_name`),
+and the STANDING CENSUS over the real registry
+(`test_aes_event.test_every_plain_row_declaring_a_budget_is_named_and_counted`) is the real-row guard (it reds by name
+on a real unnamed row — RF4's mutant: a ninth show registration with a budget and no battery's name); and each named
+one's original is run again under its budget (`test_a_named_plain_row_s_declared_budget_serves_its_every_later_run`).
+`aes_deskwin.register_row`'s plain path still refuses a budget by name (no named plain row goes through it,
+`test_desk_win`'s refusal test stands). The defaults (`DERIVATION_INSNS`, 1.5 M; `DIFFERENTIAL_INSNS`, 200,000) are
+unchanged.
 
 A SESSION PRICED BY ITS SLICES. A long interactive routine — the file selector listing a directory, scrolled, clicked
 and typed into — is one call no single row prices honestly: it is past the bench's cap, and one ratio over all of it
@@ -3504,7 +3541,7 @@ the WHOLE ROM GEM text (0 cycles); the rest listed UNENTERED by name with the re
 FLIPPED (band 6 wave 1a): a C core with a declared signature would be thunked, so the generator keeps its entries THE
 ROM'S by a declared list, `linef_table.LINKED_AND_NOT_FLIPPED` (each unit an `.update` of its own names) — held by a
 test of its own (`test_aes_lineftable.py`: exactly the units' names — a per-unit table of counts, 159 since band 6 wave
-1b, 202 + 1 since wave 2's userdef draw held in `LINKED_HELD_NO_TABLE_ENTRY`, 214 + 1 since wave 4 — each declared and linked, none a native
+1b, 202 + 1 since wave 2's userdef draw held in `LINKED_HELD_NO_TABLE_ENTRY`, 214 + 1 since wave 4, 0 since band 6 slice F4 — each declared and linked, none a native
 entry, none in ENTERED_BY_OURS_ALONE, none with a registered row) and by
 the ledger's `## Linked, unbound` section
 (`test_status.py`); a routine leaves the list at its flip, and the generated file's diff is that flip's record.
@@ -3525,7 +3562,7 @@ arrivals (`test_the_shipped_glue_into_the_door_is_held_to_the_rom_s_door`).
 
 **THE DESK DOOR — how the shell calls what is still the ROM's** (`include/aes/deskdoor.h`; `src/aes/shell.c`: sh_main,
 sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskmain and the desk's four built-ins
-(show a file, print, format, copy a disk: band 6's, the ROM's own addresses) and dos_exec (ours).
+(show a file, print, format, copy a disk: band 6's — the ROM's own addresses until slice F4, the table's own thunks since) and dos_exec (ours).
 - **THE ROM-DEPTH RULE.** sh_main runs on PD0's stack for the whole session, so its frame and gem_main's decide
   where every frame of the desk lies, and dos_exec parks the process's stack pointer 64 bytes under the SP it is
   entered with. At each of the six the door keeps our SP in a callee-kept register, STANDS THE SP WHERE THE ROM'S
@@ -3542,8 +3579,8 @@ sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskm
   frames are gone at a door; `no-defer-pop` keeps an earlier call's arguments from standing under one. THE FIGURES
   (read and measured, `test_aes_stack.py`): sh_main entered 16 below PD0's top (the ROM's 32), 32 down at its doors
   (58), sh_cmd 52 (76) — pads 26 / 24, the vet's margins 26 / 22 / 20.
-- **ONE SITE EACH, DECLARED**: the five ROM routines are `tier3.ROM_CALLS_OWED_TO_A_LATER_BAND` entries beside
-  ub_trampoline's — the rule "a call from C reds" is "a call from C outside the desk door reds".
+- **ONE SITE EACH, DECLARED**: the door's ROM routines are `tier3.ROM_CALLS_OWED_TO_A_LATER_BAND`
+  entries — deskmain alone since slice F4 (the four built-ins' entries went with their flip; ub_trampoline's with N18) — the rule "a call from C reds" is "a call from C outside the desk door reds".
   `test_aes_shell_door.py` reads the door's steps at each site off both blobs.
 - **A FLIPPED BUILT-IN IS ENTERED AT THE TABLE'S OWN THUNK** (band 6 slice F4's prep, ruling O2). The door's two
   built-in shapes paste the routine's addrs.h NAME into `DESK_DOOR_BOUND_<name>` — where the shape's macro is spelled,
@@ -3553,7 +3590,8 @@ sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskm
   thunk then a `.globl` of the table's source, the one named exception `transcription.vet_the_table_s_globls` admits
   (`DESK_DOOR_THUNKS`). One declaration moves the table and the door together and no thunk is copied; a torn state
   (the table ours, the door the ROM's) cannot be generated, and the harness refuses one by name where it reads a
-  binding (`aes_desk._bound`).
+  binding (`aes_desk._bound`). SINCE SLICE F4 ALL FOUR ARE: the header
+  binds each to its thunk, `test_aes_shell_door.SITES` names the thunks, and the four `.globl`s are the table's.
 - **OFF TARGET** the five routines cannot run: the call leaves through the hook `recreate_call_desk_door`, keyed by
   the routine's ROM address (unbound, a door reached fails the run by name). AT TIER 1 THE ROM'S SHORE IS ANSWERED
   THE SAME WAY — "a ROM routine answered at its entry through a staged Line-F table" (`test/aes_shmain.py`): a RAM
