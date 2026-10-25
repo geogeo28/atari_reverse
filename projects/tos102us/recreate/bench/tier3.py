@@ -4563,11 +4563,13 @@ def _held_through_the_os(row, bench, **marked):
         windows.window_kinds = frozenset(_window_classes(switched)) if switches else frozenset()
     if switches:
         vet_the_images_at_the_stops(who, switched.taken, switched_original.taken)
-    if switches and row.registered in aes_event.SWITCHING_ROWS:
+    held = aes_event.every_switching_row().get(row.registered)
+    if switches and held:
         # ...and A QPB'S ADDRESS THE ROW DROPS (a wait on a pipe, woken or cancelled: one longword of a freed EVB)
         # names, on our blob, the same QPB the ROM's run parked — held to what our run's watch saw while the wait's
-        # frame was live (`aes_switching.vet_our_qpbs`; an unregistered row's measurement carries no such record).
-        aes_switching.vet_our_qpbs(who, aes_event.SWITCHING_ROWS[row.registered].qpbs, switched)
+        # frame was live (`aes_switching.vet_our_qpbs`; an unregistered row's measurement carries no such record; a
+        # target-only row's — band 6 W3a's, no companion — is the one vet of its QPB).
+        aes_switching.vet_our_qpbs(who, held.qpbs, switched)
     # WHAT THE WINDOWS HOLD OF THE AES'S ROM: on the ROM's shore all of them (a turn of our screen manager is the
     # ROM's ctlmgr's turn there); on ours the ROM's process's alone — a turn of ours holds none (held above).
     foreign_in_the_aes, in_the_rom_s_windows = measured.foreign.in_the_aes, the_rom_s_windows(measured).in_the_aes

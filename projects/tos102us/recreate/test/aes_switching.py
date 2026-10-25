@@ -1018,12 +1018,17 @@ def qpb_address_drops(qpbs):
     return tuple((at, at + aes.LONG_BYTES, aes_event.QPB_ADDRESS_WHY) for at in qpbs)
 
 
+def own_drops(row):
+    """THE DROPS `row` NAMES BY ITS OWN HAND, as `(lo, hi, why)`: its declared X flag (`THE_X_FLAG_ALONE`, where
+    `x_flag_differs`) and its own spans (`also_dropped`) — none of them derived off the ROM's run."""
+    return (THE_X_FLAG_ALONE if row.x_flag_differs else ()) + tuple(row.also_dropped)
+
+
 def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
     made = _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
                     *((row.budget,) if row.budget else ()))
-    own = (THE_X_FLAG_ALONE if row.x_flag_differs else ()) + tuple(row.also_dropped)
-    drops = tuple(made.drops) + own
+    drops = tuple(made.drops) + own_drops(row)
     if row.the_rom_s_screen_manager:    # ...a row left on the ROM's screen manager names neither of its spans
         drops = tuple(drop for drop in drops if drop[2] not in aes_takeover.WHYS)
     return made._replace(drops=drops) if drops != tuple(made.drops) else made
@@ -1156,19 +1161,27 @@ def register_row(row, under=None):
     dropped at Tier 3 with the companion a drop needs. `under`: THE NAMES it is registered under where they are not
     its one own (`row_name`) — a session cut into slices (`aes_event.register_woken_slices`): one settling, ONE
     `Registered` and one companion under every name. The row as registered."""
+    row, held = held_of(row)
+    undropped = functools.partial(companion, row)
+    for name in under or (row_name(row),):
+        aes_event.SWITCHING_ROWS[name] = held
+        aes.ROWS.register(name, _entry(row), held.pokes, dropped=held.drops, undropped=undropped, delivered=held.switches,
+                          answered=row.answered)
+    return row
+
+
+def held_of(row):
+    """`row` SETTLED FOR ITS REGISTRAR (`register_row`'s, and band 6 W3a's target-only one —
+    `aes_desk_w3a.register_target_only_switching`): `(the row, its arguments a tuple and its wakes a dict; its
+    `Registered`)`."""
     row = row._replace(arguments=tuple(row.arguments), at_idle=dict(row.at_idle or {}))
     made = settled(row)
     # (F2 stage 2's fix pass, reviewer B's F2: a "switching" row whose ROM run dispatches nothing is a plain row, priced
     # alike — refused here, where no census could see it)
     assert made.entered, (f"{row_name(row)}: registered as a row that switches, and the ROM's run through its "
                           f"dispatcher enters no process — a plain row")
-    held = Registered(row, made.pokes, made.drops, made.switches, made.entered, functools.partial(rederived, row), made.qpbs)
-    undropped = functools.partial(companion, row)
-    for name in under or (row_name(row),):
-        aes_event.SWITCHING_ROWS[name] = held
-        aes.ROWS.register(name, _entry(row), made.pokes, dropped=made.drops, undropped=undropped, delivered=made.switches,
-                          answered=row.answered)
-    return row
+    return row, Registered(row, made.pokes, made.drops, made.switches, made.entered, functools.partial(rederived, row),
+                           made.qpbs)
 
 
 def measured_on(blob, row):

@@ -41,7 +41,7 @@ THE_ROM_S_CTLMGR = its_own.cm.THE_ROM_S_BODY
 
 
 def _rows_with_the_screen_manager_ours():
-    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if takeover.named_in(held.drops)}
+    return {name: held for name, held in aes_event.every_switching_row().items() if takeover.named_in(held.drops)}
 
 
 # ---- THE BASE: how the screen manager stands where a boot leaves it ---------------------------------------------------------
@@ -140,11 +140,11 @@ def test_the_rows_with_the_screen_manager_ours_are_those_whose_run_enters_it_and
     the session's other slice. The screen manager's own rows (its handlers') name neither span in the registry:
     their process IS the screen manager — and at Tier 3 they are measured where each shore's own ctlmgr arrives at
     its handler (`aes_ctlmgr.HANDLED`), where the two spans are classes each such row names."""
-    ours = _rows_with_the_screen_manager_ours()
-    enters = {name for name, held in aes_event.SWITCHING_ROWS.items() if held.switches.process != SM and SM in held.entered}
+    ours, switching_rows = _rows_with_the_screen_manager_ours(), aes_event.every_switching_row()
+    enters = {name for name, held in switching_rows.items() if held.switches.process != SM and SM in held.entered}
     assert set(ours) == enters and len(ours) == 33
-    assert not [name for name, held in aes_event.SWITCHING_ROWS.items() if held.row.the_rom_s_screen_manager]
-    assert not [name for name, held in aes_event.SWITCHING_ROWS.items() if held.switches.process == SM and name in ours]
+    assert not [name for name, held in switching_rows.items() if held.row.the_rom_s_screen_manager]
+    assert not [name for name, held in switching_rows.items() if held.switches.process == SM and name in ours]
     pinned = {name for name in aes_turns_pinned.PINNED if not name.startswith(its_own.cm.SYMBOL)}
     # (A SESSION CUT INTO SLICES is pinned whole, under its session's own name — its battery holds the whole run on
     # each blob — where the registry holds its slices: the file selector's session behind the menu, two slices.)

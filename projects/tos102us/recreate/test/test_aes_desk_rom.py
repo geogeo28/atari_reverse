@@ -431,6 +431,9 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 slice F3 stage 3's fix pass (two arms of the stage's three no chain reached) ----
     "band 6 slice F3 stage 3's fix pass": (2, 8),      # Esc at the idle, no window; A: and B: boxed, A: dragged onto B:
     # ---- end of slice F3 stage 3's fix pass ----
+    # ---- band 6 W3a's prep (two arms of the cycle no chain reached) ----
+    "band 6 W3a's prep": (2, 4),           # two windows: the lower one's title clicked (WM_TOPPED), the top one's dragged (WM_MOVED)
+    # ---- end of band 6 W3a's prep ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -547,6 +550,9 @@ REACHED_BY_BLOCK = {
     # ---- band 6 slice F3 stage 3's fix pass ----
     "band 6 slice F3 stage 3's fix pass": 0,
     # ---- end of slice F3 stage 3's fix pass ----
+    # ---- band 6 W3a's prep ----
+    "band 6 W3a's prep": 0,                # (hndl_msg's two arms: no routine first reached)
+    # ---- end of band 6 W3a's prep ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 
@@ -592,7 +598,8 @@ DISPATCHER_ELSEWHERE = 188
 # What stores at 190 is not traced.
 DISPATCHER_AT_190 = frozenset({DEEPEST[desk.DISPATCHER_STACK][0], "A: opened, drive A: dragged into its window, Return",
                                "A: opened, the trash dragged into its window, Return",
-                               "file: dragged to the trash, OK — then drive A: dragged into its window", desk.EMPTIED_INFO})
+                               "file: dragged to the trash, OK — then drive A: dragged into its window", desk.EMPTIED_INFO,
+                               desk.LOWER_WINDOW_TOPPED})     # (band 6 W3a's prep: the two windows' chain, the lower one topped)
 
 
 def test_the_deepest_each_stack_is_taken_and_by_which_chain_off_the_write_ledgers():

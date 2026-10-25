@@ -418,6 +418,13 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   dos_read `FE3A78` (`moveq #$3f,d1; bra` into it) —, and six spans of bands 0–5 run under ROM callers (`FDAE38`, `FE39B6`,
   `FE3C3E`, dos_free's body `FE3C28..`, `FE3A08`, lmul `FE3DB4`). desk_evnt_multi `FDDED8` copies ALL SIX answer words out
   after the yield, the unwritten ones too: dead bytes travel from its frame into deskmain's (`link a6,#-72`).
+  W3a PREP (2026-10-24; STATUS.md, "BAND 6 W3a"): THE CYCLE NAMED, NO C YET — the 17 + hndl_button `FE2172`, by file:
+  desktop.c six (hndl_msg `FE2344`, hndl_menu `FE22CE`, hndl_button `FE2172`, do_deskmenu `FE1E4C`, do_filemenu `FE1E80`,
+  do_optnmenu `FE1FDE`), desksupp.c three (do_open `FE1568`, do_aopen `FE11B4`, do_info `FE16E6`), deskinf.c seven
+  (desk_inf_show `FDE8A6`, desk_inf_finish `FDE9A8`, desk_inf_file `FDEB10`, desk_inf_folder_dlg `FDED16`, desk_inf_disk
+  `FDEDF0`, desk_inf_pref `FDEF12`, desk_opn_appl `FDF082`), the NEW deskins.c two (desk_ins_disk `FDF11A`, desk_ins_app
+  `FDF3C8`) — declared target-only, not linked; entries the ROM's (DECLARED_NOT_LINKED). The cycle's one back-edge:
+  inf_show calls hndl_msg at `FDE99A` by the call word `$F558`.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

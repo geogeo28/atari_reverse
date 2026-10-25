@@ -1149,6 +1149,52 @@ CHAINS.update({
                           (RUBBER_BOX_BINDING, ICON_DRAG, addrs.AES_ROM_DESK_FUN_D2DESK)),
 })
 # ---- end of slice F3 stage 3's fix pass ----
+# ---- band 6 W3a's prep: TWO ARMS OF THE CYCLE NO CHAIN REACHED (the user's U4; the cut's §2.2) ----
+# hndl_msg's WM_TOPPED (21) — the lower of two windows' title clicked — and WM_MOVED (28) — the top window's title dragged
+# lower; each run's first hndl_msg arrival holds that message (measured). (opn_appl's chain, the user's U2 — the program
+# installed as TOS-takes parameters, double-clicked, Cancel — reaches it with no launch, and is HELD OUT: its walk on our
+# shore stores 1,618 B down PD0, over W6-R4's gate of 1,548 on today's state — the prep's hand-back, to rule.)
+LOWER_WINDOW_TOPPED = "two windows: the lower one's title clicked (WM_TOPPED)"
+TOP_WINDOW_MOVED = "two windows: the top one's title dragged lower (WM_MOVED)"
+TITLE_MOVED_BY = 48                     # how far down the top window's title is carried: it stays on the screen
+
+
+def _title_point(window):
+    """A point of `window`'s title bar (`(x, y, width, height)`): its middle, past the closer and short of the fuller."""
+    x, y, width, _height = window
+    return x + width // 2, y + GADGET_INSET_Y
+
+
+def lower_title_point(machine):
+    """...of THE window under the top one — refused by name where there is not exactly one, or its title's point lies
+    under the top window (a click there would be the top window's)."""
+    top = top_window(machine)
+    lower = [window for window in windows(machine) if window != top]
+    if len(lower) != 1:
+        raise Refused(f"{len(lower)} windows lie under the top one: a hand clicks the title of one")
+    point = _title_point(lower[0])
+    if aes_objects.inside(*point, top):
+        raise Refused(f"the lower window's title at {point} lies under the top window {top}")
+    return point
+
+
+def top_title_point(machine):
+    return _title_point(top_window(machine))
+
+
+def top_title_moved_point(machine):
+    x, y = top_title_point(machine)
+    return x, y + TITLE_MOVED_BY
+
+
+CHAINS.update({
+    LOWER_WINDOW_TOPPED: Chain("window: A: opened again (two windows)", clicked("the lower window's title", lower_title_point),
+                               (addrs.AES_ROM_HNDL_MSG, addrs.AES_ROM_WIN_TOP)),
+    TOP_WINDOW_MOVED: Chain("window: A: opened again (two windows)",
+                            dragged("the top window's title", top_title_point, "lower down", top_title_moved_point),
+                            (addrs.AES_ROM_HNDL_MSG, addrs.AES_ROM_DO_XYFIX)),
+})
+# ---- end of band 6 W3a's prep ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK

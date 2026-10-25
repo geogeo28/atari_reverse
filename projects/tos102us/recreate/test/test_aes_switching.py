@@ -187,14 +187,15 @@ def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_
     between its own two marks, and says so under itself alone: its battery's pins, `test_aes_fs_input_woken`)."""
     import test_aes_fs_input_woken as sliced_sessions
     table = test_status.BENCH_TABLE.read_text()
-    enters_another = [name for name, held in aes_event.SWITCHING_ROWS.items()
+    switching_rows = aes_event.every_switching_row()
+    enters_another = [name for name, held in switching_rows.items()
                       if name not in aes_event.SLICED_ROWS and set(held.entered) != {held.switches.process}]
     enters_another += [f"aes_fs_input, {session}: {label}" for (session, label), priced in sliced_sessions.WOKEN_PRICED.items()
                        if priced[-1] != switching.NO_WINDOW]
-    assert set(enters_another) <= set(aes_event.SWITCHING_ROWS)
+    assert set(enters_another) <= set(switching_rows)
     # ...OF TWO KINDS SINCE FLIP 4, by what the row names (`aes_takeover.named_in`: its screen manager ours): a turn of
     # OUR screen manager, said on a line of its own — one a turn — or a window of the ROM's process.
-    ours = [name for name in enters_another if aes_takeover.named_in(aes_event.SWITCHING_ROWS[name].drops)]
+    ours = [name for name in enters_another if aes_takeover.named_in(switching_rows[name].drops)]
     # ...or, SINCE THE NARROW DOOR FLIP, of a third: a handler's row measured behind our door whose one other process
     # is AN ACCESSORY — a turn of ours too (`aes_accessory_turns_pinned`), and no window of the ROM's process.
     an_accessory_s = [name for name in enters_another if name not in ours and name in aes_accessory_turns_pinned.PINNED]

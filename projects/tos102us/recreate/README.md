@@ -509,7 +509,7 @@ is walked again on OUR machine beside the ROM's — the campaign that holds each
   an inlined key wait has no entry to stop at, so the flip made `key_awaited` `noinline` (band 6 slice F4,
   `src/desk/deskutil.c`): the viewer's eight chains walk on our shore, stopped at its entry
   (`test_each_named_stop_has_its_address_on_our_shore`, the pin inverted).
-- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 118 of 120 chains): the screen and the desk's block
+- **THE THREE INVARIANTS, PER CHAIN** (`test_aes_desk_ours.py`, 120 of 122 chains): the screen and the desk's block
   (its code addresses given the ROM's names) byte-equal WHERE EVERY STEP ENDS; the OS's cycles equal on every step;
   and the converse — every band-6 routine still the ROM's has its own cycles equal on every step (each PC charged by
   EVERY inventory start, `aes_desk.charged`) but THE ONE CLASS `RUN_UNDER_BANDS_0_TO_5`: three spans a band-5 routine
@@ -545,7 +545,8 @@ It copies the project and `tools/` into the private dir (build/ and kept/ withou
 applies each `--patch` (a lever measured without touching a shared file), flips (LINKED_AND_NOT_FLIPPED emptied and
 the generator run again: `lineftable.S` and the desk door's bindings `include/aes/lineftable.h` together, so sh_cmd's
 four built-ins are entered at the table's own thunks on target, and no thunk is copied), rebuilds by force,
-REFUSES IF THE BLOB IS NOT FLIPPED (read off its own bound table, as who-ran reads it), walks every chain on our shore
+REFUSES IF THE BLOB IS NOT FLIPPED (read off its own bound table, as who-ran reads it — over the routines whose core THE
+BLOB LINKS: a routine declared and not yet linked, W3a's DECLARED_NOT_LINKED, has no core to flip), walks every chain on our shore
 and prints PD0 per chain against the gate measured on that blob. A step whose write ledger saturated is a refusal. EXIT
 NON-ZERO: the blob not flipped, a chain over the gate, a chain refused that the tool does not DECLARE (W6-R8's two on
 either state, and on the flipped state every chain with a step at a named stop that the flipped blob has no C-side
@@ -591,7 +592,25 @@ TOO — `$fde844` by ub_trampoline's operand (N18) — and every `UNIT_<X>_WAVE_
 four built-ins by sh_cmd's desk door too, which `jsr`s the same thunks), the engine's eight `bsr`-only parts with their
 built-ins (`aes_desk.ENGINE_PARTS`) — and `UNIT_M_WAVE_4_HELD_AT_F4` / `UNIT_N_WAVE_4_HELD_AT_F4` are `()`; fat_swap
 and fat_mark flipped ⚠️ VERIFIED-BUT-UNPRICED (no run of the device model reaches Format's bad-sector arm). What is
-held of band 6 is W3a's cycle (the 17 + `$fe2172`) and W3b's deskmain; `LINKED_AND_NOT_FLIPPED` is empty. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
+held of band 6 is W3a's cycle (the 17 + `$fe2172`) and W3b's deskmain; `LINKED_AND_NOT_FLIPPED` is empty. SINCE W3a's PREP the cycle has ONE HOME, `test/aes_desk_w3a.py`, before any of its C exists: its eighteen named in
+`include/addrs.h` by the file each goes to (`desk/desktop.c` six, `desk/desksupp.c` three, `desk/deskinf.c` seven, the
+NEW `desk/deskins.c` two — ins_disk, ins_app; EACH FILE'S NAMES THE PREFIX ITS C ALREADY USES, the orchestrator's B4:
+desktop.c's and desksupp.c's unprefixed, deskinf.c's — and its split deskins.c's — `DESK_`; `$fded16` is
+`AES_ROM_DESK_INF_FOLDER_DLG`, `$fde9ce` keeps its name),
+their Alcyon frames DECLARED TARGET-ONLY (`vdi.declare_alcyon(..., target_only=True)`, `vdi.TARGET_ONLY`: the user's
+R3, "no host twin", and the orchestrator's O1 — their C, once written, is to be compiled `#ifndef
+RECREATE_HOST_DIFFERENTIAL`; no C of them exists yet, and what enforces "no host twin" today is
+`vdi.declare_alcyon(target_only=True)`'s refusal: a host core of one is REFUSED BY NAME where it is declared), and the generator holds each entry THE ROM'S BY DECLARATION
+(`bench/linef_table.py`'s DECLARED_NOT_LINKED: a declared core no blob links yet; `test_desk_w3a.py` reds by name on
+one linked while listed — it moves to LINKED_AND_NOT_FLIPPED, then flips at its stage). THE SPLIT IS S2
+(`aes_desk_w3a.STAGES`), BY ROUTINE, NOT BY FILE (the orchestrator's B3): stage 1 deskinf.c's seven and deskins.c's two,
+stage 2 desksupp.c's three with do_optnmenu and do_deskmenu, stage 3 hndl_msg, hndl_menu, do_filemenu and hndl_button
+(desktop.c spans stages 2 and 3, written by sequential authors) — each stage a DAG of the AES map's callees but
+for THE ONE BACK-EDGE, inf_show -> hndl_msg, which inf_show's C makes THROUGH THE TABLE by the ROM's own call word
+(`$f558`, `desk/deskinf.h`'s INF_SHOW_HNDL_MSG_CALL_WORD; `aes_desk_w3a.CALLS_THROUGH_THE_TABLE`) — a declared C -> ROM
+call of the desk door's kind, red by name once hndl_msg is flipped (it outlived stage 3). hndl_button's store into its
+own argument slot 14(a6) (graf_mkstate handed its address) is read back by no caller (deskmain pops the five words):
+do_fopen's and fat_mark's class, pinned. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
 routine's wait, refused by name on a plain row) and registers plain an arrival of a yielding routine whose ROM run
 enters no process (`reaches_no_binding`, measured both ways). Unit O's GEMDOS glue and gemdosif's share their four
 statics through ONE header, `include/aes/dosglue.h`. A case of any is taken WHERE THE ROM'S OWN
@@ -2631,6 +2650,48 @@ it, from its measured run of N instructions, and the declaration is held both wa
   the margin by `stopped_at`.
 A registered row records its budget (`INTERRUPTED_ROWS[row].budget`), so the noise sweep's re-derivation and the row's
 Tier 3 companion run under it.
+
+THE TARGET-ONLY ROW KIND (band 6 W3a; the user's R3, the orchestrator's U1 / O2). A W3a routine has NO TIER 1 — no host
+core, no battery case, no companion — so its rows are a kind of their own: `aes_desk_w3a.register_target_only(label,
+routine, arguments, machine, budget=)` registers a PLAIN priced row through `aes.register(..., companion_free=True)` —
+its Line-F mask word dropped at Tier 3 with NO COMPANION (`case.Rows.register`'s `companion_free`; listed by
+`case.tier3_companion_free`, so `test_tier3`'s companion test asks none of it) — held by Tier 3's own differential on
+both blobs and by the our-shore campaign's invariants. Its refusals, each by the row's name and before anything is
+registered: a routine outside W3a's declared set; a W3a routine with a Tier 1 of its own (a host core, or a row of its
+core registered with a companion). A NAMED TARGET-ONLY ROW MAY DECLARE A BUDGET (the user's ruling of 2026-10-24): the
+2026-10-21 / 10-23 rule — NEEDED, FITTED (5 N <= B), NOT STALE (B <= 10 N), N THE ROW'S OWN measured run (no Tier 1
+case supplies the value) — through F4's machinery unchanged (`aes.vet_a_plain_row_s_budget`,
+`aes.refused_past_its_cap_by_name`), its value ONE NAMED CONSTANT of the battery that the registry records AS ITSELF
+(the row and every later run of its original, `case.row_cap`, read the same object; the census reds by name where they
+do not). Each refusal has a standing negative case at a real arrival (hndl_msg's WM_TOPPED, 225,267 instructions, and
+WM_MOVED, 120,227: unneeded, not fitted, stale, undeclared past the cap, declared below the run); unnamed — a budget no
+registration declares — is F4's own census (`test_aes_event.vet_every_plain_budget_is_named`, which now reads the kind's
+named budgets beside the batteries'). Its own count: `test_desk_w3a.NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET` (0 today).
+
+ITS SWITCHING KIND (the orchestrator's B2): `aes_desk_w3a.register_target_only_switching(row)` — a W3a row that switches,
+settled as every row that switches is (`aes_switching.held_of`, `register_row`'s own first half), its by-nature drops
+VOUCHED FOR BY THE ROM RUN'S OWN WRITE LEDGER, not by a companion (F3 stage 2's ruling (a) / slice P7's precedent:
+stores, not changes): every byte of every drop is one the ROM's run STORED (its replay's ledger over the settled
+machine), and each is stored UNCHANGED or lies INSIDE THE WINDOW OF A BY-NATURE CLASS, BY ADDRESS — never by its reason,
+never by the row's own hand (the orchestrator's ruling on review RW3aP's F1): the windows are the drops the settling
+DERIVED off the ROM's run (`aes_desk_w3a.by_nature_windows`: each class's window — the mask word, the caller's context,
+the dispatcher's stack and its brackets' words, a QPB's or a parked wait's parameter, the screen manager's, the desk's and
+another process's spans — cut to the bytes the run stored), of which nothing the row names by its own hand is one —
+its own spans (`also_dropped`) and its declared X flag (`aes_switching.own_drops`) — else refused by the row's name
+before anything is registered. AND THE ONE SWITCHING CENSUS
+(`test_aes_event.py::test_every_row_that_switches_…`) READS THE KIND'S REGISTER TOO, binding every class to its window
+again off the ROM's scheduled run — and for a target-only row exempting nothing by its reason or its hand: its own spans
+and a parked wait's parameter must lie inside a window the census reads off that run, but the own spans the run stores
+unchanged (its replay's ledger), a census kind of their own; and on every row the X flag's byte is named ONCE exactly
+where the row declares it, counted over all its registered drops (a span of the row's own there — which Tier 3 would
+drop whole, N/Z/V/C with it — reds by name, stored unchanged or not). Its rows are priced companion-free and held in
+`aes_event.TARGET_ONLY_SWITCHING_ROWS` (never `SWITCHING_ROWS`, whose rows each have a companion); every reader of the
+rows that switch reads both registers through ONE accessor, `aes_event.every_switching_row` (the census, the noise
+sweep's `rederived`, Tier 3's QPB vet, the screen manager's and the table's counts, the door users' pins, the ledger's
+counts). ITS OWN CENSUS LINES (`test_desk_w3a.TARGET_ONLY_ROWS_BY_NAME`, `TARGET_ONLY_SWITCHING_ROWS_BY_NAME`;
+never ROWS_THAT_SWITCH), held over the real registries by `aes_desk_w3a.census_refusals`, which reds by name on each
+crafted breach (nine) and holds over a well-formed crafted row. Its named budgets are pinned BY NAME beside their count
+(`test_desk_w3a.TARGET_ONLY_ROWS_DECLARING_A_BUDGET`).
 
 A NAMED REGISTERED ROW MAY DECLARE ITS OWN BUDGET (since band 6 slice F3's stage 2, THE USER'S RULING of 2026-10-21,
 "rows may declare budget"). A registered row that switches and whose run is past the default derivation margin (a desk

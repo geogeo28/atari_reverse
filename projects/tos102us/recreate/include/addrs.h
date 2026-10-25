@@ -2840,4 +2840,36 @@
 #define AES_ROM_DESK_FAT_SWAP     0xfee466   /* (word): its two bytes swapped in place */
 /* ---- end of group G2's wave-4 ---- */
 
+/* BAND 6 W3a, THE CYCLE (the 17 of the desk's one strongly connected component and hndl_button), by the C file each
+ * goes to (the orchestrator's split, ruling U3 / O4). Named from GEM's own desktop sources and read off each body's
+ * frame and calls (the W3a cut's §1.1; an argument's name is GEM's by its place); the frames are `test/aes_desk_w3a.py`'s
+ * signatures. NO C YET: each entry of the table stays the ROM's (`bench/linef_table.py`, DECLARED_NOT_LINKED). EACH
+ * FILE'S NAMES FOLLOW THE PREFIX ITS C ALREADY USES (the orchestrator's B4): desktop.c's and desksupp.c's unprefixed
+ * (hndl_kbd, do_viewmenu; do_dopen, do_fopen, close_folder), deskinf.c's DESK_-prefixed (desk_inf_field, desk_inf_dttmsz,
+ * desk_inf_folder) — and the NEW deskins.c, which has no C yet, its source file's (unit F's, deskinf.c's split); `$fded16`
+ * is the Show Info FOLDER DIALOG — AES_ROM_DESK_INF_FOLDER (`$fde9ce`, the counts) keeps its name. */
+/* ---- band 6 W3a, `desk/desktop.c` (unit K) ---- */
+#define AES_ROM_HNDL_MSG          0xfe2344   /* (): the message in the desk's buffer handled (msg[0] - 20 switched); word: done */
+#define AES_ROM_HNDL_MENU         0xfe22ce   /* (title, item): Desk / File / View / Options dispatched; the title normal again */
+#define AES_ROM_HNDL_BUTTON       0xfe2172   /* (clicks, mx, my, button, keys): a click; graf_mkstate into its own slot 14(a6) */
+#define AES_ROM_DO_FILEMENU       0xfe1e80   /* (item): the File menu's items 18..26 by the table at `$fef6a0` */
+#define AES_ROM_DO_OPTNMENU       0xfe1fde   /* (item): the Options menu's items 37..44 by the table at `$fef6e0` */
+#define AES_ROM_DO_DESKMENU       0xfe1e4c   /* (item): Desk > Desktop Info, the info box run */
+/* ---- band 6 W3a, `desk/desksupp.c` (unit J) ---- */
+#define AES_ROM_DO_OPEN           0xfe1568   /* (icon): the selection opened — a drive's window, a folder's, a file's */
+#define AES_ROM_DO_AOPEN          0xfe11b4   /* (anode, isapp, curr, drive, path, name): a file run, shown or printed */
+#define AES_ROM_DO_INFO           0xfe16e6   /* (icon): File > Show Info — a file's, a folder's or a disk's dialog */
+/* ---- band 6 W3a, `desk/deskinf.c` (unit F) ---- */
+#define AES_ROM_DESK_INF_SHOW     0xfde8a6   /* (tree, start): a dialog run; the redraws pending afterwards handled; 1 */
+#define AES_ROM_DESK_INF_FINISH   0xfde9a8   /* (tree, object): inf_show, then the exit object's state cleared */
+#define AES_ROM_DESK_INF_FILE     0xfdeb10   /* (path, pnode): a file's Show Info — renamed, its attributes set */
+#define AES_ROM_DESK_INF_FOLDER_DLG 0xfded16 /* (path, pnode): a folder's Show Info dialog (its counts: _INF_FOLDER) */
+#define AES_ROM_DESK_INF_DISK     0xfdedf0   /* (drive): a disk's Show Info — its label, its space */
+#define AES_ROM_DESK_INF_PREF     0xfdef12   /* (): Options > Set Preferences; word: the resolution changed */
+#define AES_ROM_DESK_OPN_APPL     0xfdf082   /* (name, text, &tail, &out): the OPEN APPLICATION parameters dialog, read out; 1 OK / 0 */
+/* ---- band 6 W3a, `desk/deskins.c` (NEW: unit F's install dialogs, as GEM's own sources split them) ---- */
+#define AES_ROM_DESK_INS_DISK     0xfdf11a   /* (anode): Options > Install Disk Drive */
+#define AES_ROM_DESK_INS_APP      0xfdf3c8   /* (name, anode): Options > Install Application — its type's flags stored */
+/* ---- end of band 6 W3a's ---- */
+
 #endif /* TOS102US_ADDRS_H */

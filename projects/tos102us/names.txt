@@ -2289,14 +2289,14 @@ fn 0xfeb2fc sh_cmd
 cmt 0xfeb2fc sh_cmd(): the tail's first byte $c42e: $fe -> $fed61e(text $c42f); $fd -> strcpy("PRINTING  " $fef47e, cmd), strcat(text, cmd), sh_draw(cmd, 0, 1), $fed624(text); $fc -> sh_draw, $fed912(text, cmd); $fb -> sh_draw, $fedde4(text, cmd); 1 — any other byte 0. C: aes_sh_cmd (src/aes/shell.c)
 fn 0xfe272e deskmain # ctx
 # band 6 wave 0 (the hands' campaign, test/aes_desk.py): desk routines READ by slice H, its reviewer or the fix pass — each # ctx until its unit's slice
-fn 0xfe1e80 desk_file_menu # ctx
+fn 0xfe1e80 do_filemenu
 cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6, $fe3760): Open $fe1568, Show Info $fe16e6 (call word $f620 at $fe1ec2), Format $fe1800; of the top window (a5, $fe2d46): New Folder $fdfebc ($f624 at $fe1ece), Close and Close Window $fe1a18 (word 0 / 1). The kit's oracle executes $f620..$f627 as MOVE16: aes_boot.continued takes those two exceptions by hand
-fn 0xfe16e6 desk_show_info # ctx
-fn 0xfe1568 desk_open # ctx
+fn 0xfe16e6 do_info
+fn 0xfe1568 do_open
 cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a folder's $fe14ba, a file's Show / Print / Cancel alert
 fn 0xfe1f2a do_viewmenu
 cmt 0xfe1f2a do_viewmenu(item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then win_view(view, sort); 0. C: aes_do_viewmenu (src/desk/desktop.c; band 6 wave 1b, G2)
-fn 0xfe1fde desk_options_menu # ctx
+fn 0xfe1fde do_optnmenu
 cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40)
 fn 0xfed5c2 cart_exec # ctx
 var 0xc93c sh_isdef_seen # ctx
@@ -2800,3 +2800,32 @@ cmt 0xc6e6 the command line Format and the copy show, sh_draw'n by $fee450
 # ---- band 6 slice B0 (the binding) ----
 var 0xcc24 linef_copy_table_operand
 cmt 0xcc24 the RAM copy of the Line-F handler's `movea.l #<table>,a0` operand (gem_entry copies $fee8c2.. to $cc00): the ROM's holds $fee900; every build of ours holds aes_linef_table there since band 6's slice B0 (gemstart.S's eighth relocation; aes_event.LINEF_TABLE_SLOT, mapped at a run's entry)
+# ---- AES band 6 W3a prep (2026-10-24): the cycle's eighteen less the four renamed above — declared target-only (no host twin, the user's R3), not linked; each entry the ROM's (bench/linef_table.py DECLARED_NOT_LINKED)
+fn 0xfe2344 hndl_msg
+cmt 0xfe2344 (): the desk's message (desk block +7668: msg[0]) by a switch on msg[0]-20 ($fef700) — MN_SELECTED -> hndl_menu(msg[3], msg[4]) at $fe2392; WM_REDRAW, WM_TOPPED (win_top), WM_CLOSED / FULLED / ARROWED / HSLID / VSLID / SIZED / MOVED (do_xyfix, wind_set); word: done. Called by deskmain and by inf_show ($fde99a, the cycle's back-edge). C: to be aes_hndl_msg (src/desk/desktop.c; band 6 W3a, target-only, not yet written)
+fn 0xfe22ce hndl_menu
+cmt 0xfe22ce (title, item): Desk / File / View / Options -> do_deskmenu, do_filemenu, do_viewmenu, do_optnmenu; menu_tnormal at the end. C: to be aes_hndl_menu (src/desk/desktop.c; W3a, not yet written)
+fn 0xfe2172 hndl_button
+cmt 0xfe2172 (clicks, mx, my, button, keys): wind_find, act_bsclick / act_bdown / fun_drag; a double click -> do_filemenu(OPEN). Hands graf_mkstate &14(a6), its OWN argument slot ($fe21f4), read back at $fe220c — deskmain pops it unread. C: to be aes_hndl_button (src/desk/desktop.c; W3a, not yet written)
+fn 0xfe1e4c do_deskmenu
+cmt 0xfe1e4c (item): Desk > Desktop Info — inf_show of the info tree. C: to be aes_do_deskmenu (src/desk/desktop.c; W3a, not yet written)
+fn 0xfe11b4 do_aopen
+cmt 0xfe11b4 (anode, isapp, curr, drive, path, name): a file run (pro_run), shown or printed (the $f438 alert); a TOS-takes-parameters program (a_flags & 8, ins_app's store) asks opn_appl first. C: to be aes_do_aopen (src/desk/desksupp.c; W3a, not yet written)
+fn 0xfde8a6 desk_inf_show
+cmt 0xfde8a6 (tree, start): form_center, form_dial, objc_draw, form_do, form_dial; then evnt_multi(MU_MESAG|MU_TIMER) and hndl_msg ($fde99a) while a message is pending; 1. aes_desk.py's DIALOG_RUNNER. C: to be aes_desk_inf_show (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfde9a8 desk_inf_finish
+cmt 0xfde9a8 (tree, object): inf_show(tree, 0), then the object's ob_state cleared; void. C: to be aes_desk_inf_finish (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfdeb10 desk_inf_file
+cmt 0xfdeb10 (path, pnode): a file's Show Info — dos_rename, dos_chmod, inf_dttmsz. C: to be aes_desk_inf_file (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfded16 desk_inf_folder_dlg
+cmt 0xfded16 (path, pnode): a folder's Show Info dialog — $fde9ce (desk_inf_folder, the counts) then inf_finish. C: to be aes_desk_inf_folder_dlg (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfdedf0 desk_inf_disk
+cmt 0xfdedf0 (drive): a disk's Show Info — dos_label, dos_space, inf_finish; 1. C: to be aes_desk_inf_disk (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfdef12 desk_inf_pref
+cmt 0xfdef12 (): Options > Set Preferences — trp14, app_reschange; word. C: to be aes_desk_inf_pref (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfdf082 desk_opn_appl
+cmt 0xfdf082 (name, text, &tail, &out): the OPEN APPLICATION parameters dialog; 1 OK / 0 Cancel. Reached by a program installed TOS-takes-parameters, double-clicked (the prep's probe; its chain held out, over W6-R4's gate). C: to be aes_desk_opn_appl (src/desk/deskinf.c; W3a, not yet written)
+fn 0xfdf11a desk_ins_disk
+cmt 0xfdf11a (anode): Options > Install Disk Drive. C: to be aes_desk_ins_disk (src/desk/deskins.c, NEW; W3a, not yet written)
+fn 0xfdf3c8 desk_ins_app
+cmt 0xfdf3c8 (name, anode): Options > Install Application — the type's flags stored into a_flags ($fdf502..$fdf510: GEM 3, TOS 0, TOS-takes parameters 8). C: to be aes_desk_ins_app (src/desk/deskins.c, NEW; W3a, not yet written)

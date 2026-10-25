@@ -229,6 +229,7 @@ def verified_row(name, entry, regs, pokes, psg_seed=None, io_seed=None, schedule
 # Every registry this process built, so the consumers that read ALL rows (`bench/tier3.py`'s drops, `test_tier3.py`'s
 # companions) ask one place rather than naming each component.
 ROW_REGISTRIES = []
+A_COMPANION_FREE_ROW_HAS_NONE = "a companion-free row is a priced row registered with no companion"
 
 
 class Rows:
@@ -236,7 +237,8 @@ class Rows:
     (verified and swept, no Tier 3 row: a case entered at a stub rather than the routine), and, by case name, a
     priced row's Tier 3 DROPS (`RomBench.measure`'s `dropped`, vetted per byte: a difference BY NATURE between the ROM
     and a build linked elsewhere, never scratch) with each drop's COMPANION — the battery's differential of the same
-    machine with nothing dropped (`test_tier3.py` runs each)."""
+    machine with nothing dropped (`test_tier3.py` runs each) — but A COMPANION-FREE ROW's (`companion_free`), whose
+    routine has no host twin to run one (band 6 W3a's target-only rows: the user's R3)."""
 
     def __init__(self, component):
         self.component = component
@@ -244,10 +246,11 @@ class Rows:
         self.tier3_dropped, self.tier3_undropped = {}, {}
         self.unanswered = set()
         self.budgets = {}
+        self.companion_free = set()
         ROW_REGISTRIES.append(self)
 
     def register(self, name, entry, pokes, *, regs=None, psg_seed=None, io_seed=None, schedule=(), priced=True,
-                 dropped=(), undropped=None, answered=True, delivered=None, budget=None):
+                 dropped=(), undropped=None, answered=True, delivered=None, budget=None, companion_free=False):
         """One `VERIFIED_CASES` row (`verified_row`), recorded and returned so the battery drives the same tuple.
         `dropped` is `((lo, hi, why), ...)` for its Tier 3 row alone, and `undropped` — required with it — the
         zero-argument differential that still compares those bytes over the row's machine (a `Result`), which is
@@ -255,18 +258,25 @@ class Rows:
         leaves its caller's, which no C is handed — so Tier 3 compares no answer (`tier3_unanswered`). `delivered`
         the interrupts a row is taken through (`verified_row`). `budget`: the instructions every run of the row's
         ORIGINAL by `emu.run` may spend, where the oracle's own cap does not serve — a NAMED PLAIN ROW's, declared and
-        held where it is registered (`aes.register`); every consumer that runs the row's original asks `row_cap`."""
+        held where it is registered (`aes.register`); every consumer that runs the row's original asks `row_cap`.
+        `companion_free`: a priced row whose routine has NO HOST TWIN (band 6 W3a's target-only kind) — its drops
+        are held by Tier 3's own vet alone, a companion is refused by name, and the row is listed
+        (`tier3_companion_free`) so that no consumer asks it for one."""
+        assert not companion_free or (priced and undropped is None), f"{name}: {A_COMPANION_FREE_ROW_HAS_NONE}"
         row = verified_row(name, entry, regs or {}, pokes, psg_seed, io_seed, schedule, delivered)
         (self.cases if priced else self.unpriced).append(row)
         if budget is not None:
             self.budgets[name] = budget
         if not answered:
             self.unanswered.add(name)
+        if companion_free:
+            self.companion_free.add(name)
         if dropped:
             assert priced and name not in tier3_dropped(), f"{name}: a Tier 3 drop is for one priced row"
-            assert callable(undropped), f"{name}: a Tier 3 drop needs the differential that drops nothing"
+            assert companion_free or callable(undropped), f"{name}: a Tier 3 drop needs the differential that drops nothing"
             self.tier3_dropped[name] = tuple(dropped)
-            self.tier3_undropped[name] = undropped
+            if not companion_free:
+                self.tier3_undropped[name] = undropped
         return row
 
 
@@ -278,6 +288,11 @@ def tier3_dropped():
 def tier3_undropped():
     """...and `{row name: its companion differential}`."""
     return {name: companion for rows in ROW_REGISTRIES for name, companion in rows.tier3_undropped.items()}
+
+
+def tier3_companion_free():
+    """...and the priced rows registered COMPANION-FREE (`Rows.register`'s `companion_free`): no Tier 1 twin runs them."""
+    return frozenset(name for rows in ROW_REGISTRIES for name in rows.companion_free)
 
 
 def tier3_unanswered():

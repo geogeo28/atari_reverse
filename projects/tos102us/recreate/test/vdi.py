@@ -674,17 +674,27 @@ ARG_BYTES = {WORD_ARG: WORD_BYTES, UWORD_ARG: WORD_BYTES, LONG_ARG: LONG_BYTES}
 WORD_RESULT = 16                # the bits of D0 an Alcyon `int` answer is compared at
 Alcyon = namedtuple("Alcyon", "restype argtypes host_arguments", defaults=(0,))
 ALCYON = {}
+# THE CORES DECLARED TARGET-ONLY (band 6 W3a, the orchestrator's ruling O1 under the user's R3, "no host twin"): their C
+# is compiled for the target alone (`#ifndef RECREATE_HOST_DIFFERENTIAL`), so the host library has no core to type.
+TARGET_ONLY = set()
+A_HOST_TWIN_OF_A_TARGET_ONLY_CORE = "declared target-only, and the host library has its core: a host twin no ruling allows"
 
 
-def declare_alcyon(name, restype, argtypes, *, host_arguments=0):
+def declare_alcyon(name, restype, argtypes, *, host_arguments=0, target_only=False):
     """`addrs.<name>`'s core is an Alcyon call `restype core(argtypes)` — the image first where it takes
     one, then the frame's arguments in push order; `restype` None for no answer. `host_arguments` counts
     the C arguments after the image that NO frame carries: what the machine holds elsewhere and the host
     build is handed instead (gemdos_call's return site, the address its caller's `jsr` pushed). The shipped
-    glue drops them, and no frame could decode them for a Tier 3 call."""
+    glue drops them, and no frame could decode them for a Tier 3 call. `target_only`: a core no host build
+    may have (`TARGET_ONLY`) — declared for the thunk and the Tier 3 call alone, REFUSED BY NAME where the
+    host library has it."""
+    if target_only:
+        assert not hasattr(_lib, routines.core_symbol(name)), f"{name}: {A_HOST_TWIN_OF_A_TARGET_ONLY_CORE}"
+        TARGET_ONLY.add(name)
     ALCYON[name] = Alcyon(restype, tuple(argtypes), host_arguments)
-    core = getattr(_lib, routines.core_symbol(name))
-    core.restype, core.argtypes = restype, list(argtypes)
+    if not target_only:
+        core = getattr(_lib, routines.core_symbol(name))
+        core.restype, core.argtypes = restype, list(argtypes)
     return ALCYON[name]
 
 

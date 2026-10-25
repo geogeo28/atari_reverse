@@ -1457,6 +1457,18 @@ block under the Components table, each row saying so; nothing accepted); unit D'
 SWITCHES (the binding's own `dsptch`; eleven bindings door users, priced on two counts) or, the two that never yield, a plain
 row. The six glue entries that park their caller's return site, trp13's C twin and gsx_hardcopy (no arrival) are verified
 and unpriced. "Bytes" are the shipped blob's symbol sizes against the AES map's inventory.
+A LEDGER KIND OF ITS OWN, FOR W3a (the user's R3, the orchestrator's U1 / O2; no row yet): **✅ verified on target (R3)** —
+a routine with NO HOST TWIN AND NO TIER 1 (its C compiled for the target alone), held by its TARGET-ONLY ROWS: each a plain
+priced row registered COMPANION-FREE at a hands' arrival (`aes_desk_w3a.register_target_only`), held by Tier 3's own
+differential on both blobs and by the our-shore campaign's invariants (the screen, the desk's block and the OS at every
+step, who-ran, no cycle of a flipped span); counted on the kind's own census line (`test_desk_w3a.TARGET_ONLY_ROWS_BY_NAME`),
+never among the rows that switch. A NAMED ROW MAY DECLARE A BUDGET (the user's ruling of 2026-10-24: needed, fitted, not
+stale against ITS OWN run, its value one named constant every run of it reads; counted on its own line,
+`test_desk_w3a.NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET`). A target-only row that SWITCHES (the orchestrator's B2,
+`aes_desk_w3a.register_target_only_switching`) has its by-nature drops vouched for by THE ROM RUN'S OWN WRITE LEDGER — every
+byte stored, and stored unchanged or INSIDE THE WINDOW OF A BY-NATURE CLASS, BY ADDRESS (a drop the settling derived off the
+ROM's run; never by its reason, never by the row's own `also_dropped`) — in place of a companion; and THE ONE SWITCHING
+CENSUS reads its register too (`aes_event.every_switching_row`), binding each class to its window off the ROM's run.
 
 | address | routine | cases | bytes ours / the ROM's | Tier 3 | state | what is held, and what is not |
 |---|---|---|---|---|---|---|
@@ -3920,7 +3932,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     generator's `LINKED_AND_NOT_FLIPPED` by `test_status.py`. (The campaign's size as it stands, re-derived at band 6
     wave 4's fix pass — wave 1a's own fix pass left it at 51 chains / 158 steps, reach 219; wave 1b's at 69 /
     219, reach 224; wave 2's at 101 / 338, reach 226; wave 4's slice H at 113 / 363, reach 235; slice F3's stage 3 at 118 / 393, reach
-    238:) THE HANDS' CAMPAIGN IS 120 CHAINS / 401 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 238 OF BAND 6's 244; THE
+    238; slice F4 at 120 / 401, reach 238 — and W3a's prep:) THE HANDS' CAMPAIGN IS 122 CHAINS / 405 STEPS, EVERY ONE NAMING A ROUTINE OF ITS ACT; REACH 238 OF BAND 6's 244; THE
     DEEPEST BY THE WRITE LEDGERS: PD0 1,460 of 1,792, PD1 722 of 1,196, the dispatcher 190 (188 on every other chain but
     the five `test_aes_desk_rom.DISPATCHER_AT_190` names — the ROM's own depth, wave 2's re-derivation), the userdef
     stack 438 of 1,024.
@@ -6475,6 +6487,94 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       (this text clears them: 34,121); collected 34,129 (+160; the fix pass +2: the past-the-cap refusal by name now
       undeclared AND below the run, util_redraw's rows not door users), 15 m 23 s (pytest 12 m 34 s); every product
       byte-identical to the flip's (the table, both blobs, the `.so`, the generated table, the objects).
+  - **BAND 6 W3a's PREP — THE CYCLE NAMED, DECLARED TARGET-ONLY AND HELD THE ROM'S; THE TARGET-ONLY ROW KIND; TWO
+    CHAINS (hndl_msg's WM_TOPPED, WM_MOVED); NO FLIP, NO PRODUCT MOVED** (2026-10-24; one author alone in the shared
+    tree; `scratchpad/b6/W3a/PREP/handback.md`):
+    - **NAMES** (`include/addrs.h`'s W3a block, by the file each goes to — the orchestrator's split): desktop.c's six
+      (hndl_msg, hndl_menu, hndl_button, do_filemenu, do_optnmenu, do_deskmenu), desksupp.c's three (do_open, do_aopen,
+      do_info), deskinf.c's seven (inf_show, inf_finish, inf_file, inf_folder_dlg `$fded16` — `$fde9ce` keeps its name —,
+      inf_disk, inf_pref, opn_appl) and the NEW deskins.c's two (ins_disk, ins_app).
+    - **SIGNATURES, TARGET-ONLY** (`test/aes_desk_w3a.py`; ruling O1): each declared `target_only` (`vdi.TARGET_ONLY`: a
+      host core of one refused by name), each frame held to its ROM body (the furthest `d(a6)` it reads ends the frame:
+      18 of 18); every answer a word but inf_finish's. `bench/linef_table.py`'s DECLARED_NOT_LINKED holds each entry THE
+      ROM'S (a core linked while listed reds by name: it moves to LINKED_AND_NOT_FLIPPED); `tools/flipped_depths.py`
+      reads "linked" off the blob's symbols.
+    - **THE SPLIT, S2** (`aes_desk_w3a.STAGES`; U3 / O4): stage 1 deskinf.c's 7 + deskins.c's 2, stage 2 desksupp.c's 3 +
+      do_optnmenu + do_deskmenu, stage 3 hndl_msg, hndl_menu, do_filemenu, hndl_button — each a DAG of the AES map's
+      callees but THE ONE BACK-EDGE, inf_show -> hndl_msg, DECLARED THROUGH THE TABLE (the ROM's word `$f558`, its site
+      `$fde99a`; `desk/deskinf.h`'s INF_SHOW_HNDL_MSG_CALL_WORD), red by name once hndl_msg is flipped. desktop.c spans
+      stages 2 and 3 (the cut's "F file's 9" is deskinf.c + deskins.c). hndl_button's store into its own argument slot
+      14(a6) read back by no caller (O5, pinned).
+    - **THE TARGET-ONLY ROW KIND** (U1 / O2): `case.Rows.register(companion_free=True)` (a drop with no companion,
+      `case.tier3_companion_free`; `test_tier3`'s companion test asks none of it), `aes.register(companion_free=True)`,
+      `aes_desk_w3a.register_target_only` (refused by name: outside W3a, a Tier 1 of its own, a budget — the slot kept),
+      its census line (0 rows) and six crafted breaches each red by name. PLAIN ONLY: a target-only row that switches is
+      not built (to rule). (SUPERSEDED BY THE SECOND PASS, below: a named row's budget is admitted under the user's rule,
+      the breaches are nine, and the switching kind is built — its vouch made address-bound at the fix pass.)
+    - **CHAINS** (U4): "two windows: the lower one's title clicked (WM_TOPPED)" and "two windows: the top one's title
+      dragged lower (WM_MOVED)" — hndl_msg's two unreached arms, each first arrival holding message 21 / 28; 2 arrivals of
+      hndl_msg each, no other W3a routine; PD0 1,100 / 1,086 on our shore (1,050 / 928 the ROM's); win_top LEFT
+      `NOT_ENTERED_ON_OUR_SHORE`; the TOPPED chain's dispatcher at 190 (`DISPATCHER_AT_190`). **opn_appl's chain (U2) IS
+      HELD OUT**: the program installed as TOS-takes parameters, double-clicked, Cancel reaches opn_appl with no launch —
+      and its Cancel step stores 1,618 B down PD0 on our shore TODAY (1,504 the ROM's; W6-R4's gate 1,548): AWAITING.
+    - **NEUTRAL**: all 178 products byte-identical (the objects, both blobs, the `.so`, `lineftable.S` / `.h`, `tier3.txt`
+      `a1580eea`). `tools/flipped_depths.py` full (`--jobs 4`): EXIT 0, 122 chains, 120 walked, 2 refused (W6-R8's),
+      worst 1,536, 0 over. MUTANTS 16 of 16 KILLED (`scratchpad/b6/W3a/PREP/mut/`).
+    - Suite: `make test` (`PYTEST_ARGS="-n 8"`) from no `.so` and no `__pycache__`: 34,146 passed / 8 skipped, 1 FAILED,
+      `test_status` against the tree's STATUS (this text clears it: 34,147); collected 34,155 (+26), 21 m 26 s.
+    - **THE SECOND PASS** (2026-10-24; `scratchpad/b6/W3a/PREP2/handback.md`; still no flip, no product moved):
+      THE USER'S RULING OF 2026-10-24 APPLIED — a NAMED TARGET-ONLY ROW MAY DECLARE A BUDGET: the blanket refusal gone;
+      `register_target_only(budget=)` goes through F4's machinery (`aes.vet_a_plain_row_s_budget`,
+      `aes.refused_past_its_cap_by_name`) against the row's OWN run, each refusal by the row's name with a standing negative
+      case at a real arrival (hndl_msg's WM_TOPPED, 225,267 instructions; WM_MOVED, 120,227): unneeded, not fitted, stale,
+      undeclared past the cap, declared below the run; unnamed is F4's own census, which now reads the kind's named budgets
+      beside the batteries'; the value is recorded AS ITSELF (the census reds by name where a row's runs read another
+      object); its own count, `NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET`, 0. THE SWITCHING KIND (B2):
+      `register_target_only_switching` — settled by `aes_switching.held_of` (`register_row`'s first half, split out
+      unchanged), every drop vouched for by the ROM run's write ledger (stored, and unchanged or of a declared by-nature
+      class — SUPERSEDED BY THE FIX PASS, below: by address, never by reason), priced companion-free into
+      `aes_event.TARGET_ONLY_SWITCHING_ROWS` (read by `rederived` and Tier 3's QPB vet
+      beside `SWITCHING_ROWS`); its census line, 0 rows; crafted registrations in its negative tests alone. B3: the stages
+      said by routine; B4: each file's names checked against its C's prefix — nothing renamed. B1 MEASURED, NOT LANDED:
+      AWAITING (24)'s W3a item. `tools/flipped_depths.py` full: EXIT 0, 122 chains, 120 walked, 2 declared refused, worst
+      1,536. All 178 products byte-identical to HEAD's. MUTANTS 18 of 18 KILLED (`scratchpad/b6/W3a/PREP2/mut/`).
+    - **THE FIX PASS** (2026-10-24, after review RW3aP; `scratchpad/b6/W3a/PREPFIX/handback.md`; test files only, no
+      product moved): (F1) THE VOUCH IS ADDRESS-BOUND — a changed drop is admitted only inside a window the settling
+      DERIVED off the ROM's run (`aes_desk_w3a.by_nature_windows`: every drop of the settled row but its own
+      `also_dropped` — AND, SINCE THE SECOND FIX PASS, its declared X flag), never by its reason, never by the row's own hand; the `0x200..0x204` under the mask word's reason
+      now reds. THE ONE SWITCHING CENSUS (`test_aes_event.py`'s) reads both registers through ONE accessor,
+      `aes_event.every_switching_row`, and holds a target-only row stricter: its own spans and a parked wait's parameter
+      inside a window it reads off the ROM's run (or, own spans, stored unchanged: a census kind of their own) — pinned on
+      a pilot's real ROM run by crafted registrations (admitted stored unchanged, refused by name ×3, the companion kind's
+      contrast; "admitted in a window" CORRECTED BY THE SECOND FIX PASS: its span was one the run stores unchanged, so the
+      other kind admitted it and the window was never asked). (F2) The reviewer's four survivors now die: the vouch's last byte ×2, the census's
+      positive control, the budget recorded AS THE OBJECT at `row_cap` (`is`), the mask-less branch keeping
+      `companion_free`. (F3) Every reader the review listed reads `every_switching_row` (test_aes_takeover,
+      test_aes_switching, test_tier3's door users, the derivation budgets' census, test_status's switching counts); the
+      QPB lookup, F4's plain-budget census's target-only half and `named_budgets`' switching half pinned by crafted
+      registrations. (F5) The named target-only budgets pinned BY NAME beside their count
+      (`TARGET_ONLY_ROWS_DECLARING_A_BUDGET`); `test_tier3`'s companion lookup skips a companion-free row sorting first
+      (with its case). NOTED, NOT FOLDED IN: `aes_desk_w3a.registered_rows()` is a seventh spelling of "every registered
+      row name" (pre-existing in six batteries). All products byte-identical to HEAD's. MUTANTS 19 of 19 KILLED
+      (`scratchpad/b6/W3a/PREPFIX/mut/`, `mut_finish/`).
+    - **THE SECOND FIX PASS** (2026-10-24, after review RW3aPF; `scratchpad/b6/W3a/PREPFIX2/handback.md`; test files only,
+      no product moved): (F1) WHAT A ROW NAMES BY ITS OWN HAND is one helper, `aes_switching.own_drops(row)` — its declared
+      X flag (`THE_X_FLAG_ALONE`) and its `also_dropped` — read by `settled()` and by `aes_desk_w3a.by_nature_windows`, so
+      no own flag or span ever makes a window (pinned: a crafted row with two own spans, and one with its X flag declared);
+      the switching census names THE X FLAG'S BYTE ONCE EXACTLY WHERE THE ROW DECLARES IT, counted over every registered
+      drop (`X_FLAG_NOT_AS_DECLARED`) — a span of the row's own at `$8995` (which the pilot's run stores unchanged) reds
+      by name, declared beside the flag or not: Tier 3 would have dropped the byte whole, N/Z/V/C with it. (F2) "ADMITTED
+      INSIDE A WINDOW" PINNED ON THE REAL RUN: an own span the pilot's ROM run CHANGES inside the caller's context
+      (`$9c84..$9c88`, both premises asserted), the context's window counted and the stored-unchanged kind absent.
+      (F3) The vouch refuses a span before a window's start; the census refuses a span straddling the context's end
+      (`hi-2..hi+2`); the door-user pin's target-only half pinned by a crafted registration (a door user moved to
+      `TARGET_ONLY_SWITCHING_ROWS`: refused priced with its companion, passed companion-free). (F5) `test_tier3`'s
+      switching companion lookup reads `SWITCHING_ROWS` alone (a row with a companion is never target-only). NOTE: a
+      target-only row whose ROM run CHANGES the X flag's byte is now refused by the vouch (the flag no window, and not
+      unchanged) — none is registered; the first desk binding of W3a that declares the flag meets it. All products
+      byte-identical to HEAD's. MUTANTS 9 of 9 KILLED (the review's P2, P3, P5, P7, P8; one per F1 piece:
+      `by_nature_windows` reading `also_dropped`, the census by membership, `own_drops` without the flag, `settled()`
+      without `own_drops`; `scratchpad/b6/W3a/PREPFIX2/mutA/`, `mutB/`).
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -7779,6 +7879,35 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       kept as the authors made them; (5) kept with the measured reason, pending the reviewers' search. (The fix pass:
       the reviewers accepted (2)–(4); (5)'s search found the class, and the fix pass measured why it is no row — the
       user's question above; ruled (a) and applied at the third fix pass.)
+      - **(W3a) BAND 6 W3a's PREP — FOR THE USER (W6-R4: diet-to-fit), MEASURED, NOTHING APPLIED — RULED BY THE USER,
+        2026-10-24 (below)** (2026-10-24, the prep's second pass; `scratchpad/b6/W3a/PREP2/handback.md`, `b1_ledger.json`, `diet.log`): opn_appl's chain ("files: the
+        program installed as TOS-takes parameters, double-clicked, Cancel") STAYS HELD OUT — its Cancel step stores 1,618 B
+        down PD0 on our shore, 1,504 the ROM's: 70 over the gate of 1,548, on today's state, W3a still the ROM's.
+        FRAME BY FRAME [M: the step continued with every routine entry watched; its deepest arrival (xstrpix's 11th, both
+        shores) continued to; the live chain read off each arrival's return address]: EVERYTHING ABOVE hndl_msg IS EQUAL —
+        hndl_msg is entered at depth 636 ON BOTH SHORES, by inf_show's back-edge call (`$fde99c`), under opn_appl,
+        do_aopen, do_open, do_filemenu, hndl_button and deskmain, all still the ROM's (W3a's frames on the path: hndl_button
+        54, do_filemenu 50, do_open 188, do_aopen 96, opn_appl 42, inf_show 28, hndl_msg 44 — equal on both). THE +114 IS
+        ALL BELOW IT, IN C ALREADY FLIPPED (hndl_msg's WM_REDRAW: desk_clear down to xstrpix), each frame ours / the ROM's:
+        the thunk linef_to_aes_desk_clear 12 / — (+12: the table call of the ROM's hndl_msg); desk_clear 76 / 56 (+20);
+        act_allchg 100 / 60 (+40); do_wredraw 96 / 56 (+40); desk_objc_draw 40 / 22 (+18); ob_draw 88 / 114 with
+        everyobj (−26); just_draw 124 / 112 (+12); gr_gicon 72 / 46 (+26); gr_gtext 52 / 32 (+20); gr_just 48 / 58 (−10);
+        gsx_tcalc 28 / 28 (0); xstrpix and below 202 / 240 (−38). WHAT CARRIES IT [R, the shipped ELF]: the image handed to
+        every C call (+4 a call, ten on the path), word arguments pushed as longs, act_allchg's and gr_gicon's eleven saved
+        registers, do_wredraw's nine.
+        THE LEVERS: (a) FRAME_DIET on the path [M: every diet pass off for the whole file, the marks' upper bound on the
+        static frame]: act_allchg 76 → 68, do_wredraw 64 → 48, the other eight unchanged — −24 at most; (b) noinline /
+        always_inline: none read on this path; (c) W3a's OWN C at stage 3 [I, the cut's calibration]: hndl_msg's C calls
+        desk_clear directly (the thunk's 12 gone), and the seven W3a frames' Alcyon link + scratch slot (−8 each) against the
+        image and the wider pushes — ≈ −10 in all; (d) LOCALS MOVED [R]: do_open's 146 B of locals hold the path buffer it
+        hands do_aopen (`$fe161a`: &-132(a6)), live under the whole path — off PD0 it buys up to ~146 on every chain through
+        do_open (this one; P1 File > Open at 12 B spare; P2 at 26). (a) + (c) ≈ −34 against 70: only (d), or a change of the
+        image argument's convention, covers this path. THE USER'S: land the chain over the gate (W3a / W3b to buy it back),
+        land it as a declared over-gate chain, or leave opn_appl unpinned by name — and whether (d) is a faithful diet.
+        **RULED (the user, 2026-10-24):** "a diet of the already-flipped redraw path's C first (its cause: the image
+        argument on every call, word arguments pushed as longs, heavy saves), measured against the 70 B over; ONLY if it
+        cannot reach 70 B, do_open's two path buffers move off PD0 when W3a writes do_open (a declared divergence).
+        opn_appl's chain lands once it fits, before W3a's stage 3." No code for it at the prep's fix pass.
   - **OWED BY THE HARNESS, RECORDED AT BAND 5 WAVE 1's GATE**: (a) a KIT ACCESSOR for "set a register / take an
     exception / raise an IRQ at a door stop" — `aes_boot.py` reaches `emu._LIB.m68k_set_reg` / `m68k_get_reg` /
     `m68k_set_irq` directly; (b) PAID at slice C's third pass: `shipped-glue` now depends on `$(ORACLE)` — a bare `make bench` from a copy
@@ -7905,10 +8034,40 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (BAND 6 SLICE F4, the last suite run; `make guarded` collects the same ids — the gate is
-the orchestrator's): **34,121 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (BAND 6 W3a's PREP, ITS SECOND FIX PASS, the last suite run; `make guarded` collects the same ids — the gate
+is the orchestrator's): **34,189 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6 W3a's PREP, SECOND FIX PASS (2026-10-24, after review RW3aPF, alone in the shared tree; the wave log's
+  sub-entry; no product moved): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so`, `build/bench*` and every
+  `__pycache__` moved aside first: **34,188 passed / 8 skipped, 1 FAILED, `test_status`** (the campaign's line), which
+  this text clears (`scratchpad/b6/W3a/PREPFIX2/final/make_test.log`), so 34,189 pass against this STATUS. RE-SUMMED
+  against the fix pass's 34,191 collected: 34,197 (+6): `test_desk_w3a.py` +5 (the vouch 9 → 10 cases: before a
+  window's start; the windows 1 → 2 cases: two own spans, the declared X flag; the census: a span straddling the
+  context's end, an own span on the X flag's byte ×2), `test_tier3.py` +1 (the door-user pin's target-only half).
+- BAND 6 W3a's PREP, FIX PASS (2026-10-24, after review RW3aP, alone in the shared tree; the wave log's sub-entry; no
+  product moved): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so`, `build/bench*` and every `__pycache__` moved aside
+  first: **34,182 passed / 8 skipped, 1 FAILED, `test_status`** (the campaign's line), which this text clears
+  (`scratchpad/b6/W3a/PREPFIX/final/make_test.log`), so 34,183 pass against this STATUS. RE-SUMMED against the second
+  pass's 34,175 collected: 34,191 (+16): `test_desk_w3a.py` +14 (the vouch 5 → 9 cases; the census's positive control;
+  the mask-less branch; the switching census over a crafted target-only row: admitted in a window, admitted stored
+  unchanged, refused ×3, the companion kind's contrast; the plain-budget census's target-only half; the switching
+  budgets' half), `test_tier3.py` +2 (a companion-free row sorting first; a target-only row's QPB vet).
+- BAND 6 W3a's PREP, SECOND PASS (2026-10-24, alone in the shared tree; the wave log's sub-entry; no flip, no product
+  moved): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside first: **34,166 passed /
+  8 skipped, 1 FAILED, `test_status`** (the campaign's line), which this text clears (`scratchpad/b6/W3a/PREP2/make_test.log`),
+  so 34,167 pass against this STATUS. RE-SUMMED against the first pass's 34,155 collected: 34,175 (+20), all
+  `test_desk_w3a.py`: the blanket budget refusal gone (−1); the census's breaches 6 → 9 (+3); the named budgets' count, the
+  unnamed budget (+2); the budget refused at a real arrival ×3 and past its cap ×2, the fitted one recorded as itself (+6);
+  the switching kind's vouch ×5, its declared classes, its registrar's refusal, its registration, its outside-W3a refusal,
+  its rows derived again (+10).
+- BAND 6 W3a's PREP (2026-10-24, alone in the shared tree; the wave log's entry; no flip, no product moved): `make test`
+  (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside first: **34,146 passed / 8 skipped, 1 FAILED,
+  `test_status`** (the campaign's line), which this text clears (`scratchpad/b6/W3a/PREP/make_test.log`), so 34,147 pass
+  against this STATUS. RE-SUMMED against F4's 34,129 collected: 34,155 (+26): `test_desk_w3a.py` NEW 22 (the eighteen,
+  the frames, the generator's list ×2 blobs, the split, the back-edge, hndl_button's slot, the kind's census, six
+  breaches, three refusals, the registry's slots), `test_aes_desk_rom.py` +2 and `test_aes_desk_ours.py` +2 (the two
+  chains).
 - BAND 6 SLICE F4 (2026-10-23, alone in the shared tree; the wave log's entry; wave 4's twelve flipped, 32 rows, the table
   8,584 → 8,734 lines): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so` and every `__pycache__` moved aside first:
   **34,111 passed / 8 skipped, 10 FAILED, all `test_status`**, which this text clears (`scratchpad/b6/F4/FLIPFIX/make_test.log`,

@@ -751,7 +751,7 @@ UNPRICED = ROWS.unpriced
 
 
 def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, io_seed=None, answer_compared=True,
-             budget=None):
+             budget=None, companion_free=False):
     """One `VERIFIED_CASES` row of `name` over the frame of `arguments`, named `<core>, <label>`. A DIRECT row is
     priced; if the ROM's run stores the mask word, the row stages it at the value the run leaves and drops it at
     Tier 3, with its companion (a routine calling out with its `hook`, `run_function`'s). A row THROUGH
@@ -761,7 +761,9 @@ def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, 
     `answer_compared` False for an arm on which the ROM sets no D0 (`run_function`'s): the row and its companion
     compare no answer. `budget`: A NAMED PLAIN ROW past the oracle's own cap DECLARES ITS OWN (the user's ruling of
     2026-10-23) — held both ways before anything is registered (`vet_a_plain_row_s_budget`), recorded with the row
-    (`case.row_cap`: every run of its original asks it) and its companion's cap."""
+    (`case.row_cap`: every run of its original asks it) and its companion's cap. `companion_free`: A ROW WITH NO HOST
+    TWIN (band 6 W3a's target-only kind, `aes_desk_w3a.register_target_only`) — its mask word dropped at Tier 3 with
+    no companion (`case.Rows.register`'s)."""
     row_name = f"{routines.core_symbol(name)}, {label}"
     if through_line_f:
         assert budget is None, f"{row_name}: a row through Line-F is unpriced and declares no budget"
@@ -777,11 +779,12 @@ def register(label, name, arguments, pokes, *, through_line_f=False, hook=None, 
         vet_a_plain_row_s_budget(row_name, getattr(addrs, name), spent, budget)
     if settled is None:
         return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
-                             answered=answer_compared, budget=budget)
+                             answered=answer_compared, budget=budget, companion_free=companion_free)
     pokes = merge_pokes(pokes, field_pokes("AES", LINEF_MASK_WORD=settled))
+    companion = None if companion_free else functools.partial(undropped, name, arguments, pokes, hook, io_seed, answer_compared, budget)
     return ROWS.register(row_name, getattr(addrs, name), staged(name, arguments, pokes), io_seed=io_seed,
-                         dropped=LINE_F_MASK_WINDOW, answered=answer_compared, budget=budget,
-                         undropped=functools.partial(undropped, name, arguments, pokes, hook, io_seed, answer_compared, budget))
+                         dropped=LINE_F_MASK_WINDOW, answered=answer_compared, budget=budget, undropped=companion,
+                         companion_free=companion_free)
 
 
 # ---- (f) what the snapshot mask is checked against ------------------------------------------------------------------

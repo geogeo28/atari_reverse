@@ -30,8 +30,8 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
 
 Exits non-zero if the blob is not flipped (step 4), if a walked chain is over the gate, if a chain is refused that is
 not declared (or for another reason than its declaration reads), or if a declared refusal walks. Run from anywhere:
-`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 120 chains (118 walked on either state
-since band 6 slice F4, the viewer's eight at our `key_awaited`); a whole run is minutes (~10-15 at `--jobs 6`, build
+`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 122 chains (120 walked on either state
+since band 6 W3a's prep, the viewer's eight at our `key_awaited`); a whole run is minutes (~10-15 at `--jobs 6`, build
 included); the first copy is ~700 MB.
 """
 import argparse
@@ -162,10 +162,14 @@ def _walk(recreate, names):
 
 
 def linked_still_the_rom_s(desk, generator):
-    """Band 6's routines with a C core and an entry of the ROM's table that the blob's OWN bound table still leaves the
-    ROM's (`desk.still_the_rom_s`), in order: none once the blob is flipped."""
-    with_an_entry = set(generator.rom_table()) & set(generator.declared_cores())
-    return sorted(with_an_entry & desk.still_the_rom_s())
+    """Band 6's routines with a C core LINKED IN THE BLOB and an entry of the ROM's table that the blob's OWN bound
+    table still leaves the ROM's (`desk.still_the_rom_s`), in order: none once the blob is flipped. (A routine declared
+    and not yet linked — band 6 W3a's, `DECLARED_NOT_LINKED` — has no core to flip: read off the blob's symbols.)"""
+    import routines
+    import transcription
+    linked = {symbol.name for symbol in transcription.symbol_table(desk.our_blob().elf)}
+    cores = {address for address, name in generator.declared_cores().items() if routines.core_symbol(name) in linked}
+    return sorted(set(generator.rom_table()) & cores & desk.still_the_rom_s())
 
 
 def _gate(recreate):

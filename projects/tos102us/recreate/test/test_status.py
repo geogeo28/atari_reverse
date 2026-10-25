@@ -382,7 +382,7 @@ def test_every_door_entry_s_row_says_what_the_build_says_of_its_twin():
 
 
 # ---- THE ROWS THAT SWITCH: what the ledger counts is what the registry holds -------------------------------------------
-# A row that switches is registered (`aes_event.SWITCHING_ROWS`), and the ledger states how many there are THREE ways,
+# A row that switches is registered (`aes_event.every_switching_row`), and the ledger states how many there are THREE ways,
 # each typed by hand: in each routine's Cases cell (`N rows (M of them SWITCH…`, `(1 SWITCHES…`, `N rows, ALL OF THEM
 # SWITCH`), in the section's sentence (`N rows of the table are such runs`, `N rows of the table switch`) and in the
 # Components table (`N rows SWITCH since band 4 wave 3`) — beside that cell's own count of the rows held on two
@@ -395,14 +395,14 @@ _COMPONENT_TWO_COUNTS_RE = re.compile(r"the caller's own net of those calls: (?P
 
 
 def _registered_rows_that_switch():
-    """{ROM address: how many registered rows that switch are of the routine there} (`aes_event.SWITCHING_ROWS`)."""
+    """{ROM address: how many registered rows that switch are of the routine there} (`aes_event.every_switching_row`)."""
     import collections
 
     import aes_event
     import test_boot_snapshot  # noqa: F401  (every battery registered)
     from harness import addrs
 
-    return collections.Counter(getattr(addrs, held.row.name) for held in aes_event.SWITCHING_ROWS.values())
+    return collections.Counter(getattr(addrs, held.row.name) for held in aes_event.every_switching_row().values())
 
 
 def test_every_routine_s_row_counts_its_rows_that_switch_as_the_registry_does():
@@ -417,7 +417,7 @@ def test_every_routine_s_row_counts_its_rows_that_switch_as_the_registry_does():
              f"{registered.get(address, 0)}" for address in sorted(set(registered) | {at for at, count in stated.items() if count})
              if stated.get(address) != registered.get(address, 0)]
     assert not wrong, (f"{len(wrong)} STATUS.md row(s) miscount the routine's rows that switch "
-                       f"(`aes_event.SWITCHING_ROWS`):" + "".join(f"\n  {line}" for line in wrong))
+                       f"(`aes_event.every_switching_row`):" + "".join(f"\n  {line}" for line in wrong))
 
 
 def test_every_count_of_the_rows_that_switch_is_the_registry_s():
@@ -546,7 +546,7 @@ def _names_of_the_registered_rows_that_switch():
     from harness import addrs
 
     names = {}
-    for name, held in aes_event.SWITCHING_ROWS.items():
+    for name, held in aes_event.every_switching_row().items():
         names.setdefault(getattr(addrs, held.row.name), set()).add(name.split(", ", 1)[1])
     return names
 
@@ -708,7 +708,8 @@ def _sessions_of(names):
     """How many SESSIONS the sliced rows `names` are cut from: a session is ONE record of its registry, whichever."""
     import aes_event
 
-    return len({id(aes_event.INTERRUPTED_ROWS[name] if name in aes_event.INTERRUPTED_ROWS else aes_event.SWITCHING_ROWS[name])
+    switching_rows = aes_event.every_switching_row()
+    return len({id(aes_event.INTERRUPTED_ROWS[name] if name in aes_event.INTERRUPTED_ROWS else switching_rows[name])
                 for name in names})
 
 
@@ -718,9 +719,9 @@ def _sliced_rows_by_address():
     import test_boot_snapshot  # noqa: F401  (every battery registered)
     from harness import addrs
 
-    sliced = {}
+    sliced, switching_rows = {}, aes_event.every_switching_row()
     for name in aes_event.SLICED_ROWS:
-        held = aes_event.INTERRUPTED_ROWS.get(name) or aes_event.SWITCHING_ROWS[name].row
+        held = aes_event.INTERRUPTED_ROWS.get(name) or switching_rows[name].row
         sliced.setdefault(getattr(addrs, held.name), []).append(name)
     return sliced
 
@@ -810,7 +811,7 @@ def test_the_table_today_sentence_counts_the_windows_and_the_save_word_s_drops()
                   "OUR SCREEN MANAGER priced under K of its rows` sentence")
     table = BENCH_TABLE.read_text()
     windows, turns = len(_A_WINDOW_UNDER_A_ROW_RE.findall(table)), len(_A_TURN_UNDER_A_ROW_RE.findall(table))
-    saved = sum(any(lo <= aes.AES_SR_SPL < hi for lo, hi, _why in held.drops) for held in aes_event.SWITCHING_ROWS.values())
+    saved = sum(any(lo <= aes.AES_SR_SPL < hi for lo, hi, _why in held.drops) for held in aes_event.every_switching_row().values())
     assert (int(said["windows"]), int(said["saved"]), int(said["turns"])) == (windows, saved, turns), (
         f"STATUS.md says {said[0]!r}; the table has a window under {windows} rows, {saved} rows that switch drop the word "
         f"and a turn of our screen manager is priced under {turns} rows")

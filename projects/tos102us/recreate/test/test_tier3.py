@@ -3295,12 +3295,13 @@ def test_a_drop_one_longword_wider_than_the_park_is_refused():
         tier3.measure(widened, tier3.shipped_bench())
 
 
-@pytest.mark.parametrize("name", sorted(case.tier3_dropped()))
+@pytest.mark.parametrize("name", sorted(set(case.tier3_dropped()) - case.tier3_companion_free()))
 def test_every_dropped_row_has_a_differential_that_drops_nothing(name, monkeypatch):
     """What makes a Tier 3 drop safe is a Tier 1 differential of the SAME machine that still compares those bytes:
     each dropped row's registered companion runs, every `case.run` it makes is at the row's entry with nothing
     dropped, and it staged the row's own pokes. A row TAKEN THROUGH INTERRUPTS has no `case.run`: its companion is
-    `aes_event.interrupted` itself, every compare it makes leaving out the stack band alone."""
+    `aes_event.interrupted` itself, every compare it makes leaving out the stack band alone. (A COMPANION-FREE row —
+    band 6 W3a's target-only kind, no host twin under the user's R3 — has none: `test_desk_w3a.py` holds that kind.)"""
     registered = case.registered_case(name)
     if aes_event.switching(test_boot_snapshot.delivered_of(registered)):
         _a_switching_companion_drops_nothing(name, registered, monkeypatch)
@@ -3349,10 +3350,26 @@ def _vetted_by_nature(name, vetted):
     return by_nature
 
 
+def _a_dropped_row_with_its_companion():
+    """The first dropped row, by name, that HAS a companion: a companion-free row (band 6 W3a's target-only kind) has
+    none to run."""
+    companion_free = case.tier3_companion_free()
+    return next(name for name in sorted(case.tier3_dropped()) if name not in companion_free)
+
+
+def test_the_dropped_row_asked_for_its_companion_passes_a_companion_free_row_sorting_first(monkeypatch):
+    first = _a_dropped_row_with_its_companion()
+    sorting_first = "aes_a, a companion-free row"
+    assert sorting_first < first, "the premise: the crafted row sorts first"
+    monkeypatch.setattr(case, "tier3_dropped", lambda: {sorting_first: (), first: ()})
+    monkeypatch.setattr(case, "tier3_companion_free", lambda: frozenset({sorting_first}))
+    assert _a_dropped_row_with_its_companion() == first
+
+
 def test_a_companion_that_leaves_out_an_unvetted_longword_is_refused(monkeypatch):
     """THE RED for that exception's edge: the rule admits the longwords the vet ANSWERED, never a window a companion
     merely names — a companion that drops a QPB's address the vet was not asked about is refused as any drop is."""
-    name = next(iter(sorted(case.tier3_dropped())))
+    name = _a_dropped_row_with_its_companion()
     registered = case.registered_case(name)
     assert not test_boot_snapshot.delivered_of(registered), "the premise: a direct row's companion"
     unvetted = ((aes_event.EVBS[0] + aes.EVB_PARM, aes_event.EVBS[0] + aes.EVB_PARM + aes.LONG_BYTES, aes_event.QPB_ADDRESS_WHY),)
@@ -3426,6 +3443,7 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
     vetted = _the_qpb_vets_answered(monkeypatch)
     ran = case.tier3_undropped()[name]()
     by_nature = _vetted_by_nature(name, vetted)
+    # ...the companion register alone: a row with a companion (`tier3_undropped`, run above) is never a target-only one
     declared = aes_event.SWITCHING_ROWS[name].row.also_dropped
     assert left_out == [frozenset(case.STACK_BAND) | {at for lo, hi, _why in (*by_nature, *declared) for at in range(lo, hi)}], left_out
     assert vdi.make_image(registered[3]) == vdi.make_image(ran.staged), f"{name}: the companion ran another machine"
@@ -3441,7 +3459,7 @@ def _a_switching_companion_drops_nothing(name, registered, monkeypatch):
 # with its session in its own battery, `test_aes_fs_input_woken.py`, which holds the registry's sliced rows to
 # its own table the same way).
 def door_users_that_switch():
-    return {name: held for name, held in aes_event.SWITCHING_ROWS.items() if held.row.door and name not in aes_event.SLICED_ROWS}
+    return {name: held for name, held in aes_event.every_switching_row().items() if held.row.door and name not in aes_event.SLICED_ROWS}
 
 
 def _table_row(name):
@@ -3599,15 +3617,34 @@ for _battery in (test_desk_disk, test_desk_util):
 # ---- end of slice F4's ----
 
 
+A_DOOR_USER_S_COMPANION_AS_ITS_KIND = "a switching row drops, and has its companion — a target-only one is registered companion-free"
+
+
 def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob():
     """THE REGISTRY'S DOOR USERS THAT SWITCH ARE THE PINNED ONES — a row registered and pinned nowhere reds here — and
     each is, on the blob, a routine whose run arrives at a door entry (the second count's premise), registered WITH
     its companion: the door child under the host's model (`aes_switching.companion`, which every dropped row's own
-    test runs)."""
-    registered = door_users_that_switch()
+    test runs) — but a TARGET-ONLY row (band 6 W3a's: `aes_event.TARGET_ONLY_SWITCHING_ROWS`), registered with none."""
+    registered, companion_free = door_users_that_switch(), case.tier3_companion_free()
     assert sorted(registered) == sorted(DOOR_USERS_PRICED) == sorted(DOOR_USERS_WHOLE_RUN)
     assert all(tier3.arrives_at_an_entry(_table_row(name)) for name in registered)
-    assert all(name in case.tier3_undropped() for name in registered), "a switching row drops, and has its companion"
+    assert all(name in case.tier3_undropped() if name in aes_event.SWITCHING_ROWS else name in companion_free for name in registered), (
+        A_DOOR_USER_S_COMPANION_AS_ITS_KIND)
+
+
+def test_the_door_user_pin_holds_a_target_only_door_user_companion_free(monkeypatch):
+    """...ITS TARGET-ONLY HALF, on a crafted registration (no door user of W3a's is registered yet): a door user moved
+    from `SWITCHING_ROWS` to `aes_event.TARGET_ONLY_SWITCHING_ROWS` is refused while the registry prices it WITH its
+    companion, and passes once it is listed companion-free."""
+    held = door_users_that_switch()[SENDMSG_TO_A_FULL_PIPE]
+    monkeypatch.setattr(aes_event, "SWITCHING_ROWS", {name: each for name, each in aes_event.SWITCHING_ROWS.items()
+                                                      if name != SENDMSG_TO_A_FULL_PIPE})
+    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {SENDMSG_TO_A_FULL_PIPE: held})
+    with pytest.raises(AssertionError, match=re.escape(A_DOOR_USER_S_COMPANION_AS_ITS_KIND)):
+        test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob()
+    companion_free = case.tier3_companion_free()
+    monkeypatch.setattr(case, "tier3_companion_free", lambda: companion_free | {SENDMSG_TO_A_FULL_PIPE})
+    test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob()
 
 
 @pytest.mark.parametrize("name", DOOR_USERS_PRICED)
@@ -3669,6 +3706,21 @@ def test_the_table_holds_a_registered_row_s_qpb_address_to_the_qpb_our_run_parke
     monkeypatch.setattr(aes_switching, "vet_our_qpbs", another)
     with pytest.raises(AssertionError, match="QPB"):
         tier3.measure(_table_row(SENDMSG_TO_A_FULL_PIPE), bench)
+
+
+def test_the_table_vets_a_target_only_row_s_qpb_address_by_its_own_register(bench, monkeypatch):
+    """...AND A TARGET-ONLY ROW'S (band 6 W3a's: no companion, so this is the one vet of its QPB) — the row above moved,
+    as a crafted registration, from `SWITCHING_ROWS` to `aes_event.TARGET_ONLY_SWITCHING_ROWS`: vetted by its record
+    there (`aes_event.every_switching_row`)."""
+    import aes_switching
+    held = door_users_that_switch()[SENDMSG_TO_A_FULL_PIPE]
+    monkeypatch.setattr(aes_event, "SWITCHING_ROWS", {name: each for name, each in aes_event.SWITCHING_ROWS.items()
+                                                      if name != SENDMSG_TO_A_FULL_PIPE})
+    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {SENDMSG_TO_A_FULL_PIPE: held})
+    asked, vet = [], aes_switching.vet_our_qpbs
+    monkeypatch.setattr(aes_switching, "vet_our_qpbs", lambda who, qpbs, watch: asked.append(qpbs) or vet(who, qpbs, watch))
+    tier3.measure(_table_row(SENDMSG_TO_A_FULL_PIPE), bench)
+    assert asked == [held.qpbs]
 
 
 # ---- A DOOR CALL OPEN ACROSS A FOREIGN WINDOW: net of the window on all three counts, or refused ---------------------------

@@ -3570,6 +3570,18 @@ class Switches:
 
 
 SWITCHING_ROWS = {}
+# ...AND band 6 W3a's TARGET-ONLY rows that switch (`aes_desk_w3a.register_target_only_switching`: no companion, their
+# drops vouched for by the ROM run's own write ledger) — their own register, NOT `SWITCHING_ROWS` (whose every row has a
+# companion); read, with it, wherever every registered row that switches is (`every_switching_row`).
+TARGET_ONLY_SWITCHING_ROWS = {}
+
+
+def every_switching_row():
+    """`{name: aes_switching.Registered}` of EVERY registered row that switches — `SWITCHING_ROWS`' and
+    `TARGET_ONLY_SWITCHING_ROWS`': the one accessor of both registers, for every reader that asks after all of them
+    (the switching census, the noise sweep's `rederived`, Tier 3's QPB vet, the screen manager's and the table's
+    counts, the door users' pins, the ledger's counts)."""
+    return {**SWITCHING_ROWS, **TARGET_ONLY_SWITCHING_ROWS}
 
 
 def switching(delivered):
@@ -3586,9 +3598,10 @@ def rederived(row_name):
     """The deliveries of the registered row `row_name` DERIVED AGAIN, over the snapshot as it stands now
     (`harness.set_base_image`): the interrupts' own code run afresh — for the sweep that fills the snapshot's MASK with
     noise, where an interrupt reading a masked byte must show it (the deliveries derived over the pristine snapshot,
-    laid as they are, would hide it). A row that switches is derived again by its own register (`SWITCHING_ROWS`)."""
-    if row_name in SWITCHING_ROWS:
-        return SWITCHING_ROWS[row_name].rederived()
+    laid as they are, would hide it). A row that switches is derived again by its own register (`every_switching_row`)."""
+    switching_rows = every_switching_row()
+    if row_name in switching_rows:
+        return switching_rows[row_name].rederived()
     assert row_name in INTERRUPTED_ROWS, f"{row_name}: no row taken through interrupts registered by that name"
     row = INTERRUPTED_ROWS[row_name]
     return deliveries(row.name, row.arguments, row.pokes, row.interrupts, row.budget)

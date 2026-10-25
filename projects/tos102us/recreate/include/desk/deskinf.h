@@ -33,6 +33,13 @@
 #define INF_FOLDER_COUNTED    1          /*                                       ($fdea5a moveq #1,d0)          */
 #define INF_FOLDER_NO_TREE    0          /* d_doop's tree: none, so nothing drawn ($fde9f8 clr.l -(sp))          */
 
+/* ==== BAND 6 W3a: THE CYCLE'S ONE BACK-EDGE, DECLARED (the orchestrator's split S2, rulings U3 / O4) ===================
+ * inf_show `$fde8a6` handles the messages still pending after its dialog by calling hndl_msg `$fe2344` — the one call
+ * of the cycle that points UP. Until hndl_msg flips (S2's stage 3) inf_show's C makes that call THROUGH THE TABLE, by
+ * the ROM's own call word: a declared C -> ROM call of the desk door's kind, retired at stage 3 (`test/aes_desk_w3a.py`'s
+ * CALLS_THROUGH_THE_TABLE, red by name once hndl_msg is flipped). */
+#define INF_SHOW_HNDL_MSG_CALL_WORD 0xf558 /* hndl_msg's Line-F call word: inf_show's own ($fde99a)           */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 

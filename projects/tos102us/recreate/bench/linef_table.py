@@ -57,6 +57,7 @@ import routines                                            # noqa: E402
 # Every battery, so every Alcyon signature is declared before a verdict asks for one (`bench/shipped_glue.py`'s import,
 # for its reason): a table derived over half the declarations would leave the rest of the entries the ROM's in silence.
 import test_boot_snapshot                                  # noqa: E402,F401
+import aes_desk_w3a                                        # noqa: E402
 import transcription                                       # noqa: E402
 import vdi                                                 # noqa: E402
 
@@ -225,6 +226,21 @@ LINKED_HELD_NO_TABLE_ENTRY = {}
 # ---- end of group G1's wave-2 ----
 # ---- end of band 6 wave 2's (R-W2-4) ----
 
+# ---- band 6 W3a (the cycle; the user's R3, the orchestrator's split S2) ----
+# THE ROUTINES DECLARED AND NOT YET LINKED: each has a declared Alcyon signature — TARGET-ONLY (`vdi.TARGET_ONLY`: no
+# host core) — and NO C YET, so a thunk would name a core no blob links: its entry STAYS THE ROM'S BY DECLARATION. A
+# routine LEAVES this list for LINKED_AND_NOT_FLIPPED (a W3a block of its own) once its C links — the authors' — and
+# flips at its stage of `aes_desk_w3a.STAGES`. `test_desk_w3a.py` reds by name on a core linked while it is listed here.
+# `{routine: why}`.
+DECLARED_NOT_LINKED = dict.fromkeys(aes_desk_w3a.W3A, "band 6 W3a: declared target-only, its C not yet written")
+# ---- end of band 6 W3a's ----
+
+
+def held_back():
+    """The routines with a declared core whose entries the generator leaves THE ROM'S all the same: written and linked
+    and not yet flipped, or declared and not yet linked."""
+    return {**LINKED_AND_NOT_FLIPPED, **DECLARED_NOT_LINKED}
+
 
 def thunk_symbol(routine):
     """The thunk a ROM caller's Line-F call of `routine` lands in."""
@@ -233,12 +249,12 @@ def thunk_symbol(routine):
 
 def entries():
     """The 658 entries, each with its verdict (the module's docstring)."""
-    native, declared = native_entries(), declared_cores()
+    native, declared, held = native_entries(), declared_cores(), held_back()
     made = []
     for index, target in enumerate(rom_table()):
         if target in native:
             made.append(Entry(index, target, OURS_NATIVE, native[target], None))
-        elif target in declared and declared[target] not in ENTERED_BY_OURS_ALONE and declared[target] not in LINKED_AND_NOT_FLIPPED:
+        elif target in declared and declared[target] not in ENTERED_BY_OURS_ALONE and declared[target] not in held:
             made.append(Entry(index, target, OURS_THROUGH_A_THUNK, thunk_symbol(declared[target]), declared[target]))
         else:
             made.append(Entry(index, target, THE_ROM_S, None, None))

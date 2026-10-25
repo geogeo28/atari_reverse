@@ -2225,18 +2225,31 @@ NAMED_ROWS_DECLARING_A_BUDGET = 58      # 22 (S2-A: unit H's 14, dir_op's 7, do_
                                         # + 8 (F4: Format's three formats, the copy's two, copy_tracks' two, the printer's Retry)
 
 
+def _declared_derivation_budgets():
+    """`{row name: its declared derivation budget}` of every registered row that declares one: taken through interrupts,
+    or switching (either register: `aes_event.every_switching_row`)."""
+    declared = {row_name: row.budget for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget}
+    declared.update({row_name: held.row.budget for row_name, held in aes_event.every_switching_row().items() if held.row.budget})
+    return declared
+
+
+def _target_only_switching_rows_naming_a_budget():
+    import aes_desk_w3a
+    return set(aes_desk_w3a.named_budgets()) & set(aes_event.TARGET_ONLY_SWITCHING_ROWS)
+
+
 def test_a_registered_row_keeps_its_declared_budget_for_every_later_derivation():
     """A sliced row's deliveries are derived again (`rederived`, the snapshot's noise sweep) under the budget its
     registration declared — recorded with the row; every other registered row declares none but the NAMED rows past the
     margin (the user's ruling of 2026-10-21), each derived again under its own. (The sliced rows are fm_do's long typing
     session's and the file selector's sessions', each session with its own budget — the sessions that SWITCH among
-    them, whose record is the registrar's: `SwitchingRow.budget`.)"""
+    them, whose record is the registrar's: `SwitchingRow.budget`.) And (the user's ruling of 2026-10-24) band 6 W3a's
+    target-only rows that switch, named by their kind's registrar (`aes_desk_w3a.named_budgets`)."""
     import test_boot_snapshot  # noqa: F401  (every battery registered: the three registries read here are theirs)
-    declared = {row_name: row.budget for row_name, row in aes_event.INTERRUPTED_ROWS.items() if row.budget}
-    declared.update({row_name: held.row.budget for row_name, held in aes_event.SWITCHING_ROWS.items() if held.row.budget})
+    declared = _declared_derivation_budgets()
     named = _named_rows_declaring_a_budget()
     assert len(named) == NAMED_ROWS_DECLARING_A_BUDGET and not named & set(aes_event.SLICED_ROWS)
-    assert set(declared) == set(aes_event.SLICED_ROWS) | named
+    assert set(declared) == set(aes_event.SLICED_ROWS) | named | _target_only_switching_rows_naming_a_budget()
     switching = {name for name in declared if name in aes_event.SWITCHING_ROWS and name in aes_event.SLICED_ROWS}
     assert switching and all(aes_event.session_of(name) is aes_event.SWITCHING_ROWS[name] for name in switching)
     fm_do_s = {row_name: budget for row_name, budget in declared.items() if row_name.startswith("aes_fm_do, ")}
@@ -2274,10 +2287,20 @@ def vet_every_plain_budget_is_named(declared, named):
 
 
 def test_every_plain_row_declaring_a_budget_is_named_and_counted():
+    """...and (the user's ruling of 2026-10-24) band 6 W3a's NAMED TARGET-ONLY rows' too, named by the kind's own
+    registrar and counted on their own line (`test_desk_w3a.py`'s NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET)."""
     import test_boot_snapshot  # noqa: F401  (every battery registered)
+    vet_the_plain_budget_census()
+
+
+def vet_the_plain_budget_census():
+    """THE PLAIN BUDGETS' CENSUS over the registries as they stand: every plain row's declared budget named — by its
+    battery, or (a target-only row's) by its kind's registrar — and the batteries' named ones counted."""
+    import aes_desk_w3a
     named = _named_plain_rows_declaring_a_budget()
-    vet_every_plain_budget_is_named(case.row_budgets(), named)
-    assert set(case.row_budgets()) == named and len(named) == NAMED_PLAIN_ROWS_DECLARING_A_BUDGET
+    target_only = set(aes_desk_w3a.named_budgets()) & set(aes_desk_w3a.TARGET_ONLY_ROWS)
+    vet_every_plain_budget_is_named(case.row_budgets(), named | target_only)
+    assert set(case.row_budgets()) == named | target_only and len(named) == NAMED_PLAIN_ROWS_DECLARING_A_BUDGET
 
 
 def test_a_plain_row_declaring_a_budget_no_battery_names_is_refused_by_name():
@@ -4771,6 +4794,7 @@ ANOTHER_S_CONTEXT, ANOTHER_S_STACK = "another process's saved context (its turn 
 # the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
 # follows GCC's `seq` / `neg`, and since band 6 slice F1 the ten desk bindings' rows that declare it — and no other.
 THE_DECLARED_X_FLAG = "the X flag of the dispatcher's save word, declared"
+X_FLAG_NOT_AS_DECLARED = "the X flag's byte is not named once where the row declares it and nowhere else"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
 # idle) and THE DOOR USERS' — each routine's wait that blocks, woken through the dispatcher (mn_do's three shapes,
@@ -5086,16 +5110,52 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
     one, and which routines' rows drop which kind is the table's.
     A QPB'S ADDRESS LEFT IN A FREED EVB is a kind of its own (`aes_switching.settled(row).qpbs`: a wait on a pipe
     that blocked and was woken, or was cancelled): no window but ONE LONGWORD, an EVB's parameter that holds a
-    stack-band address when that run ends — and every such longword the run CHANGED is dropped."""
+    stack-band address when that run ends — and every such longword the run CHANGED is dropped.
+    ONE CENSUS OF BOTH REGISTERS (`aes_event.every_switching_row`): band 6 W3a's TARGET-ONLY rows that switch are held
+    here as every other row is — and stricter (`_the_switching_census`)."""
+    import test_boot_snapshot  # noqa: F401  (every battery registered)
+    assert aes_event.SWITCHING_ROWS, "the premise: the batteries register rows that switch"
+    census = the_census_of_every_switching_row()
+    assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
+        f"the rows that switch drop {census} — a row NEWLY under a bracket is dropped with no ruling: write it into "
+        f"BY_NATURE_CENSUS with the reason it is right")
+
+
+# A TARGET-ONLY ROW THAT SWITCHES (band 6 W3a's, `aes_desk_w3a.register_target_only_switching`) has no companion to
+# hold what it drops — so NOTHING OF IT IS EXEMPT HERE BY ITS REASON OR BY ITS OWN HAND (the orchestrator's ruling on
+# review RW3aP's F1): its own spans (`also_dropped`) and a parked wait's parameter lie, like every drop, INSIDE THE
+# WINDOW of a kind this census reads off the ROM's run — but the own spans that run STORES UNCHANGED (every byte in its
+# replay's write ledger, none changed: F3 stage 2's ruling (a)), a kind of their own.
+A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED = "a target-only row's own span its ROM run stores unchanged"
+
+
+def _its_own_stored_unchanged(row, staged, the_rom_s):
+    """The spans of `row.also_dropped` the ROM's scheduled run `the_rom_s` over `staged` STORES UNCHANGED: every byte in
+    its replay's write ledger (`aes_switching.its_own_unstored`, the one spelling of a store), and none changed."""
+    import aes_switching
+    if not row.also_dropped:
+        return ()
+    unstored = set(aes_switching.its_own_unstored(row, staged, the_rom_s))
+    return tuple((lo, hi, why) for lo, hi, why in row.also_dropped
+                 if not any(at in unstored or the_rom_s.memory[at] != the_rom_s.started[at] for at in range(lo, hi)))
+
+
+def the_census_of_every_switching_row():
+    """THE CENSUS (above) of every registered row that switches, of either register (`aes_event.every_switching_row`),
+    over its registered Tier 3 drops."""
+    return _the_switching_census(aes_event.every_switching_row(), case.tier3_dropped())
+
+
+def _the_switching_census(switching_rows, registered):
+    """THE CENSUS (above) of `switching_rows` (`{name: aes_switching.Registered}`) whose Tier 3 drops are `registered`
+    (`{name: drops}`): each row held, red by its name — `{kind: {routine: rows}}`."""
     import aes_switch
     import aes_switching
     import aes_takeover
-    import test_boot_snapshot  # noqa: F401  (every battery registered)
-    registered, census = case.tier3_dropped(), {}
-    stored_unchanged = _a_row_s_own_stored_unchanged()
-    assert aes_event.SWITCHING_ROWS, "the premise: the batteries register rows that switch"
-    for name, held in aes_event.SWITCHING_ROWS.items():
+    census, stored_unchanged = {}, _a_row_s_own_stored_unchanged()
+    for name, held in switching_rows.items():
         row = held.row
+        target_only = name in aes_event.TARGET_ONLY_SWITCHING_ROWS
         staged = aes_switching._staged(row)
         the_rom_s = aes_switching.scheduled(row, staged)
         uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
@@ -5116,19 +5176,27 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             context, stack = aes_switching.foreign_windows_of(pd, the_rom_s.memory)
             names = (THE_DESK_S_CONTEXT, THE_DESK_S_STACK) if pd == aes.SHELL_PD else (ANOTHER_S_CONTEXT, ANOTHER_S_STACK)
             kinds.update({names[0]: (context,), names[1]: (stack,)})
-        parked = [(lo, hi) for lo, hi, why in registered[name] if why == aes_switching.DESK_PARKED_WHY]
+        parked = [(lo, hi, why) for lo, hi, why in registered[name] if why == aes_switching.DESK_PARKED_WHY]
+        if target_only:     # ...a parked wait's parameter where the run's own EVBs name the desk's stack, by address
+            parked = [drop for drop in parked if drop in aes_switching.desk_parked_windows(the_rom_s.memory)]
         if parked:
             census.setdefault(THE_DESK_S_PARKED, collections.Counter())[routines.core_symbol(row.name)] += 1
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
-        # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
-        # kind, dropped only where the ROM's run changes it, but on THE ROWS NAMED STORED UNCHANGED (above).
-        _vet_a_row_s_own(name, row, staged, the_rom_s, stored_unchanged)
-        for lo, hi, why in row.also_dropped:
-            assert (lo, hi, why) in registered[name], f"{name}: its own by-nature bytes are not among its drops"
-            census.setdefault(A_ROW_S_OWN + why.split(":")[0], collections.Counter())[routines.core_symbol(row.name)] += 1
+        if target_only:     # ...its own spans held to a kind's window below, but those stored unchanged
+            own = _its_own_stored_unchanged(row, staged, the_rom_s)
+            if own:
+                census.setdefault(A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED, collections.Counter())[routines.core_symbol(row.name)] += 1
+        else:
+            # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
+            # kind, dropped only where the ROM's run changes it, but on THE ROWS NAMED STORED UNCHANGED (above).
+            _vet_a_row_s_own(name, row, staged, the_rom_s, stored_unchanged)
+            own = row.also_dropped
+            for _lo, _hi, why in own:
+                census.setdefault(A_ROW_S_OWN + why.split(":")[0], collections.Counter())[routines.core_symbol(row.name)] += 1
+        assert all(drop in registered[name] for drop in row.also_dropped), f"{name}: its own by-nature bytes are not among its drops"
         drops = [(lo, hi) for lo, hi, why in registered[name]
                  if (lo, hi, why) not in aes.LINE_F_MASK_WINDOW and lo not in qpb_addresses
-                 and (lo, hi, why) not in row.also_dropped and why != aes_switching.DESK_PARKED_WHY]
+                 and (lo, hi, why) not in own and (lo, hi, why) not in parked]
         if qpb_addresses:
             census.setdefault(A_QPB_S_ADDRESS, collections.Counter())[routines.core_symbol(row.name)] += 1
         of_a_kind = []
@@ -5158,14 +5226,14 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
             of_a_kind += inside
             if inside:
                 census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
-        # ...and the X flag is named exactly where the row DECLARES it; the system byte of that word by none.
-        assert (aes_switching.THE_X_FLAG_ALONE[0][:2] in drops) == bool(row.x_flag_differs), name
+        # ...and the X flag's byte is named ONCE exactly where the row DECLARES it, and nowhere else — counted over every
+        # registered drop, a span the row stores unchanged among them: a second span there under another reason is one
+        # Tier 3 drops whole (`tier3`: only the declared X flag is one bit), N/Z/V/C with it. The system byte by none.
+        x_flag_named = [(lo, hi) for lo, hi, _why in registered[name]].count(aes_switching.THE_X_FLAG_ALONE[0][:2])
+        assert x_flag_named == int(bool(row.x_flag_differs)), f"{name}: {X_FLAG_NOT_AS_DECLARED} ({x_flag_named} times)"
         assert not any(low <= aes.AES_SR_DISPATCH < high for low, high in drops), name
         assert sorted(of_a_kind) == sorted(drops), f"{name}: a drop of no kind this census knows"
-    census = {kind: dict(sorted(counts.items())) for kind, counts in census.items()}
-    assert census == BY_NATURE_CENSUS[THE_ROWS_THAT_SWITCH], (
-        f"the rows that switch drop {census} — a row NEWLY under a bracket is dropped with no ruling: write it into "
-        f"BY_NATURE_CENSUS with the reason it is right")
+    return {kind: dict(sorted(counts.items())) for kind, counts in census.items()}
 
 
 @pytest.mark.parametrize("held_by", ("a byte named and never stored", "a row whose run changes its park"))

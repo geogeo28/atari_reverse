@@ -430,9 +430,8 @@ NOT_ENTERED_ON_OUR_SHORE = {
            "AES_ROM_DO_DIROPEN": "fun_ddst; cnx_get, do_dopen, do_fopen", "AES_ROM_PN_ACTIVE": "fun_rebld, fun_disk; do_diropen",
            "AES_ROM_PN_CLOSE": "fun_disk; do_fopen, close_window", "AES_ROM_PN_OPEN": "fun_disk; do_diropen",
            "AES_ROM_WIN_SINFO": "fun_rebld; do_diropen"}.items()},
-    # ...and one whose last ROM caller is held but never reaches the call on a walked chain (who-ran's): win_top's at `$fe2344`
-    "AES_ROM_WIN_TOP": "its ROM callers flipped (the last at band 6 slice F3, stage 2: do_diropen) but the one at $fe2344, whose "
-                       "walked runs never reach its call: called by our C alone on our shore",
+    # (win_top `$fe2cf4` — its last ROM caller hndl_msg `$fe2344`, held, whose walked runs never reached its call — LEFT THE
+    # LIST at band 6 W3a's prep: the WM_TOPPED chain's hndl_msg calls it on our shore)
     # ---- end of stage 2 B's ----
     # ---- band 6 slice F3, stage 3 ---- (who-ran's on the stage's tree: fun_drag's four drivers, called by its C alone now,
     # and app_afind, whose last ROM caller was fun_d2desk)
@@ -954,4 +953,6 @@ DEPTHS = {
     'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1536, 668, 254, 0),
     "Esc typed at the desk's idle (no window open)": (658, 0, 240, 0),
     'drives A: and B: boxed, drive A: dragged onto drive B:, Return': (1280, 0, 254, 0),
+    "two windows: the lower one's title clicked (WM_TOPPED)": (1100, 366, 260, 0),      # band 6 W3a's prep
+    "two windows: the top one's title dragged lower (WM_MOVED)": (1086, 650, 260, 0),   # band 6 W3a's prep
 }
