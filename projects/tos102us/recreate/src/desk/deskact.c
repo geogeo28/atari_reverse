@@ -304,15 +304,12 @@ int16_t aes_act_chg(uint8_t *image, int16_t window, uint32_t tree, int16_t root,
     return ACT_CHG_DONE;
 }
 
-/* $fdcabc — act_allchg: every icon of `root` but `except` whose rectangle touches `rect` — and whose image or label
- * the touched part touches (act_chkobj) — with `value` set or cleared in its state, stored by hand; the extent of
- * those that changed gathered (rc_union, the first copied), and the window redrawn over it inside the clip where
- * `draw` asks. */
-void aes_act_allchg(uint8_t *image, int16_t window, uint32_t tree, int16_t root, int16_t except, uint32_t rect,
-                    uint32_t clip, int16_t value, int16_t set, int16_t draw)
+/* act_allchg's WALK over the icons, A CALL OF ITS OWN (W6-R4: PD0, band 6 W3a's diet): inlined, the eleven registers
+ * the walk holds stay saved under the redraw act_allchg ends on — hndl_msg's WM_REDRAW down to an icon's label, the
+ * desk's deepest draw (52 bytes). The rectangles are act_allchg's: the extent is what the redraw is handed. */
+__attribute__((noinline)) static void allchg_walked(uint8_t *image, uint32_t tree, int16_t root, int16_t except,
+                                                   uint32_t rect, int16_t value, int16_t set, uint32_t rects)
 {
-    uint16_t rects_local[FRAME_LOCAL_WORDS(ACT_ALLCHG_FRAME_BYTES)];
-    uint32_t rects = host_slot_claim(AES_ACT_ALLCHG_RECTS, rects_local);
     uint32_t extent = rects + ACT_ALLCHG_EXTENT, object = rects + ACT_ALLCHG_OBJECT;
 
     set_bus_word(image, extent + GRECT_H, 0);
@@ -337,8 +334,21 @@ void aes_act_allchg(uint8_t *image, int16_t window, uint32_t tree, int16_t root,
         else
             aes_rc_copy(image, object, extent);
     }
+}
+
+/* $fdcabc — act_allchg: every icon of `root` but `except` whose rectangle touches `rect` — and whose image or label
+ * the touched part touches (act_chkobj) — with `value` set or cleared in its state, stored by hand; the extent of
+ * those that changed gathered (rc_union, the first copied), and the window redrawn over it inside the clip where
+ * `draw` asks. */
+void aes_act_allchg(uint8_t *image, int16_t window, uint32_t tree, int16_t root, int16_t except, uint32_t rect,
+                    uint32_t clip, int16_t value, int16_t set, int16_t draw)
+{
+    uint16_t rects_local[FRAME_LOCAL_WORDS(ACT_ALLCHG_FRAME_BYTES)];
+    uint32_t rects = host_slot_claim(AES_ACT_ALLCHG_RECTS, rects_local);
+
+    allchg_walked(image, tree, root, except, rect, value, set, rects);
     if (draw)
-        act_redrawn_inside(image, window, clip, extent);
+        act_redrawn_inside(image, window, clip, rects + ACT_ALLCHG_EXTENT);
     host_slot_release(AES_ACT_ALLCHG_RECTS);
 }
 

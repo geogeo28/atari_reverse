@@ -32,7 +32,9 @@
  * jump: −64 folder close), zoom_onto_the_middle (−68), get_rect_called (−32 folder close, −16 Print),
  * the_rectangles_read (−12 Print), the_command_run (−16 Print), the_window_s_path_named + the_window_redrawn (−24 File
  * > Open), `always_inline` on act_redrawn_inside (−20 Print); each held as a routine of the shipped ELF, or as none, by
- * `test/test_aes_desk_ours.py`.
+ * `test/test_aes_desk_ours.py`. BAND 6 W3a's DIET (the user's ruling B1: opn_appl's Cancel, hndl_msg's WM_REDRAW down
+ * to an icon's label, 1,618 -> 1,534): `noinline` on allchg_walked, act_allchg's walk (−52), and desk_clear's local
+ * cut to its work area's end (−12) — beside two MARKS of the register, do_wredraw's (−12) and desk_objc_draw's (−8).
  */
 #ifndef TOS102US_STACK_DIET_H
 #define TOS102US_STACK_DIET_H

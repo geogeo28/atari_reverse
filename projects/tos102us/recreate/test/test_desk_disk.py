@@ -438,51 +438,51 @@ ROWS = {name: _registered(name) for name in AT_ARRIVALS}
 # blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
 DOOR_USERS_PRICED_WAVE_4 = {
     "aes_desk_util_show, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog); the dialog's EXIT clicked":
-        ((231970, 315776), (180932, 236928), 7, (0, 0, 0)),
+        ((231986, 315776), (180948, 236928), 7, (0, 0, 0)),
     "aes_desk_util_show, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog); Return":
-        ((120854, 163288), (100396, 130114), 5, (0, 0, 0)),
+        ((120870, 163288), (100412, 130114), 5, (0, 0, 0)),
     "aes_desk_util_show, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog); 'A' typed (into the label's field), then EXIT clicked":
-        ((313958, 437384), (245152, 330938), 8, (0, 0, 0)),
+        ((313974, 437384), (245168, 330938), 8, (0, 0, 0)),
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers]; the dialog's EXIT clicked":
-        ((292864, 540650), (241826, 461802), 7, (0, 0, 0)),
+        ((292880, 540650), (241842, 461802), 7, (0, 0, 0)),
     "aes_desk_copy_disk, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers]; Return":
-        ((182212, 388844), (161754, 355670), 5, (0, 0, 0)),
+        ((182228, 388844), (161770, 355670), 5, (0, 0, 0)),
     "aes_desk_util_error, arrival 0 of a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type); Return":
         ((178186, 267308), (157372, 233456), 7, (0, 0, 0)),
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's FORMAT clicked, Return at the space alert, then EXIT clicked":
-        ((2317842, 3484280), (2196446, 3294444), 21, (0, 0, 0)),
+        ((2319170, 3484280), (2197774, 3294444), 21, (0, 0, 0)),
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer] [LAID: the format buffer stale where the driver's track would lie]; eleven 'A's typed (the label), FORMAT clicked, Return at the space alert, then EXIT clicked":
-        ((3258128, 4859348), (2941484, 4366114), 32, (0, 0, 0)),
+        ((3259456, 4859348), (2942812, 4366114), 32, (0, 0, 0)),
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; Double Sided clicked, FORMAT clicked, Return at the space alert, then EXIT clicked":
-        ((2506996, 3812106), (2351938, 3570466), 23, (0, 0, 0)),
+        ((2508324, 3812106), (2353266, 3570466), 23, (0, 0, 0)),
     "aes_desk_copy_disk, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [GEMDOS REPLAYED: the ROM's own run in place — its answers] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's COPY clicked, then Return":
-        ((6002042, 7930590), (5930546, 7818568), 12, (0, 0, 0)),
+        ((6007274, 7930590), (5935778, 7818568), 12, (0, 0, 0)),
     "aes_desk_copy_disk, arrival 0 of a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type) [GEMDOS REPLAYED: the ROM's own run in place — its answers] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's COPY clicked, then Return":
-        ((404008, 722276), (332156, 609576), 14, (0, 0, 0)),
+        ((404024, 722276), (332172, 609576), 14, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN_WAVE_4 = {
     "aes_desk_util_show, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog); the dialog's EXIT clicked":
-        {"bench": (1650886, 1601830), "bench_shipped": (1650886, 1589580)},
+        {"bench": (1650886, 1601846), "bench_shipped": (1650886, 1589596)},
     "aes_desk_util_show, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog); Return":
-        {"bench": (977178, 953112), "bench_shipped": (977178, 948176)},
+        {"bench": (977178, 953128), "bench_shipped": (977178, 948192)},
     "aes_desk_util_show, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog); 'A' typed (into the label's field), then EXIT clicked":
-        {"bench": (1938882, 1863438), "bench_shipped": (1938882, 1843708)},
+        {"bench": (1938882, 1863454), "bench_shipped": (1938882, 1843724)},
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers]; the dialog's EXIT clicked":
-        {"bench": (1928592, 1718020), "bench_shipped": (1928592, 1705790)},
+        {"bench": (1928592, 1718036), "bench_shipped": (1928592, 1705806)},
     "aes_desk_copy_disk, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers]; Return":
-        {"bench": (1256168, 1070368), "bench_shipped": (1256168, 1065452)},
+        {"bench": (1256168, 1070384), "bench_shipped": (1256168, 1065468)},
     "aes_desk_util_error, arrival 0 of a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type); Return":
         {"bench": (2002220, 1938216), "bench_shipped": (2002220, 1930406)},
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's FORMAT clicked, Return at the space alert, then EXIT clicked":
-        {"bench": (13022938, 12094960), "bench_shipped": (13022938, 12074612)},
+        {"bench": (13022938, 12096288), "bench_shipped": (13022938, 12075940)},
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer] [LAID: the format buffer stale where the driver's track would lie]; eleven 'A's typed (the label), FORMAT clicked, Return at the space alert, then EXIT clicked":
-        {"bench": (16237278, 15026578), "bench_shipped": (16237278, 14917442)},
+        {"bench": (16237278, 15027906), "bench_shipped": (16237278, 14918770)},
     "aes_desk_format, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog) [GEMDOS REPLAYED: the ROM's own run in place — its answers; and Dfree's DISKINFO, its run's] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; Double Sided clicked, FORMAT clicked, Return at the space alert, then EXIT clicked":
-        {"bench": (13466018, 12403140), "bench_shipped": (13466018, 12382452)},
+        {"bench": (13466018, 12404468), "bench_shipped": (13466018, 12383780)},
     "aes_desk_copy_disk, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [GEMDOS REPLAYED: the ROM's own run in place — its answers] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's COPY clicked, then Return":
-        {"bench": (28613844, 27302514), "bench_shipped": (28613844, 27320148)},
+        {"bench": (28613844, 27307746), "bench_shipped": (28613844, 27325380)},
     "aes_desk_copy_disk, arrival 0 of a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type) [GEMDOS REPLAYED: the ROM's own run in place — its answers] [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]; the dialog's COPY clicked, then Return":
-        {"bench": (3389578, 3121892), "bench_shipped": (3389578, 3107622)},
+        {"bench": (3389578, 3121908), "bench_shipped": (3389578, 3107638)},
 }
 NO_DOOR_PREMISES_WAVE_4 = {
     "aes_desk_util_open, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog)":
@@ -510,19 +510,19 @@ NO_DOOR_PRICED_WAVE_4 = {
     "aes_desk_util_open, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)":
         ((54486, 215898), None, None, (0, 0, 0)),
     "aes_desk_util_show, arrival 0 of A: File > Format, OK, FORMAT clicked (formatted)":
-        ((44290, 55926), None, None, (0, 0, 0)),
+        ((44306, 55926), None, None, (0, 0, 0)),
     "aes_desk_util_show, arrival 1 of A: File > Format, OK, FORMAT clicked (formatted)":
-        ((17148, 22328), None, None, (0, 0, 0)),
+        ((17164, 22328), None, None, (0, 0, 0)),
     "aes_desk_util_show, arrival 2 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)":
-        ((17148, 22328), None, None, (0, 0, 0)),
+        ((17164, 22328), None, None, (0, 0, 0)),
     "aes_desk_util_bars, arrival 0 of A: File > Format, OK, FORMAT clicked (formatted)":
-        ((51992, 67672), None, None, (0, 0, 0)),
+        ((52008, 67672), None, None, (0, 0, 0)),
     "aes_desk_util_bars, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)":
-        ((72410, 91336), None, None, (0, 0, 0)),
+        ((72426, 91336), None, None, (0, 0, 0)),
     "aes_desk_copy_tracks, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]":
-        ((1355358, 1762416), None, None, (0, 0, 0)),
+        ((1356638, 1762416), None, None, (0, 0, 0)),
     "aes_desk_copy_tracks, arrival 1 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]":
-        ((1394230, 1793198), None, None, (0, 0, 0)),
+        ((1395510, 1793198), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN_WAVE_4 = {
     "aes_desk_util_open, arrival 0 of A: File > Format, the warning's OK (the FORMAT dialog)":
@@ -530,19 +530,19 @@ NO_DOOR_WHOLE_RUN_WAVE_4 = {
     "aes_desk_util_open, arrival 0 of drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)":
         {"bench": (258260, 99160), "bench_shipped": (258260, 99056)},
     "aes_desk_util_show, arrival 0 of A: File > Format, OK, FORMAT clicked (formatted)":
-        {"bench": (590918, 585216), "bench_shipped": (590918, 585050)},
+        {"bench": (590918, 585232), "bench_shipped": (590918, 585066)},
     "aes_desk_util_show, arrival 1 of A: File > Format, OK, FORMAT clicked (formatted)":
-        {"bench": (78262, 75066), "bench_shipped": (78262, 75102)},
+        {"bench": (78262, 75082), "bench_shipped": (78262, 75118)},
     "aes_desk_util_show, arrival 2 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)":
-        {"bench": (78250, 75054), "bench_shipped": (78250, 75090)},
+        {"bench": (78250, 75070), "bench_shipped": (78250, 75106)},
     "aes_desk_util_bars, arrival 0 of A: File > Format, OK, FORMAT clicked (formatted)":
-        {"bench": (630968, 621710), "bench_shipped": (630968, 621556)},
+        {"bench": (630968, 621726), "bench_shipped": (630968, 621572)},
     "aes_desk_util_bars, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)":
-        {"bench": (762800, 753188), "bench_shipped": (762800, 752406)},
+        {"bench": (762800, 753204), "bench_shipped": (762800, 752422)},
     "aes_desk_copy_tracks, arrival 0 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]":
-        {"bench": (6252208, 5984116), "bench_shipped": (6252208, 5991582)},
+        {"bench": (6252208, 5985396), "bench_shipped": (6252208, 5992862)},
     "aes_desk_copy_tracks, arrival 1 of a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied) [THE ROM'S FLOPPY REPLAYED: each XBIOS / BIOS call held to its run in place's, the run's answer]":
-        {"bench": (6285750, 6025498), "bench_shipped": (6285750, 6033022)},
+        {"bench": (6285750, 6026778), "bench_shipped": (6285750, 6034302)},
 }
 ROWS_MADE, PLAIN_MADE, NO_DOOR_MADE, BUDGETED, PARKED = 22, 2, 9, 7, 5
 

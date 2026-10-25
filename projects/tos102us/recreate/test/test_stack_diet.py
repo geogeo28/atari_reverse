@@ -170,6 +170,10 @@ BOUGHT_BY_FUNCTION = {
     "aes_bb_fill": ((52, 48), (24, 24)),
     "aes_bchange": ((52, None), (32, None)),
     "aes_curfld": ((72, 72), (52, 52)),
+    # BAND 6 W3a's DIET (the user's B1): two desk routines on hndl_msg's WM_REDRAW down to an icon's label (PD0, under
+    # opn_appl's Cancel) — read here by the trap path's reading, which follows any routine from its own entry
+    "aes_desk_objc_draw": ((40, 40), (32, 32)),
+    "aes_do_wredraw": ((96, 96), (84, 84)),
     "aes_doq": ((56, None), (40, None)),
     "aes_draw_change": ((104, 104), (92, 92)),
     "aes_ev_multi": ((60, 60), (52, 52)),

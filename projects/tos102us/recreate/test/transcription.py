@@ -939,7 +939,8 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_app_afind", "aes_wildcmp"), ("aes_gr_extent", "aes_r_set"), ("aes_act_chkobj", "aes_r_set"),
     ("aes_fpd_bldspec", "aes_strlen"), ("aes_pn_fcomp", "aes_strchk"), ("aes_pn_fcomp", "aes_scasb"),
     # ...an object's rectangle put on the screen (act_chg's and act_allchg's helper), act_allchg's extent copied and joined
-    ("act_on_the_screen", "aes_rc_copy"), ("aes_act_allchg", "aes_rc_copy"), ("aes_act_allchg", "aes_rc_union"),
+    # (by its walk, a routine of its own since band 6 W3a's diet)
+    ("act_on_the_screen", "aes_rc_copy"), ("allchg_walked", "aes_rc_copy"), ("allchg_walked", "aes_rc_union"),
     # ---- end of group G3's ----
     # ---- band 6 wave 1b, group G4 (units C, H, E, F: `src/desk/deskdir.c`, `deskfun.c`, `deskusr.c`, `deskinf.c`) ----
     # the path leaves' copies and joins; draw_fld's rectangle; par_chk's two paths walked and compared (path_part inlined)

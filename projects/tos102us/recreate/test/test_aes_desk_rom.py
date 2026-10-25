@@ -431,8 +431,9 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     # ---- band 6 slice F3 stage 3's fix pass (two arms of the stage's three no chain reached) ----
     "band 6 slice F3 stage 3's fix pass": (2, 8),      # Esc at the idle, no window; A: and B: boxed, A: dragged onto B:
     # ---- end of slice F3 stage 3's fix pass ----
-    # ---- band 6 W3a's prep (two arms of the cycle no chain reached) ----
-    "band 6 W3a's prep": (2, 4),           # two windows: the lower one's title clicked (WM_TOPPED), the top one's dragged (WM_MOVED)
+    # ---- band 6 W3a's prep (three arms of the cycle no chain reached; opn_appl's landed by W3a's diet) ----
+    "band 6 W3a's prep": (3, 12),          # two windows: the lower one's title clicked (WM_TOPPED), the top one's dragged
+                                           # (WM_MOVED); the program installed as TOS-takes parameters, double-clicked, Cancel
     # ---- end of band 6 W3a's prep ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
@@ -551,7 +552,7 @@ REACHED_BY_BLOCK = {
     "band 6 slice F3 stage 3's fix pass": 0,
     # ---- end of slice F3 stage 3's fix pass ----
     # ---- band 6 W3a's prep ----
-    "band 6 W3a's prep": 0,                # (hndl_msg's two arms: no routine first reached)
+    "band 6 W3a's prep": 1,                # opn_appl (hndl_msg's two arms: no routine first reached)
     # ---- end of band 6 W3a's prep ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
@@ -589,7 +590,7 @@ def test_a_routine_is_reached_by_its_first_instruction_not_by_any_of_its_pcs():
 
 
 PD0_BYTES, PD1_BYTES = desk.PD0_BYTES, desk.PD1_BYTES     # (their one home: `aes_desk`)
-DEEPEST = {desk.PD0_STACK: ("A: File > Open", 1460), desk.PD1_STACK: ("window: View > Show as Text", 722),
+DEEPEST = {desk.PD0_STACK: (desk.TTP_INSTALLED_THEN_CANCELLED, 1504), desk.PD1_STACK: ("window: View > Show as Text", 722),
            desk.DISPATCHER_STACK: ("window: A: opened again (two windows)", 190), desk.USERDEF_STACK: ("window: View > Show as Text", 438)}
 DISPATCHER_ELSEWHERE = 188
 # THE DISPATCHER AT 190 — not the second window alone: band 6 wave 2's re-derivation (Reviewer B's, its fix pass's
@@ -603,8 +604,9 @@ DISPATCHER_AT_190 = frozenset({DEEPEST[desk.DISPATCHER_STACK][0], "A: opened, dr
 
 
 def test_the_deepest_each_stack_is_taken_and_by_which_chain_off_the_write_ledgers():
-    """MEASURED, THE ROM'S OWN DESK ON THE ROM'S AES: PD0 1,460 of 1,792 (File > Open on drive A:: 332 spare, 88 under
-    the 244-byte nest band 5 charges), PD1 722 of 1,196 (a menu chosen over a window), the dispatcher 190 on the
+    """MEASURED, THE ROM'S OWN DESK ON THE ROM'S AES: PD0 1,504 of 1,792 (opn_appl's Cancel, since band 6 W3a's diet
+    landed its chain: 288 spare, 44 under the 244-byte nest band 5 charges; File > Open on drive A: 1,460 before it),
+    PD1 722 of 1,196 (a menu chosen over a window), the dispatcher 190 on the
     chains DISPATCHER_AT_190 (a second window opened, a desktop icon dropped into a window) and 188 ON EVERY OTHER,
     the userdef stack 438 of 1,024 (the text view drawn). A depth
     is the lowest STORE of a chain's own steps."""

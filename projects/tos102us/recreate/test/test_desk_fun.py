@@ -532,41 +532,41 @@ DRIVER_DOOR_USERS_PRICED = {
     "aes_desk_fun_rebld, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
         ((355212, 620530), (347896, 607636), 11, (0, 0, 0)),
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return":
-        ((871984, 1339074), (821442, 1256600), 18, (0, 0, 0)),
+        ((872000, 1339074), (821458, 1256600), 18, (0, 0, 0)),
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder again, 'A', Return — the name taken, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return, Return at the alert":
-        ((705942, 1001060), (641970, 897690), 14, (0, 0, 0)),
+        ((705958, 1001060), (641986, 897690), 14, (0, 0, 0)),
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; Return":
-        ((437834, 600410), (412346, 558400), 6, (0, 0, 0)),
+        ((437850, 600410), (412362, 558400), 6, (0, 0, 0)),
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; the dialog's Cancel clicked":
-        ((466304, 643286), (410216, 555584), 8, (0, 0, 0)),
+        ((466320, 643286), (410232, 555584), 8, (0, 0, 0)),
     "aes_desk_fun_op, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((525924, 704158), (500436, 662148), 6, (0, 0, 0)),
+        ((525956, 704158), (500468, 662148), 6, (0, 0, 0)),
     "aes_desk_fun_op, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((472120, 628662), (446632, 586652), 6, (0, 0, 0)),
+        ((472136, 628662), (446648, 586652), 6, (0, 0, 0)),
     "aes_desk_fun_op, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        ((548448, 742182), (493874, 656210), 8, (0, 0, 0)),
+        ((548480, 742182), (493906, 656210), 8, (0, 0, 0)),
     "aes_desk_fun_ddst, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        ((548526, 742746), (493952, 656774), 8, (0, 0, 0)),
+        ((548558, 742746), (493984, 656774), 8, (0, 0, 0)),
     "aes_desk_fun_ddst, arrival 0 of file: dragged onto drive A:'s icon, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        ((818926, 1095430), (773058, 1020318), 11, (0, 0, 0)),
+        ((818990, 1095430), (773122, 1020318), 11, (0, 0, 0)),
     "aes_desk_fun_wdst, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((527132, 706032), (501644, 664022), 6, (0, 0, 0)),
+        ((527164, 706032), (501676, 664022), 6, (0, 0, 0)),
     "aes_desk_fun_wdst, arrival 0 of files: the long file dragged onto the folder, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((528700, 707722), (503212, 665712), 6, (0, 0, 0)),
+        ((528732, 707722), (503244, 665712), 6, (0, 0, 0)),
     "aes_desk_fun_wdst, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        ((819328, 1095666), (773460, 1020554), 11, (0, 0, 0)),
+        ((819392, 1095666), (773524, 1020554), 11, (0, 0, 0)),
     "aes_desk_fun_win2win, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((885668, 1332970), (852864, 1278066), 17, (0, 0, 0)),
+        ((885700, 1332970), (852896, 1278066), 17, (0, 0, 0)),
     "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        ((873526, 1323502), (811636, 1224636), 19, (0, 0, 0)),
+        ((873558, 1323502), (811668, 1224636), 19, (0, 0, 0)),
     "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((818518, 1236692), (785714, 1181788), 17, (0, 0, 0)),
+        ((818534, 1236692), (785730, 1181788), 17, (0, 0, 0)),
     "aes_desk_fun_disk, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        ((960040, 1285376), (914172, 1210264), 11, (0, 0, 0)),
+        ((960284, 1285376), (914416, 1210264), 11, (0, 0, 0)),
     "aes_desk_fun_desk2win, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
         ((144998, 230448), (124262, 196668), 7, (0, 0, 0)),
     "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        ((1309510, 1898632), (1256326, 1810626), 22, (0, 0, 0)),
+        ((1309754, 1898632), (1256570, 1810626), 22, (0, 0, 0)),
     # ---- band 6 slice F3, stage 3 ----
     "aes_desk_fun_d2desk, arrival 0 of drive A: dragged to the trash, Return; the alert's OK clicked":
         ((211748, 318988), (161926, 241246), 9, (0, 0, 0)),
@@ -580,9 +580,9 @@ DRIVER_DOOR_USERS_PRICED = {
     "aes_desk_fun_d2desk, arrival 0 of drives A: and B: boxed, drive A: dragged onto drive B:, Return; Return":
         ((207738, 305836), (187002, 272056), 7, (0, 0, 0)),
     "aes_desk_fun_drag, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        ((885884, 1333572), (853080, 1278668), 17, (0, 0, 0)),
+        ((885916, 1333572), (853112, 1278668), 17, (0, 0, 0)),
     "aes_desk_fun_drag, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        ((873762, 1324102), (811872, 1225236), 19, (0, 0, 0)),
+        ((873794, 1324102), (811904, 1225236), 19, (0, 0, 0)),
     "aes_desk_fun_drag, arrival 0 of drive A: dragged onto drive B:, Return; Return":
         ((206178, 303130), (185442, 269350), 7, (0, 0, 0)),
     "aes_desk_fun_drag, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
@@ -599,41 +599,41 @@ DRIVER_DOOR_USERS_WHOLE_RUN = {
     "aes_desk_fun_rebld, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
         {"bench": (1850344, 1613086), "bench_shipped": (1850344, 1614498)},
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return":
-        {"bench": (4910250, 4540000), "bench_shipped": (4910250, 4527624)},
+        {"bench": (4910250, 4540016), "bench_shipped": (4910250, 4527640)},
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder again, 'A', Return — the name taken, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 'A' typed, Return, Return at the alert":
-        {"bench": (4755536, 4554718), "bench_shipped": (4755536, 4532234)},
+        {"bench": (4755536, 4554734), "bench_shipped": (4755536, 4532250)},
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; Return":
-        {"bench": (2773604, 2667240), "bench_shipped": (2773604, 2660176)},
+        {"bench": (2773604, 2667256), "bench_shipped": (2773604, 2660192)},
     "aes_desk_fun_mkdir, arrival 0 of folder: File > New Folder, 'A', Return; the dialog's Cancel clicked":
-        {"bench": (2817738, 2699972), "bench_shipped": (2817738, 2691392)},
+        {"bench": (2817738, 2699988), "bench_shipped": (2817738, 2691408)},
     "aes_desk_fun_op, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (3451372, 3342016), "bench_shipped": (3451372, 3331946)},
+        {"bench": (3451372, 3342048), "bench_shipped": (3451372, 3331978)},
     "aes_desk_fun_op, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (3070866, 2974184), "bench_shipped": (3070866, 2968524)},
+        {"bench": (3070866, 2974200), "bench_shipped": (3070866, 2968540)},
     "aes_desk_fun_op, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        {"bench": (3544284, 3421194), "bench_shipped": (3544284, 3410962)},
+        {"bench": (3544284, 3421226), "bench_shipped": (3544284, 3410994)},
     "aes_desk_fun_ddst, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        {"bench": (3544848, 3421272), "bench_shipped": (3544848, 3411040)},
+        {"bench": (3544848, 3421304), "bench_shipped": (3544848, 3411072)},
     "aes_desk_fun_ddst, arrival 0 of file: dragged onto drive A:'s icon, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        {"bench": (5422940, 5265426), "bench_shipped": (5422940, 5235996)},
+        {"bench": (5422940, 5265490), "bench_shipped": (5422940, 5236060)},
     "aes_desk_fun_wdst, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (3453246, 3343752), "bench_shipped": (3453246, 3333430)},
+        {"bench": (3453246, 3343784), "bench_shipped": (3453246, 3333462)},
     "aes_desk_fun_wdst, arrival 0 of files: the long file dragged onto the folder, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (3466526, 3356964), "bench_shipped": (3466526, 3346588)},
+        {"bench": (3466526, 3356996), "bench_shipped": (3466526, 3346620)},
     "aes_desk_fun_wdst, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        {"bench": (5425204, 5268068), "bench_shipped": (5425204, 5238558)},
+        {"bench": (5425204, 5268132), "bench_shipped": (5425204, 5238622)},
     "aes_desk_fun_win2win, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (5309998, 4960490), "bench_shipped": (5309998, 4951528)},
+        {"bench": (5309998, 4960522), "bench_shipped": (5309998, 4951560)},
     "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        {"bench": (5322900, 4969940), "bench_shipped": (5322900, 4960660)},
+        {"bench": (5322900, 4969972), "bench_shipped": (5322900, 4960692)},
     "aes_desk_fun_win2desk, arrival 0 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (4902574, 4570190), "bench_shipped": (4902574, 4567412)},
+        {"bench": (4902574, 4570206), "bench_shipped": (4902574, 4567428)},
     "aes_desk_fun_disk, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        {"bench": (5965870, 5773002), "bench_shipped": (5965870, 5743326)},
+        {"bench": (5965870, 5773254), "bench_shipped": (5965870, 5743570)},
     "aes_desk_fun_desk2win, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
         {"bench": (1319720, 1253584), "bench_shipped": (1319720, 1247230)},
     "aes_desk_fun_desk2win, arrival 0 of A: opened, drive A: dragged into its window, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return, Return":
-        {"bench": (7802976, 7372224), "bench_shipped": (7802976, 7345458)},
+        {"bench": (7802976, 7372476), "bench_shipped": (7802976, 7345702)},
     # ---- band 6 slice F3, stage 3 ----
     "aes_desk_fun_d2desk, arrival 0 of drive A: dragged to the trash, Return; the alert's OK clicked":
         {"bench": (1672810, 1594234), "bench_shipped": (1672810, 1581666)},
@@ -647,9 +647,9 @@ DRIVER_DOOR_USERS_WHOLE_RUN = {
     "aes_desk_fun_d2desk, arrival 0 of drives A: and B: boxed, drive A: dragged onto drive B:, Return; Return":
         {"bench": (1810806, 1741878), "bench_shipped": (1810806, 1729724)},
     "aes_desk_fun_drag, arrival 0 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; Return":
-        {"bench": (5310600, 4960704), "bench_shipped": (5310600, 4951744)},
+        {"bench": (5310600, 4960736), "bench_shipped": (5310600, 4951776)},
     "aes_desk_fun_drag, arrival 0 of file: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; the dialog's OK clicked":
-        {"bench": (5323500, 4970174), "bench_shipped": (5323500, 4960896)},
+        {"bench": (5323500, 4970206), "bench_shipped": (5323500, 4960928)},
     "aes_desk_fun_drag, arrival 0 of drive A: dragged onto drive B:, Return; Return":
         {"bench": (1806072, 1738272), "bench_shipped": (1806072, 1726096)},
     "aes_desk_fun_drag, arrival 0 of A: opened, the trash dragged into its window, Return; Return":
@@ -662,11 +662,11 @@ DRIVER_NO_DOOR_PREMISES = {
 }
 DRIVER_NO_DOOR_PRICED = {
     "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((137234, 184920), None, None, (0, 0, 0)),
+        ((137414, 184920), None, None, (0, 0, 0)),
 }
 DRIVER_NO_DOOR_WHOLE_RUN = {
     "aes_desk_fun_disk, arrival 0 of file: dragged to the trash, OK — then drive A: dragged into its window [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (530436, 495000), "bench_shipped": (530436, 495538)},
+        {"bench": (530436, 495188), "bench_shipped": (530436, 495718)},
 }
 # every case at an arrival of the eleven flipped (none LAID) — the nine's 23 (14 budgeted) and, since stage 3, fun_d2desk's
 # 4 (5 since its fix pass: the destination among the selection) and fun_drag's 4 (3 budgeted: the disk copy OK'd,

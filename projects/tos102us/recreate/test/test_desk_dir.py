@@ -310,11 +310,11 @@ DOOR_USERS_PRICED = {
     "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
         ((321042, 423182), (315934, 414274), 1, (0, 0, 0)),
     'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return; Return at the first idle':
-        ((283862, 376078), (263482, 342976), 5, (0, 0, 0)),
+        ((283894, 376078), (263514, 342976), 5, (0, 0, 0)),
     "aes_desk_do_namecon, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B); Return at the first idle":
-        ((278798, 371362), (258418, 338260), 5, (0, 0, 0)),
+        ((278830, 371362), (258450, 338260), 5, (0, 0, 0)),
     'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return; Return at the first idle':
-        ((187042, 255406), (166662, 222304), 5, (0, 0, 0)),
+        ((187058, 255406), (166678, 222304), 5, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN = {
     "aes_desk_d_errmsg, arrival 0 of file: read-only, dragged to the trash, OK — access denied, Return; Return at the first idle":
@@ -326,11 +326,11 @@ DOOR_USERS_WHOLE_RUN = {
     "aes_desk_hide_dial, arrival 0 of folder: the file dragged onto it, Return":
         {"bench": (2091866, 2029264), "bench_shipped": (2091866, 2028234)},
     'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return; Return at the first idle':
-        {"bench": (1930388, 1885092), "bench_shipped": (1930388, 1867872)},
+        {"bench": (1930388, 1885124), "bench_shipped": (1930388, 1867904)},
     "aes_desk_do_namecon, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B); Return at the first idle":
-        {"bench": (1925672, 1878530), "bench_shipped": (1925672, 1862808)},
+        {"bench": (1925672, 1878562), "bench_shipped": (1925672, 1862840)},
     'aes_desk_do_namecon, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return; Return at the first idle':
-        {"bench": (1129358, 1090698), "bench_shipped": (1129358, 1078350)},
+        {"bench": (1129358, 1090714), "bench_shipped": (1129358, 1078366)},
 }
 NO_DOOR_PREMISES = {
     'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
@@ -352,39 +352,39 @@ NO_DOOR_PREMISES = {
 }
 NO_DOOR_PRICED = {
     'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
-        ((99242, 123362), None, None, (0, 0, 0)),
+        ((99258, 123362), None, None, (0, 0, 0)),
     'aes_desk_draw_dial, arrival 1 of folder: the file dragged onto it again, Return — the name conflict, Return':
-        ((99500, 123790), None, None, (0, 0, 0)),
+        ((99516, 123790), None, None, (0, 0, 0)),
     "aes_desk_draw_dial, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)":
-        ((97584, 121756), None, None, (0, 0, 0)),
+        ((97600, 121756), None, None, (0, 0, 0)),
     'aes_desk_show_dial, arrival 0 of file: dragged to the trash, OK':
-        ((102592, 128388), None, None, (0, 0, 0)),
+        ((102608, 128388), None, None, (0, 0, 0)),
     "aes_desk_show_dial, arrival 0 of folder: File > New Folder, 'A', Return":
-        ((83952, 106466), None, None, (0, 0, 0)),
+        ((83968, 106466), None, None, (0, 0, 0)),
     'aes_desk_show_dial, arrival 0 of folder: the file dragged onto it, Return':
-        ((101056, 126632), None, None, (0, 0, 0)),
+        ((101072, 126632), None, None, (0, 0, 0)),
     'aes_desk_draw_fld, arrival 0 of file: dragged to the trash, OK':
-        ((29836, 40606), None, None, (0, 0, 0)),
+        ((29852, 40606), None, None, (0, 0, 0)),
     'aes_desk_draw_fld, arrival 0 of folder: dragged to the trash, OK':
-        ((30376, 41274), None, None, (0, 0, 0)),
+        ((30392, 41274), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_desk_draw_dial, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return':
-        {"bench": (827982, 821836), "bench_shipped": (827982, 815918)},
+        {"bench": (827982, 821852), "bench_shipped": (827982, 815934)},
     'aes_desk_draw_dial, arrival 1 of folder: the file dragged onto it again, Return — the name conflict, Return':
-        {"bench": (813244, 806196), "bench_shipped": (813244, 801606)},
+        {"bench": (813244, 806212), "bench_shipped": (813244, 801622)},
     "aes_desk_draw_dial, arrival 0 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)":
-        {"bench": (826376, 819444), "bench_shipped": (826376, 814260)},
+        {"bench": (826376, 819460), "bench_shipped": (826376, 814276)},
     'aes_desk_show_dial, arrival 0 of file: dragged to the trash, OK':
-        {"bench": (807250, 798506), "bench_shipped": (807250, 793970)},
+        {"bench": (807250, 798522), "bench_shipped": (807250, 793986)},
     "aes_desk_show_dial, arrival 0 of folder: File > New Folder, 'A', Return":
-        {"bench": (637806, 627698), "bench_shipped": (637806, 625900)},
+        {"bench": (637806, 627714), "bench_shipped": (637806, 625916)},
     'aes_desk_show_dial, arrival 0 of folder: the file dragged onto it, Return':
-        {"bench": (801990, 792942), "bench_shipped": (801990, 788778)},
+        {"bench": (801990, 792958), "bench_shipped": (801990, 788794)},
     'aes_desk_draw_fld, arrival 0 of file: dragged to the trash, OK':
-        {"bench": (334132, 328412), "bench_shipped": (334132, 326214)},
+        {"bench": (334132, 328428), "bench_shipped": (334132, 326230)},
     'aes_desk_draw_fld, arrival 0 of folder: dragged to the trash, OK':
-        {"bench": (355868, 350140), "bench_shipped": (355868, 347822)},
+        {"bench": (355868, 350156), "bench_shipped": (355868, 347838)},
 }
 ROWS_MADE = 40                          # the 38 cases at arrivals of the fourteen flipped, and d_dofdel's two
 
@@ -789,51 +789,51 @@ ENGINE_ROWS = {engine_label(each): _engine_row(each) for each in ENGINE_CASES if
 ENGINE_ROWS_MADE, ENGINE_BUDGETED = 30, 7       # the 30 engine cases at arrivals (the thirty-first is the LAID one); dir_op's copies
 ENGINE_DOOR_USERS_PRICED = {
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((305330, 408642), (284950, 375540), 5, (0, 0, 0)),
+        ((305362, 408642), (284982, 375540), 5, (0, 0, 0)),
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((208510, 287970), (188130, 254868), 5, (0, 0, 0)),
+        ((208526, 287970), (188146, 254868), 5, (0, 0, 0)),
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 3 key(s) typed at its idles":
-        ((480238, 659488), (424362, 571226), 7, (0, 0, 0)),
+        ((480270, 659488), (424394, 571226), 7, (0, 0, 0)),
     "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((469502, 625872), (444014, 583862), 6, (0, 0, 0)),
+        ((469518, 625872), (444030, 583862), 6, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((519710, 697380), (494222, 655370), 6, (0, 0, 0)),
+        ((519742, 697380), (494254, 655370), 6, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 2 key(s) typed at its idles":
-        ((815836, 1093568), (769968, 1018456), 11, (0, 0, 0)),
+        ((815900, 1093568), (770032, 1018456), 11, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((534708, 719042), (509220, 677032), 6, (0, 0, 0)),
+        ((534724, 719042), (509236, 677032), 6, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((514282, 689022), (488794, 647012), 6, (0, 0, 0)),
+        ((514314, 689022), (488826, 647012), 6, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
-        ((933124, 1271930), (851760, 1141658), 13, (0, 0, 0)),
+        ((933188, 1271930), (851824, 1141658), 13, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
-        ((977828, 1333686), (896464, 1203414), 13, (0, 0, 0)),
+        ((977908, 1333686), (896544, 1203414), 13, (0, 0, 0)),
     "aes_desk_dir_op, arrival 2 of file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        ((519710, 697380), (494222, 655370), 6, (0, 0, 0)),
+        ((519742, 697380), (494254, 655370), 6, (0, 0, 0)),
 }
 ENGINE_DOOR_USERS_WHOLE_RUN = {
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (1997048, 1946398), "bench_shipped": (1997048, 1925132)},
+        {"bench": (1997048, 1946430), "bench_shipped": (1997048, 1925164)},
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (1196018, 1152004), "bench_shipped": (1196018, 1135610)},
+        {"bench": (1196018, 1152020), "bench_shipped": (1196018, 1135626)},
     "aes_desk_d_dofcopy, arrival 0 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 3 key(s) typed at its idles":
-        {"bench": (2592834, 2494104), "bench_shipped": (2592834, 2456264)},
+        {"bench": (2592834, 2494136), "bench_shipped": (2592834, 2456296)},
     "aes_desk_dir_op, arrival 1 of file: dragged to the trash, Return (Cancel, the dialog's default) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (3068076, 2971322), "bench_shipped": (3068076, 2965814)},
+        {"bench": (3068076, 2971338), "bench_shipped": (3068076, 2965830)},
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (3444594, 3335312), "bench_shipped": (3444594, 3325548)},
+        {"bench": (3444594, 3335344), "bench_shipped": (3444594, 3325580)},
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, Return — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 2 key(s) typed at its idles":
-        {"bench": (5419150, 5260584), "bench_shipped": (5419150, 5230918)},
+        {"bench": (5419150, 5260648), "bench_shipped": (5419150, 5230982)},
     "aes_desk_dir_op, arrival 2 of folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (3292882, 3185010), "bench_shipped": (3292882, 3166508)},
+        {"bench": (3292882, 3185026), "bench_shipped": (3292882, 3166524)},
     "aes_desk_dir_op, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (3459812, 3351510), "bench_shipped": (3459812, 3343328)},
+        {"bench": (3459812, 3351542), "bench_shipped": (3459812, 3343360)},
     "aes_desk_dir_op, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
-        {"bench": (5883642, 5678738), "bench_shipped": (5883642, 5642532)},
+        {"bench": (5883642, 5678802), "bench_shipped": (5883642, 5642596)},
     "aes_desk_dir_op, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 4 key(s) typed at its idles":
-        {"bench": (6228946, 6014544), "bench_shipped": (6228946, 5974464)},
+        {"bench": (6228946, 6014624), "bench_shipped": (6228946, 5974544)},
     "aes_desk_dir_op, arrival 2 of file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]; 1 key(s) typed at its idles":
-        {"bench": (3444594, 3335312), "bench_shipped": (3444594, 3325548)},
+        {"bench": (3444594, 3335344), "bench_shipped": (3444594, 3325580)},
 }
 ENGINE_NO_DOOR_PREMISES = {
     "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
@@ -851,31 +851,31 @@ ENGINE_NO_DOOR_PREMISES = {
 }
 ENGINE_NO_DOOR_PRICED = {
     "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((34672, 47862), None, None, (0, 0, 0)),
+        ((34688, 47862), None, None, (0, 0, 0)),
     "aes_desk_d_doop, arrival 1 of files: the folder (not empty) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((67864, 94486), None, None, (0, 0, 0)),
+        ((67896, 94486), None, None, (0, 0, 0)),
     "aes_desk_d_doop, arrival 1 of folders: A (holding B) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((71540, 98946), None, None, (0, 0, 0)),
+        ((71572, 98946), None, None, (0, 0, 0)),
     "aes_desk_d_doop, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((33376, 46058), None, None, (0, 0, 0)),
+        ((33392, 46058), None, None, (0, 0, 0)),
     "aes_desk_d_doop, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((32576, 45106), None, None, (0, 0, 0)),
+        ((32592, 45106), None, None, (0, 0, 0)),
     "aes_desk_d_doop, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        ((75216, 104760), None, None, (0, 0, 0)),
+        ((75248, 104760), None, None, (0, 0, 0)),
 }
 ENGINE_NO_DOOR_WHOLE_RUN = {
     "aes_desk_d_doop, arrival 1 of folder: dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (368444, 360992), "bench_shipped": (368444, 358442)},
+        {"bench": (368444, 361008), "bench_shipped": (368444, 358458)},
     "aes_desk_d_doop, arrival 1 of files: the folder (not empty) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (705908, 690744), "bench_shipped": (705908, 685602)},
+        {"bench": (705908, 690776), "bench_shipped": (705908, 685634)},
     "aes_desk_d_doop, arrival 1 of folders: A (holding B) dragged to the trash, OK [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (737014, 720754), "bench_shipped": (737014, 716108)},
+        {"bench": (737014, 720786), "bench_shipped": (737014, 716140)},
     "aes_desk_d_doop, arrival 2 of folders: B dragged onto A, Return [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (342396, 335042), "bench_shipped": (342396, 332810)},
+        {"bench": (342396, 335058), "bench_shipped": (342396, 332826)},
     "aes_desk_d_doop, arrival 2 of folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (336720, 329286), "bench_shipped": (336720, 327134)},
+        {"bench": (336720, 329302), "bench_shipped": (336720, 327150)},
     "aes_desk_d_doop, arrival 2 of files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB) [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search]":
-        {"bench": (668332, 651522), "bench_shipped": (668332, 645412)},
+        {"bench": (668332, 651554), "bench_shipped": (668332, 645444)},
 }
 
 

@@ -7,6 +7,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "transcribed.h"
 #include "aes/aes.h"
 #include "aes/evdoor.h"
@@ -392,6 +393,7 @@ static inline void clip_to(uint8_t *image, int16_t x, int16_t y, int16_t w, int1
 }
 
 /* $fde2e8 — objc_draw: the clip set first. The ROM answers what ob_draw left in D0; ob_draw answers nothing in C. */
+FRAME_DIET("no-defer-pop")
 void aes_desk_objc_draw(uint8_t *image, uint32_t tree, int16_t object, int16_t depth, int16_t clip_x, int16_t clip_y,
                         int16_t clip_w, int16_t clip_h)
 {

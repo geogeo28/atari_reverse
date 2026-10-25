@@ -1040,13 +1040,13 @@ NO_DOOR_PRICED = {
     'aes_desk_wind_get, arrival 8 of A: opened':
         ((4348, 6046), None, None, (0, 0, 0)),
     'aes_desk_objc_draw, arrival 0 of Desk > Desktop Info, Return':
-        ((94038, 111362), None, None, (0, 0, 0)),
+        ((94054, 111362), None, None, (0, 0, 0)),
     'aes_desk_objc_draw, arrival 0 of A: opened':
-        ((37548, 46460), None, None, (0, 0, 0)),
+        ((37564, 46460), None, None, (0, 0, 0)),
     'aes_desk_objc_draw, arrival 2 of A: opened':
-        ((27264, 33544), None, None, (0, 0, 0)),
+        ((27280, 33544), None, None, (0, 0, 0)),
     'aes_desk_objc_draw, arrival 0 of drive A: selected':
-        ((37548, 46460), None, None, (0, 0, 0)),
+        ((37564, 46460), None, None, (0, 0, 0)),
     'aes_desk_form_dial, arrival 1 of Desk > Desktop Info, Return':
         ((72750, 86638), None, None, (0, 0, 0)),
 }
@@ -1180,13 +1180,13 @@ NO_DOOR_WHOLE_RUN = {
     'aes_desk_wind_get, arrival 8 of A: opened':
         {"bench": (12808, 11266), "bench_shipped": (12808, 11386)},
     'aes_desk_objc_draw, arrival 0 of Desk > Desktop Info, Return':
-        {"bench": (1115396, 1112202), "bench_shipped": (1115396, 1108448)},
+        {"bench": (1115396, 1112218), "bench_shipped": (1115396, 1108464)},
     'aes_desk_objc_draw, arrival 0 of A: opened':
-        {"bench": (350860, 346890), "bench_shipped": (350860, 345964)},
+        {"bench": (350860, 346906), "bench_shipped": (350860, 345980)},
     'aes_desk_objc_draw, arrival 2 of A: opened':
-        {"bench": (418522, 415874), "bench_shipped": (418522, 414898)},
+        {"bench": (418522, 415890), "bench_shipped": (418522, 414914)},
     'aes_desk_objc_draw, arrival 0 of drive A: selected':
-        {"bench": (350860, 346890), "bench_shipped": (350860, 345964)},
+        {"bench": (350860, 346906), "bench_shipped": (350860, 345980)},
     'aes_desk_form_dial, arrival 1 of Desk > Desktop Info, Return':
         {"bench": (984526, 982092), "bench_shipped": (984526, 978258)},
 }

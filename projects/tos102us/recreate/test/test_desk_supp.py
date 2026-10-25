@@ -419,21 +419,21 @@ ROWS_WAVE_2 = {name: _registered_wave_2(name) for name in AT_ARRIVALS_WAVE_2}
 # each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
 DOOR_USERS_PRICED_WAVE_2 = {
     "aes_do_diropen, arrival 1 of A: File > Open; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        ((960458, 1403986), (951720, 1387910), 16, (0, 0, 0)),
+        ((960378, 1403986), (951640, 1387910), 16, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        ((1212804, 1734524), (1204066, 1718448), 16, (0, 0, 0)),
+        ((1212716, 1734524), (1203978, 1718448), 16, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of files: A: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        ((1006138, 1469600), (997400, 1453524), 16, (0, 0, 0)),
+        ((1006058, 1469600), (997320, 1453524), 16, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of file: shown, a key at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
         ((893548, 1316070), (884810, 1299994), 16, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        ((715794, 1093320), (713658, 1089252), 12, (0, 0, 0)),
+        ((715634, 1093320), (713498, 1089252), 12, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        ((448526, 764704), (446390, 760636), 12, (0, 0, 0)),
+        ((448446, 764704), (446310, 760636), 12, (0, 0, 0)),
     "aes_do_dopen, arrival 1 of A: File > Open; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((999134, 1464402), (990396, 1448326), 16, (0, 0, 0)),
+        ((999054, 1464402), (990316, 1448326), 16, (0, 0, 0)),
     "aes_do_dopen, arrival 1 of files: A: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((1044814, 1530016), (1036076, 1513940), 16, (0, 0, 0)),
+        ((1044734, 1530016), (1035996, 1513940), 16, (0, 0, 0)),
     'aes_desk_do_format, arrival 1 of A: File > Format, Return (the warning answered)':
         ((201650, 296262), (180914, 262482), 7, (0, 0, 0)),
     "aes_close_window, arrival 1 of window: File > Close Window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
@@ -449,47 +449,47 @@ DOOR_USERS_PRICED_WAVE_2 = {
     "aes_fun_close, arrival 1 of two windows: File > Close Window (one left on top); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
         ((811794, 1180484), (803768, 1165764), 12, (0, 0, 0)),
     "aes_do_dopen, arrival 1 of c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)":
-        ((962458, 1415230), (953720, 1399154), 16, (0, 0, 0)),
+        ((962378, 1415230), (953640, 1399154), 16, (0, 0, 0)),
     "aes_do_diropen, arrival 1 of c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)":
-        ((940728, 1380058), (931990, 1363982), 16, (0, 0, 0)),
+        ((940648, 1380058), (931910, 1363982), 16, (0, 0, 0)),
     # (the stage's third fix pass: a folder's acts in a window restored after a show — the BIOS park named by nature)
     "aes_do_fopen, arrival 1 of files: the long file shown, then the folder AUTO double-clicked in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((792746, 1198474), (790610, 1194406), 12, (0, 0, 0)),
+        ((792586, 1198474), (790450, 1194406), 12, (0, 0, 0)),
     "aes_do_fopen, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((547294, 900516), (545158, 896448), 12, (0, 0, 0)),
+        ((547214, 900516), (545078, 896448), 12, (0, 0, 0)),
     "aes_close_folder, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((746008, 1137540), (743872, 1133472), 12, (0, 0, 0)),
+        ((745928, 1137540), (743792, 1133472), 12, (0, 0, 0)),
     "aes_fun_close, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((762196, 1161474), (760060, 1157406), 12, (0, 0, 0)),
+        ((762116, 1161474), (759980, 1157406), 12, (0, 0, 0)),
     # (band 6 slice P7: the arrivals under drive_check holding its own park — the BIOS park named by nature)
     "aes_do_dopen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((1251600, 1795240), (1242862, 1779164), 16, (0, 0, 0)),
+        ((1251512, 1795240), (1242774, 1779164), 16, (0, 0, 0)),
     "aes_do_fopen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((753624, 1151916), (751488, 1147848), 12, (0, 0, 0)),
+        ((753464, 1151916), (751328, 1147848), 12, (0, 0, 0)),
     "aes_do_fopen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((486082, 822452), (483946, 818384), 12, (0, 0, 0)),
+        ((486002, 822452), (483866, 818384), 12, (0, 0, 0)),
     "aes_close_folder, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((684796, 1059476), (682660, 1055408), 12, (0, 0, 0)),
+        ((684716, 1059476), (682580, 1055408), 12, (0, 0, 0)),
     "aes_fun_close, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        ((700418, 1082606), (698282, 1078538), 12, (0, 0, 0)),
+        ((700338, 1082606), (698202, 1078538), 12, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN_WAVE_2 = {
     "aes_do_diropen, arrival 1 of A: File > Open; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        {"bench": (5566470, 5228690), "bench_shipped": (5566470, 5229990)},
+        {"bench": (5566470, 5228614), "bench_shipped": (5566470, 5229910)},
     "aes_do_diropen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        {"bench": (6314658, 5926026), "bench_shipped": (6314658, 5927870)},
+        {"bench": (6314658, 5925948), "bench_shipped": (6314658, 5927782)},
     "aes_do_diropen, arrival 1 of files: A: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        {"bench": (5663328, 5311552), "bench_shipped": (5663328, 5310762)},
+        {"bench": (5663328, 5311476), "bench_shipped": (5663328, 5310682)},
     "aes_do_diropen, arrival 1 of file: shown, a key at its end; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
         {"bench": (5121544, 4798616), "bench_shipped": (5121544, 4800162)},
     "aes_do_diropen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        {"bench": (4262924, 3962492), "bench_shipped": (4262924, 3960634)},
+        {"bench": (4262924, 3962340), "bench_shipped": (4262924, 3960474)},
     "aes_do_diropen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
-        {"bench": (2566216, 2287178), "bench_shipped": (2566216, 2287414)},
+        {"bench": (2566216, 2287102), "bench_shipped": (2566216, 2287334)},
     "aes_do_dopen, arrival 1 of A: File > Open; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (5752670, 5395912), "bench_shipped": (5752670, 5397678)},
+        {"bench": (5752670, 5395836), "bench_shipped": (5752670, 5397598)},
     "aes_do_dopen, arrival 1 of files: A: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (5849528, 5478774), "bench_shipped": (5849528, 5478450)},
+        {"bench": (5849528, 5478698), "bench_shipped": (5849528, 5478370)},
     'aes_desk_do_format, arrival 1 of A: File > Format, Return (the warning answered)':
         {"bench": (1733966, 1668398), "bench_shipped": (1733966, 1656330)},
     "aes_close_window, arrival 1 of window: File > Close Window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
@@ -505,28 +505,28 @@ DOOR_USERS_WHOLE_RUN_WAVE_2 = {
     "aes_fun_close, arrival 1 of two windows: File > Close Window (one left on top); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs":
         {"bench": (4798368, 4522442), "bench_shipped": (4798368, 4524018)},
     "aes_do_dopen, arrival 1 of c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)":
-        {"bench": (5593594, 5249538), "bench_shipped": (5593594, 5248518)},
+        {"bench": (5593594, 5249462), "bench_shipped": (5593594, 5248438)},
     "aes_do_diropen, arrival 1 of c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)":
-        {"bench": (5493494, 5161590), "bench_shipped": (5493494, 5160140)},
+        {"bench": (5493494, 5161514), "bench_shipped": (5493494, 5160060)},
     "aes_do_fopen, arrival 1 of files: the long file shown, then the folder AUTO double-clicked in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4880334, 4557720), "bench_shipped": (4880334, 4555958)},
+        {"bench": (4880334, 4557568), "bench_shipped": (4880334, 4555798)},
     "aes_do_fopen, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (3133398, 2828600), "bench_shipped": (3133398, 2825724)},
+        {"bench": (3133398, 2828524), "bench_shipped": (3133398, 2825644)},
     "aes_close_folder, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4397548, 4082848), "bench_shipped": (4397548, 4077952)},
+        {"bench": (4397548, 4082772), "bench_shipped": (4397548, 4077872)},
     "aes_fun_close, arrival 1 of files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4479648, 4158232), "bench_shipped": (4479648, 4153374)},
+        {"bench": (4479648, 4158156), "bench_shipped": (4479648, 4153294)},
     # (band 6 slice P7: the arrivals under drive_check holding its own park — the BIOS park named by nature)
     "aes_do_dopen, arrival 1 of window: A: opened again (two windows); GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (6501158, 6093368), "bench_shipped": (6501158, 6095678)},
+        {"bench": (6501158, 6093290), "bench_shipped": (6501158, 6095590)},
     "aes_do_fopen, arrival 1 of folder: opened; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4448120, 4129654), "bench_shipped": (4448120, 4128032)},
+        {"bench": (4448120, 4129502), "bench_shipped": (4448120, 4127872)},
     "aes_do_fopen, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (2750564, 2454036), "bench_shipped": (2750564, 2454538)},
+        {"bench": (2750564, 2453960), "bench_shipped": (2750564, 2454458)},
     "aes_close_folder, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4014714, 3708284), "bench_shipped": (4014714, 3706766)},
+        {"bench": (4014714, 3708208), "bench_shipped": (4014714, 3706686)},
     "aes_fun_close, arrival 1 of folder: File > Close; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged":
-        {"bench": (4096010, 3783114), "bench_shipped": (4096010, 3781622)},
+        {"bench": (4096010, 3783038), "bench_shipped": (4096010, 3781542)},
 }
 
 

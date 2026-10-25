@@ -1149,11 +1149,14 @@ CHAINS.update({
                           (RUBBER_BOX_BINDING, ICON_DRAG, addrs.AES_ROM_DESK_FUN_D2DESK)),
 })
 # ---- end of slice F3 stage 3's fix pass ----
-# ---- band 6 W3a's prep: TWO ARMS OF THE CYCLE NO CHAIN REACHED (the user's U4; the cut's §2.2) ----
-# hndl_msg's WM_TOPPED (21) — the lower of two windows' title clicked — and WM_MOVED (28) — the top window's title dragged
-# lower; each run's first hndl_msg arrival holds that message (measured). (opn_appl's chain, the user's U2 — the program
-# installed as TOS-takes parameters, double-clicked, Cancel — reaches it with no launch, and is HELD OUT: its walk on our
-# shore stores 1,618 B down PD0, over W6-R4's gate of 1,548 on today's state — the prep's hand-back, to rule.)
+# ---- band 6 W3a's prep: THREE ARMS OF THE CYCLE NO CHAIN REACHED (the user's U2, U4; the cut's §2.2) ----
+# opn_appl `$fdf082` — reached by no chain, and under R3 nothing else would hold it: TESTPRG.PRG INSTALLED AS
+# TOS-TAKES-PARAMETERS (ins_app stores its type's flags, `$fdf510` move.w #8: the bit do_aopen tests, `$fe1244` and.w #8),
+# then double-clicked — do_aopen asks its parameters (opn_appl's dialog) — and CANCEL: no launch (W6-R8's), no capture
+# moved. hndl_msg's two arms no chain reached: WM_TOPPED (21) — the lower of two windows' title clicked — and WM_MOVED
+# (28) — the top window's title dragged lower; each run's first hndl_msg arrival holds that message (measured).
+TTP_INSTALLED_THEN_CANCELLED = ("files: the program installed as TOS-takes parameters, double-clicked, Cancel "
+                                "(the OPEN APPLICATION dialog: no launch)")
 LOWER_WINDOW_TOPPED = "two windows: the lower one's title clicked (WM_TOPPED)"
 TOP_WINDOW_MOVED = "two windows: the top one's title dragged lower (WM_MOVED)"
 TITLE_MOVED_BY = 48                     # how far down the top window's title is carried: it stays on the screen
@@ -1188,6 +1191,12 @@ def top_title_moved_point(machine):
 
 
 CHAINS.update({
+    TTP_INSTALLED_THEN_CANCELLED: Chain(
+        "files: the window made full",
+        (*clicked("the program's icon", icon(THE_PROGRAM)), *item("Options", "Install Application..."),
+         *pressed("TOS-takes parameters"), *pressed("OK"), *double_clicked("the program's icon", icon(THE_PROGRAM)),
+         *pressed("Cancel")),
+        (addrs.AES_ROM_DESK_INS_APP, addrs.AES_ROM_DO_AOPEN, addrs.AES_ROM_DESK_OPN_APPL)),
     LOWER_WINDOW_TOPPED: Chain("window: A: opened again (two windows)", clicked("the lower window's title", lower_title_point),
                                (addrs.AES_ROM_HNDL_MSG, addrs.AES_ROM_WIN_TOP)),
     TOP_WINDOW_MOVED: Chain("window: A: opened again (two windows)",

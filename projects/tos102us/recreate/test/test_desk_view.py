@@ -518,23 +518,23 @@ def test_a_wave_2_arrival_that_reaches_no_binding_is_a_plain_row(name):
 # each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
 DOOR_USERS_PRICED_WAVE_2 = {
     "aes_win_blt, arrival 1 of files: the window's right arrow clicked":
-        ((341578, 562812), (340154, 560100), 8, (0, 0, 0)),
+        ((341498, 562812), (340074, 560100), 8, (0, 0, 0)),
     'aes_win_blt, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
-        ((352460, 578496), (351036, 575784), 8, (0, 0, 0)),
+        ((352380, 578496), (350956, 575784), 8, (0, 0, 0)),
     'aes_win_blt, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
-        ((352450, 578486), (351026, 575774), 8, (0, 0, 0)),
+        ((352370, 578486), (350946, 575774), 8, (0, 0, 0)),
     'aes_win_blt, arrival 1 of files: the window sized smaller, then its right arrow clicked':
-        ((327482, 543442), (326058, 540730), 8, (0, 0, 0)),
+        ((327402, 543442), (325978, 540730), 8, (0, 0, 0)),
     "aes_win_slide, arrival 1 of files: the window's horizontal slider dragged right":
-        ((347012, 570928), (345588, 568216), 8, (0, 0, 0)),
+        ((346932, 570928), (345508, 568216), 8, (0, 0, 0)),
     'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
-        ((352808, 579730), (351384, 577018), 8, (0, 0, 0)),
+        ((352728, 579730), (351304, 577018), 8, (0, 0, 0)),
     "aes_win_arrow, arrival 1 of files: the window's right arrow clicked":
-        ((342008, 564056), (340584, 561344), 8, (0, 0, 0)),
+        ((341928, 564056), (340504, 561344), 8, (0, 0, 0)),
     'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
-        ((352842, 579732), (351418, 577020), 8, (0, 0, 0)),
+        ((352762, 579732), (351338, 577020), 8, (0, 0, 0)),
     "aes_win_arrow, arrival 1 of files: the window's right arrow gadget itself clicked (a column)":
-        ((342000, 564068), (340576, 561356), 8, (0, 0, 0)),
+        ((341920, 564068), (340496, 561356), 8, (0, 0, 0)),
     'aes_win_bdall, arrival 1 of window: View > Show as Text':
         ((250950, 443814), (249526, 441102), 8, (0, 0, 0)),
     'aes_win_bdall, arrival 1 of files: View > Sort by Date':
@@ -546,23 +546,23 @@ DOOR_USERS_PRICED_WAVE_2 = {
 }
 DOOR_USERS_WHOLE_RUN_WAVE_2 = {
     "aes_win_blt, arrival 1 of files: the window's right arrow clicked":
-        {"bench": (2068066, 1874096), "bench_shipped": (2068066, 1877620)},
+        {"bench": (2068066, 1874020), "bench_shipped": (2068066, 1877540)},
     'aes_win_blt, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
-        {"bench": (2082276, 1884700), "bench_shipped": (2082276, 1887968)},
+        {"bench": (2082276, 1884624), "bench_shipped": (2082276, 1887888)},
     'aes_win_blt, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
-        {"bench": (2079062, 1881498), "bench_shipped": (2079062, 1884754)},
+        {"bench": (2079062, 1881422), "bench_shipped": (2079062, 1884674)},
     'aes_win_blt, arrival 1 of files: the window sized smaller, then its right arrow clicked':
-        {"bench": (1537822, 1348782), "bench_shipped": (1537822, 1351110)},
+        {"bench": (1537822, 1348706), "bench_shipped": (1537822, 1351030)},
     "aes_win_slide, arrival 1 of files: the window's horizontal slider dragged right":
-        {"bench": (2079740, 1883334), "bench_shipped": (2079740, 1886980)},
+        {"bench": (2079740, 1883258), "bench_shipped": (2079740, 1886900)},
     'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the horizontal bar left of its slider (a page)':
-        {"bench": (2080306, 1881854), "bench_shipped": (2080306, 1885112)},
+        {"bench": (2080306, 1881778), "bench_shipped": (2080306, 1885032)},
     "aes_win_arrow, arrival 1 of files: the window's right arrow clicked":
-        {"bench": (2069310, 1874524), "bench_shipped": (2069310, 1878050)},
+        {"bench": (2069310, 1874448), "bench_shipped": (2069310, 1877970)},
     'aes_win_arrow, arrival 1 of files: the right arrow clicked, then the left arrow clicked':
-        {"bench": (2083512, 1885080), "bench_shipped": (2083512, 1888350)},
+        {"bench": (2083512, 1885004), "bench_shipped": (2083512, 1888270)},
     "aes_win_arrow, arrival 1 of files: the window's right arrow gadget itself clicked (a column)":
-        {"bench": (2075466, 1880638), "bench_shipped": (2075466, 1884186)},
+        {"bench": (2075466, 1880562), "bench_shipped": (2075466, 1884106)},
     'aes_win_bdall, arrival 1 of window: View > Show as Text':
         {"bench": (1181350, 1005992), "bench_shipped": (1181350, 1010950)},
     'aes_win_bdall, arrival 1 of files: View > Sort by Date':

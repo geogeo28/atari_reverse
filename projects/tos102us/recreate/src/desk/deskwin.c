@@ -8,6 +8,7 @@
 #include "host_slot.h"
 #include "machine.h"
 #include "m68k_idioms.h"
+#include "stack_diet.h"
 #include "aes/aes.h"
 #include "aes/deskmem.h"
 #include "aes/gemdosif.h"
@@ -205,6 +206,7 @@ __attribute__((noinline)) static void get_rect_called(uint8_t *image, int16_t wi
 /* $fe0c9a — do_wredraw: the window's objects (its root; the desktop's for window 0) drawn over each rectangle of
  * its list that meets the caller's rectangle — handed BY ADDRESS, the ROM's own argument words — and the screen,
  * the cursor hidden round the walk. */
+FRAME_DIET("no-function-cse")
 void aes_do_wredraw(uint8_t *image, int16_t window, int16_t x, int16_t y, int16_t w, int16_t h)
 {
     uint16_t frame_local[FRAME_LOCAL_WORDS(WIN_FRAME_REDRAW_BYTES)];
@@ -362,7 +364,7 @@ static int16_t root_of(uint8_t *image, int16_t window)
  * the area below the menu bar, redrawn inside the window's work area. */
 void aes_desk_clear(uint8_t *image, int16_t window)
 {
-    uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_BYTES)];
+    uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_WORK + GRECT_BYTES)];  /* to its work area's end, held under act_allchg */
     uint32_t work = host_slot_claim(AES_DESK_OPEN_FRAME, frame_local) + OPEN_FRAME_WORK;
 
     get_rect(image, window, WF_WORKXYWH, work);

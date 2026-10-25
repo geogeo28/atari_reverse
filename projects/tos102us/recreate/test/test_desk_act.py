@@ -461,19 +461,19 @@ NO_DOOR_PRICED = {
     'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
         ((18810, 24322), None, None, (0, 0, 0)),
     'aes_move_drvicon, arrival 0 of drive A: dragged to a bare spot of the desktop':
-        ((107734, 146002), None, None, (0, 0, 0)),
+        ((107574, 146002), None, None, (0, 0, 0)),
     'aes_act_chg, arrival 0 of drive A: selected':
-        ((67246, 88650), None, None, (0, 0, 0)),
+        ((67166, 88650), None, None, (0, 0, 0)),
     'aes_act_chg, arrival 0 of A: File > Open':
-        ((67980, 89288), None, None, (0, 0, 0)),
+        ((67900, 89288), None, None, (0, 0, 0)),
     'aes_act_chg, arrival 1 of drive A: dragged to the trash, Return':
-        ((66564, 87970), None, None, (0, 0, 0)),
+        ((66484, 87970), None, None, (0, 0, 0)),
     'aes_act_chg, arrival 2 of drive A: dragged to the trash, Return':
-        ((66422, 87690), None, None, (0, 0, 0)),
+        ((66342, 87690), None, None, (0, 0, 0)),
     'aes_act_chg, arrival 0 of file: selected':
-        ((61974, 82268), None, None, (0, 0, 0)),
+        ((61894, 82268), None, None, (0, 0, 0)),
     'aes_act_allchg, arrival 1 of a rubber box on the desktop, round the trash':
-        ((65398, 85534), None, None, (0, 0, 0)),
+        ((65582, 85534), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_gr_obfind, arrival 0 of A: opened':
@@ -495,19 +495,19 @@ NO_DOOR_WHOLE_RUN = {
     'aes_gr_plns, arrival 1 of drive A: dragged to the trash, Return':
         {"bench": (115872, 112400), "bench_shipped": (115872, 112464)},
     'aes_move_drvicon, arrival 0 of drive A: dragged to a bare spot of the desktop':
-        {"bench": (606804, 577378), "bench_shipped": (606804, 578152)},
+        {"bench": (606804, 577226), "bench_shipped": (606804, 577992)},
     'aes_act_chg, arrival 0 of drive A: selected':
-        {"bench": (449374, 434140), "bench_shipped": (449374, 433958)},
+        {"bench": (449374, 434064), "bench_shipped": (449374, 433878)},
     'aes_act_chg, arrival 0 of A: File > Open':
-        {"bench": (448340, 433234), "bench_shipped": (448340, 433072)},
+        {"bench": (448340, 433158), "bench_shipped": (448340, 432992)},
     'aes_act_chg, arrival 1 of drive A: dragged to the trash, Return':
-        {"bench": (378428, 363130), "bench_shipped": (378428, 363010)},
+        {"bench": (378428, 363054), "bench_shipped": (378428, 362930)},
     'aes_act_chg, arrival 2 of drive A: dragged to the trash, Return':
-        {"bench": (374568, 359390), "bench_shipped": (374568, 359248)},
+        {"bench": (374568, 359314), "bench_shipped": (374568, 359168)},
     'aes_act_chg, arrival 0 of file: selected':
-        {"bench": (432068, 417682), "bench_shipped": (432068, 417282)},
+        {"bench": (432068, 417606), "bench_shipped": (432068, 417202)},
     'aes_act_allchg, arrival 1 of a rubber box on the desktop, round the trash':
-        {"bench": (354688, 340684), "bench_shipped": (354688, 340836)},
+        {"bench": (354688, 340870), "bench_shipped": (354688, 341020)},
 }
 DOOR_USERS_PRICED = {
     'aes_gr_isdown, arrival 0 of drive A: dragged to the trash, Return; the button let go at the first idle':
@@ -918,45 +918,45 @@ ROWS_WAVE_2 = {name: da.register_row(each, answered=SIGNATURES_WAVE_2[each.name]
 # each blob's second differential (`aes_switching.measured_on`), from the rows as registered (a recorded run, never by hand).
 DOOR_USERS_PRICED_WAVE_2 = {
     'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
-        ((333056, 465346), (286916, 395166), 3, (0, 0, 0)),
+        ((332896, 465346), (286756, 395166), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
         ((108926, 159502), (84914, 121860), 2, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
-        ((305700, 431592), (258116, 359774), 3, (0, 0, 0)),
+        ((305540, 431592), (257956, 359774), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
-        ((371766, 525942), (327186, 457540), 3, (0, 0, 0)),
+        ((371558, 525942), (326978, 457540), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; the button let go where it was pressed':
         ((108920, 160122), (84908, 122480), 2, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
-        ((341806, 480664), (295752, 410584), 3, (0, 0, 0)),
+        ((341646, 480664), (295592, 410584), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to a bare spot, let go':
         ((197330, 286322), (151220, 216182), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of a rubber box on the desktop, round the trash; the box let go at its first door call':
-        ((50736, 72554), (41354, 57870), 4, (0, 0, 0)),
+        ((51024, 72554), (41642, 57870), 4, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of a rubber box on the desktop, round drive B: and the trash; the box grown at its first door call, let go at its third':
-        ((136006, 183514), (118480, 158378), 5, (0, 0, 0)),
+        ((136190, 183514), (118664, 158378), 5, (0, 0, 0)),
     "aes_act_bdown, arrival 0 of text view: A: opened, the file's line dragged to the trash, Return (Cancel); carried to the trash, let go":
-        ((354780, 504366), (308726, 434286), 3, (0, 0, 0)),
+        ((354572, 504366), (308518, 434286), 3, (0, 0, 0)),
     'aes_act_bdown, arrival 0 of text view: drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
-        ((305700, 431592), (258116, 359774), 3, (0, 0, 0)),
+        ((305540, 431592), (257956, 359774), 3, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
         ((88592, 127040), (68664, 96786), 1, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
-        ((312722, 432884), (270666, 370092), 2, (0, 0, 0)),
+        ((312562, 432884), (270506, 370092), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to drive B:, let go':
-        ((536146, 736890), (473490, 643314), 3, (0, 0, 0)),
+        ((535826, 736890), (473170, 643314), 3, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to a bare spot, let go':
-        ((401794, 559002), (336190, 462070), 3, (0, 0, 0)),
+        ((401634, 559002), (336030, 462070), 3, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, a bare spot, the trash again, let go':
-        ((627324, 866414), (538204, 735366), 4, (0, 0, 0)),
+        ((627004, 866414), (537884, 735366), 4, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then a pixel on inside it, let go':
-        ((317124, 438740), (270666, 370092), 2, (0, 0, 0)),
+        ((316964, 438740), (270506, 370092), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
         ((177434, 252856), (133934, 188426), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
-        ((352044, 494468), (311548, 433454), 2, (0, 0, 0)),
+        ((351836, 494468), (311340, 433454), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
-        ((320584, 446288), (278614, 383596), 2, (0, 0, 0)),
+        ((320424, 446288), (278454, 383596), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the program (a file: no drop), let go':
         ((183476, 262446), (142924, 201372), 2, (0, 0, 0)),
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried over the menu bar, let go':
@@ -966,45 +966,45 @@ DOOR_USERS_PRICED_WAVE_2 = {
 }
 DOOR_USERS_WHOLE_RUN_WAVE_2 = {
     'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
-        {"bench": (1530048, 1428084), "bench_shipped": (1530048, 1426634)},
+        {"bench": (1530048, 1427932), "bench_shipped": (1530048, 1426474)},
     'aes_act_bdown, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
         {"bench": (410188, 369250), "bench_shipped": (410188, 368692)},
     'aes_act_bdown, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
-        {"bench": (1380316, 1281310), "bench_shipped": (1380316, 1280736)},
+        {"bench": (1380316, 1281158), "bench_shipped": (1380316, 1280576)},
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
-        {"bench": (1627272, 1505112), "bench_shipped": (1627272, 1504816)},
+        {"bench": (1627272, 1504924), "bench_shipped": (1627272, 1504608)},
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; the button let go where it was pressed':
         {"bench": (409416, 368068), "bench_shipped": (409416, 367362)},
     'aes_act_bdown, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
-        {"bench": (1482988, 1375482), "bench_shipped": (1482988, 1373866)},
+        {"bench": (1482988, 1375330), "bench_shipped": (1482988, 1373706)},
     'aes_act_bdown, arrival 0 of file: dragged to the trash, OK; carried to a bare spot, let go':
         {"bench": (770300, 699760), "bench_shipped": (770300, 698088)},
     'aes_act_bdown, arrival 0 of a rubber box on the desktop, round the trash; the box let go at its first door call':
-        {"bench": (202274, 185766), "bench_shipped": (202274, 185012)},
+        {"bench": (202274, 186052), "bench_shipped": (202274, 185300)},
     'aes_act_bdown, arrival 0 of a rubber box on the desktop, round drive B: and the trash; the box grown at its first door call, let go at its third':
-        {"bench": (806530, 773644), "bench_shipped": (806530, 772482)},
+        {"bench": (806530, 773830), "bench_shipped": (806530, 772666)},
     "aes_act_bdown, arrival 0 of text view: A: opened, the file's line dragged to the trash, Return (Cancel); carried to the trash, let go":
-        {"bench": (1490200, 1370038), "bench_shipped": (1490200, 1369750)},
+        {"bench": (1490200, 1369850), "bench_shipped": (1490200, 1369542)},
     'aes_act_bdown, arrival 0 of text view: drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
-        {"bench": (1380316, 1281310), "bench_shipped": (1380316, 1280736)},
+        {"bench": (1380316, 1281158), "bench_shipped": (1380316, 1280576)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; the button let go where it was pressed':
         {"bench": (364202, 333828), "bench_shipped": (364202, 333630)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, let go':
-        {"bench": (1484062, 1392662), "bench_shipped": (1484062, 1391572)},
+        {"bench": (1484062, 1392510), "bench_shipped": (1484062, 1391412)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to drive B:, let go':
-        {"bench": (2743448, 2592116), "bench_shipped": (2743448, 2590052)},
+        {"bench": (2743448, 2591812), "bench_shipped": (2743448, 2589732)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then to a bare spot, let go':
-        {"bench": (1848478, 1728458), "bench_shipped": (1848478, 1726598)},
+        {"bench": (1848478, 1728306), "bench_shipped": (1848478, 1726438)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, a bare spot, the trash again, let go':
-        {"bench": (2972918, 2791754), "bench_shipped": (2972918, 2789044)},
+        {"bench": (2972918, 2791450), "bench_shipped": (2972918, 2788724)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried to the trash, then a pixel on inside it, let go':
-        {"bench": (1499466, 1406816), "bench_shipped": (1499466, 1405890)},
+        {"bench": (1499466, 1406664), "bench_shipped": (1499466, 1405730)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to a bare spot of the desktop; carried to a bare spot, let go':
         {"bench": (727254, 668314), "bench_shipped": (727254, 667324)},
     'aes_gr_drgplns, arrival 0 of file: dragged to the trash, OK; carried to the trash, let go':
-        {"bench": (1582274, 1470302), "bench_shipped": (1582274, 1470366)},
+        {"bench": (1582274, 1470114), "bench_shipped": (1582274, 1470158)},
     'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the folder, let go':
-        {"bench": (1435088, 1338932), "bench_shipped": (1435088, 1337808)},
+        {"bench": (1435088, 1338780), "bench_shipped": (1435088, 1337648)},
     'aes_gr_drgplns, arrival 0 of files: the long file dragged onto the folder, Return; carried to the program (a file: no drop), let go':
         {"bench": (732856, 670576), "bench_shipped": (732856, 670150)},
     'aes_gr_drgplns, arrival 0 of drive A: dragged to the trash, Return; carried over the menu bar, let go':
@@ -1030,35 +1030,35 @@ NO_DOOR_PREMISES_WAVE_2 = {
 }
 NO_DOOR_PRICED_WAVE_2 = {
     'aes_act_bsclick, arrival 0 of drive A: selected':
-        ((84844, 115178), None, None, (0, 0, 0)),
+        ((85040, 115178), None, None, (0, 0, 0)),
     'aes_act_bsclick, arrival 0 of A: opened':
-        ((84824, 115156), None, None, (0, 0, 0)),
+        ((85020, 115156), None, None, (0, 0, 0)),
     'aes_act_bsclick, arrival 0 of file: dragged to the trash, OK':
         ((10940, 17730), None, None, (0, 0, 0)),
     "aes_act_bsclick, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
-        ((19976, 29756), None, None, (0, 0, 0)),
+        ((20264, 29756), None, None, (0, 0, 0)),
     'aes_act_bsclick, arrival 0 of a rubber box on the desktop, round the trash':
-        ((20284, 31666), None, None, (0, 0, 0)),
+        ((20572, 31666), None, None, (0, 0, 0)),
     'aes_act_bsclick, arrival 0 of file: selected':
-        ((73374, 100544), None, None, (0, 0, 0)),
+        ((73546, 100544), None, None, (0, 0, 0)),
     'aes_act_bsclick, arrival 0 of file: double-clicked (the alert)':
-        ((73354, 100522), None, None, (0, 0, 0)),
+        ((73526, 100522), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN_WAVE_2 = {
     'aes_act_bsclick, arrival 0 of drive A: selected':
-        {"bench": (482664, 459558), "bench_shipped": (482664, 460002)},
+        {"bench": (482664, 459756), "bench_shipped": (482664, 460198)},
     'aes_act_bsclick, arrival 0 of A: opened':
-        {"bench": (482642, 459538), "bench_shipped": (482642, 459982)},
+        {"bench": (482642, 459736), "bench_shipped": (482642, 460178)},
     'aes_act_bsclick, arrival 0 of file: dragged to the trash, OK':
         {"bench": (24492, 18488), "bench_shipped": (24492, 18622)},
     "aes_act_bsclick, arrival 0 of drive A:'s object clicked at its corner, outside its image and its label":
-        {"bench": (36518, 27952), "bench_shipped": (36518, 28850)},
+        {"bench": (36518, 28238), "bench_shipped": (36518, 29138)},
     'aes_act_bsclick, arrival 0 of a rubber box on the desktop, round the trash':
-        {"bench": (38428, 28616), "bench_shipped": (38428, 29038)},
+        {"bench": (38428, 28902), "bench_shipped": (38428, 29326)},
     'aes_act_bsclick, arrival 0 of file: selected':
-        {"bench": (457106, 436594), "bench_shipped": (457106, 436272)},
+        {"bench": (457106, 436768), "bench_shipped": (457106, 436444)},
     'aes_act_bsclick, arrival 0 of file: double-clicked (the alert)':
-        {"bench": (457084, 436574), "bench_shipped": (457084, 436252)},
+        {"bench": (457084, 436748), "bench_shipped": (457084, 436424)},
 }
 
 

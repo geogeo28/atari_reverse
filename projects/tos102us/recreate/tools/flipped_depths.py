@@ -30,8 +30,8 @@ each flip slice (F1..F4) and deskmain's (W3b) must fit before it lands. The shar
 
 Exits non-zero if the blob is not flipped (step 4), if a walked chain is over the gate, if a chain is refused that is
 not declared (or for another reason than its declaration reads), or if a declared refusal walks. Run from anywhere:
-`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 122 chains (120 walked on either state
-since band 6 W3a's prep, the viewer's eight at our `key_awaited`); a whole run is minutes (~10-15 at `--jobs 6`, build
+`.venv/bin/python tools/flipped_depths.py $TMPDIR/flip --jobs 6`. The campaign is 123 chains (121 walked on either state
+since band 6 W3a's diet landed opn_appl's chain, the viewer's eight at our `key_awaited`); a whole run is minutes (~10-15 at `--jobs 6`, build
 included); the first copy is ~700 MB.
 """
 import argparse

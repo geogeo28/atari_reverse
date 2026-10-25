@@ -341,13 +341,13 @@ NO_DOOR_PRICED = {
     'aes_zoom_closed, arrival 1 of folder: File > Close':
         ((192802, 227734), None, None, (0, 0, 0)),
     'aes_do_wredraw, arrival 1 of drive A: selected':
-        ((59386, 78220), None, None, (0, 0, 0)),
+        ((59306, 78220), None, None, (0, 0, 0)),
     'aes_do_wredraw, arrival 2 of A: File > Open':
-        ((50120, 66924), None, None, (0, 0, 0)),
+        ((50040, 66924), None, None, (0, 0, 0)),
     'aes_do_wredraw, arrival 3 of window: A: opened again (two windows)':
-        ((49360, 66102), None, None, (0, 0, 0)),
+        ((49280, 66102), None, None, (0, 0, 0)),
     'aes_do_wredraw, arrival 1 of a rubber box on the desktop, round the trash':
-        ((58536, 77264), None, None, (0, 0, 0)),
+        ((58456, 77264), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN = {
     'aes_desk_rsrc_load, arrival 1 of file: shown, a key at its end':
@@ -389,13 +389,13 @@ NO_DOOR_WHOLE_RUN = {
     'aes_zoom_closed, arrival 1 of folder: File > Close':
         {"bench": (1248098, 1241390), "bench_shipped": (1248098, 1239186)},
     'aes_do_wredraw, arrival 1 of drive A: selected':
-        {"bench": (429524, 416624), "bench_shipped": (429524, 416218)},
+        {"bench": (429524, 416548), "bench_shipped": (429524, 416138)},
     'aes_do_wredraw, arrival 2 of A: File > Open':
-        {"bench": (503040, 491092), "bench_shipped": (503040, 490556)},
+        {"bench": (503040, 491016), "bench_shipped": (503040, 490476)},
     'aes_do_wredraw, arrival 3 of window: A: opened again (two windows)':
-        {"bench": (378058, 365940), "bench_shipped": (378058, 365484)},
+        {"bench": (378058, 365864), "bench_shipped": (378058, 365404)},
     'aes_do_wredraw, arrival 1 of a rubber box on the desktop, round the trash':
-        {"bench": (346418, 333544), "bench_shipped": (346418, 333178)},
+        {"bench": (346418, 333468), "bench_shipped": (346418, 333098)},
 }
 
 
@@ -591,19 +591,19 @@ NO_DOOR_PREMISES_WAVE_2 = {
 }
 NO_DOOR_PRICED_WAVE_2 = {
     'aes_desk_clear, arrival 1 of A: File > Open':
-        ((9476, 14078), None, None, (0, 0, 0)),
+        ((9744, 14078), None, None, (0, 0, 0)),
     'aes_desk_clear, arrival 2 of window: A: opened again (two windows)':
-        ((9516, 14208), None, None, (0, 0, 0)),
+        ((9784, 14208), None, None, (0, 0, 0)),
     "aes_desk_clear, arrival 1 of folder: File > New Folder, 'A', Return":
-        ((15016, 21056), None, None, (0, 0, 0)),
+        ((15308, 21056), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN_WAVE_2 = {
     'aes_desk_clear, arrival 1 of A: File > Open':
-        {"bench": (20840, 16576), "bench_shipped": (20840, 17034)},
+        {"bench": (20840, 16842), "bench_shipped": (20840, 17302)},
     'aes_desk_clear, arrival 2 of window: A: opened again (two windows)':
-        {"bench": (20970, 16616), "bench_shipped": (20970, 17074)},
+        {"bench": (20970, 16882), "bench_shipped": (20970, 17342)},
     "aes_desk_clear, arrival 1 of folder: File > New Folder, 'A', Return":
-        {"bench": (27818, 22424), "bench_shipped": (27818, 23430)},
+        {"bench": (27818, 22714), "bench_shipped": (27818, 23722)},
 }
 
 
@@ -654,15 +654,15 @@ ROWS_STAGE_2 = {name: w.register_row(BY_LABEL_WAVE_2[name], yields_wave_2(BY_LAB
                 for name in AT_ARRIVALS_STAGE_2}
 DOOR_USERS_PRICED_STAGE_2 = {
     'aes_do_wopen, arrival 1 of A: File > Open':
-        ((637244, 822376), (630642, 810368), 4, (0, 0, 0)),
+        ((637164, 822376), (630562, 810368), 4, (0, 0, 0)),
     'aes_do_wopen, arrival 1 of window: A: opened again (two windows)':
-        ((889500, 1152680), (882898, 1140672), 4, (0, 0, 0)),
+        ((889412, 1152680), (882810, 1140672), 4, (0, 0, 0)),
 }
 DOOR_USERS_WHOLE_RUN_STAGE_2 = {
     'aes_do_wopen, arrival 1 of A: File > Open':
-        {"bench": (4158070, 4058526), "bench_shipped": (4158070, 4054674)},
+        {"bench": (4158070, 4058450), "bench_shipped": (4158070, 4054594)},
     'aes_do_wopen, arrival 1 of window: A: opened again (two windows)':
-        {"bench": (5090864, 4940612), "bench_shipped": (5090864, 4937304)},
+        {"bench": (5090864, 4940534), "bench_shipped": (5090864, 4937216)},
 }
 NO_DOOR_PREMISES_STAGE_2 = {
     'aes_pro_run, arrival 1 of file: shown, a key at its end':
@@ -680,31 +680,31 @@ NO_DOOR_PREMISES_STAGE_2 = {
 }
 NO_DOOR_PRICED_STAGE_2 = {
     'aes_pro_run, arrival 1 of file: shown, a key at its end':
-        ((372798, 457712), None, None, (0, 0, 0)),
+        ((372718, 457712), None, None, (0, 0, 0)),
     "aes_pro_run, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
-        ((379658, 464118), None, None, (0, 0, 0)),
+        ((379578, 464118), None, None, (0, 0, 0)),
     'aes_pro_run, arrival 1 of files: the program double-clicked — launched':
-        ((390568, 477992), None, None, (0, 0, 0)),
+        ((390488, 477992), None, None, (0, 0, 0)),
     'aes_do_wopen, arrival 1 of file: shown, a key at its end':
-        ((353936, 433344), None, None, (0, 0, 0)),
+        ((353856, 433344), None, None, (0, 0, 0)),
     'aes_do_wopen, arrival 1 of folder: opened':
-        ((321272, 394586), None, None, (0, 0, 0)),
+        ((321192, 394586), None, None, (0, 0, 0)),
     'aes_do_wopen, arrival 1 of files: the program double-clicked — launched':
-        ((371492, 453328), None, None, (0, 0, 0)),
+        ((371412, 453328), None, None, (0, 0, 0)),
 }
 NO_DOOR_WHOLE_RUN_STAGE_2 = {
     'aes_pro_run, arrival 1 of file: shown, a key at its end':
-        {"bench": (2412526, 2388912), "bench_shipped": (2412526, 2375768)},
+        {"bench": (2412526, 2388836), "bench_shipped": (2412526, 2375688)},
     "aes_pro_run, arrival 1 of files: the long file shown, a blank at each page's end and at its end":
-        {"bench": (2372742, 2350214), "bench_shipped": (2372742, 2336242)},
+        {"bench": (2372742, 2350138), "bench_shipped": (2372742, 2336162)},
     'aes_pro_run, arrival 1 of files: the program double-clicked — launched':
-        {"bench": (2459458, 2436292), "bench_shipped": (2459458, 2421906)},
+        {"bench": (2459458, 2436216), "bench_shipped": (2459458, 2421826)},
     'aes_do_wopen, arrival 1 of file: shown, a key at its end':
-        {"bench": (2352068, 2324886), "bench_shipped": (2352068, 2319824)},
+        {"bench": (2352068, 2324810), "bench_shipped": (2352068, 2319744)},
     'aes_do_wopen, arrival 1 of folder: opened':
-        {"bench": (2016038, 1988894), "bench_shipped": (2016038, 1984920)},
+        {"bench": (2016038, 1988818), "bench_shipped": (2016038, 1984840)},
     'aes_do_wopen, arrival 1 of files: the program double-clicked — launched':
-        {"bench": (2398170, 2371472), "bench_shipped": (2398170, 2365146)},
+        {"bench": (2398170, 2371396), "bench_shipped": (2398170, 2365066)},
 }
 
 
