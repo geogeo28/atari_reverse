@@ -2,7 +2,8 @@
 declared TARGET-ONLY, the generator holding each entry the ROM's (DECLARED_NOT_LINKED), the split's stages leaf-up with
 the one back-edge declared through the table (and red by name once it outlives its stage), hndl_button's store into its
 own argument slot, and THE TARGET-ONLY ROW KIND — its census, its refusals, its budget slot — exercised on crafted
-registrations alone: no row of W3a's is registered yet.
+registrations alone. SINCE STAGE 1 (`test_desk_w3a_stage1.py`): its nine written, linked and flipped, their rows the
+kind's first — the census below counts them by name.
 """
 import functools
 import re
@@ -54,14 +55,24 @@ CYCLE_AND_HNDL_BUTTON = 18
 CARTRIDGE_PAIR = (0xFED554, 0xFED5C2)   # the table's two entries of the cartridge's (the W3a cut's §1.4), still the ROM's
 
 
-def test_the_eighteen_are_band_6_s_routines_still_the_rom_s_each_named_once_by_its_file():
+def _unflipped():
+    """W3a's routines of the stages not yet flipped: the ROM's still."""
+    return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE]
+
+
+FLIPPED_THROUGH_STAGE = 1               # band 6 W3a's stage 1: the F file's nine
+
+
+def test_the_eighteen_are_band_6_s_routines_each_named_once_by_its_file_and_the_unflipped_ones_still_the_rom_s():
     """W3a's eighteen, each in ONE file of the split, each a band-6 routine and a target of the ROM's table — and with
-    deskmain (W3b) and the cartridge pair EVERY band-6 routine the shipped blob still leaves the ROM's."""
+    deskmain (W3b) and the cartridge pair, those of the stages not yet flipped EVERY band-6 routine the shipped blob
+    still leaves the ROM's."""
     assert {file: len(names) for file, names in w3a.SIGNATURES_BY_FILE.items()} == FILES
     assert len(w3a.W3A) == len(set(w3a.W3A)) == CYCLE_AND_HNDL_BUTTON and set(w3a.FILE_OF) == set(w3a.W3A)
     addresses = {getattr(addrs, name) for name in w3a.W3A}
     assert addresses <= set(aes_desk.routines()) and addresses <= set(aes._line_f_call_index())
-    assert aes_desk.still_the_rom_s() == {*addresses, addrs.AES_ROM_DESKMAIN, *CARTRIDGE_PAIR}
+    unflipped = {getattr(addrs, name) for name in _unflipped()}
+    assert aes_desk.still_the_rom_s() == {*unflipped, addrs.AES_ROM_DESKMAIN, *CARTRIDGE_PAIR}
     assert addrs.AES_ROM_DESK_INF_FOLDER not in addresses, "`$fde9ce` keeps its name: `$fded16` is the folder dialog"
 
 
@@ -110,15 +121,17 @@ def test_a_target_only_declaration_of_a_core_the_host_library_has_is_refused_by_
 
 
 # ---- THE GENERATOR: each entry the ROM's, by declaration, until the C links ---------------------------------------------------
-def test_the_generator_holds_the_eighteen_declared_and_not_linked_and_leaves_their_entries_the_rom_s(blob):
-    """DECLARED_NOT_LINKED is W3a's eighteen; NO CORE OF ONE IS LINKED in either blob (a core linked while listed reds
-    by name: it moves to LINKED_AND_NOT_FLIPPED); none is a native entry, in another held list or ENTERED_BY_OURS_ALONE;
-    every entry of the table naming one is THE ROM'S."""
+def test_the_generator_holds_the_unflipped_stages_declared_and_not_linked_and_leaves_their_entries_the_rom_s(blob):
+    """DECLARED_NOT_LINKED is W3a's routines of the stages not yet flipped; NO CORE OF ONE IS LINKED in either blob (a
+    core linked while listed reds by name: it moves to LINKED_AND_NOT_FLIPPED) — and every flipped stage's core IS;
+    none is a native entry, in another held list or ENTERED_BY_OURS_ALONE; every entry of the table naming one is THE
+    ROM'S."""
     generator = _the_generator()
-    assert set(generator.DECLARED_NOT_LINKED) == set(w3a.W3A)
+    assert set(generator.DECLARED_NOT_LINKED) == set(_unflipped())
     linked = {symbol.name for symbol in transcription.symbol_table(blob.elf)}
-    assert not [name for name in w3a.W3A if routines.core_symbol(name) in linked], (
+    assert not [name for name in _unflipped() if routines.core_symbol(name) in linked], (
         "a core of DECLARED_NOT_LINKED is linked: move it to LINKED_AND_NOT_FLIPPED")
+    assert all(routines.core_symbol(name) in linked for name in w3a.W3A if name not in _unflipped())
     held = set(generator.DECLARED_NOT_LINKED)
     assert not held & {*generator.LINKED_AND_NOT_FLIPPED, *generator.LINKED_HELD_NO_TABLE_ENTRY, *generator.ENTERED_BY_OURS_ALONE}
     addresses = {getattr(addrs, name) for name in held}
@@ -128,7 +141,8 @@ def test_the_generator_holds_the_eighteen_declared_and_not_linked_and_leaves_the
 
 
 def test_the_list_is_what_keeps_them_the_rom_s(monkeypatch):
-    """...AND WITHOUT IT each would be thunked (the signature declared): the list is the one thing that holds them."""
+    """...AND WITHOUT IT each would be thunked (the signature declared): the list is the one thing that holds them (and
+    the flipped stages' are thunked already)."""
     generator = _the_generator()
     monkeypatch.setattr(generator, "DECLARED_NOT_LINKED", {})
     addresses = {getattr(addrs, name) for name in w3a.W3A}
@@ -212,10 +226,44 @@ def test_hndl_button_s_store_into_its_argument_slot_is_read_back_by_no_caller():
 
 
 # ---- THE TARGET-ONLY ROW KIND: its census, by name (ruling O2) ---------------------------------------------------------------
-TARGET_ONLY_ROWS_BY_NAME = {}            # `{registered name: its routine}` — none before the flip stages
-TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {}  # ...and of the kind's rows that switch (the orchestrator's B2)
-NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 0     # the user's ruling of 2026-10-24: its own count, beside F4's
-TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset()  # ...and its rows BY NAME: the count pins how many, this which (RW3aP's F5)
+TARGET_ONLY_ROWS_BY_NAME = {}            # `{registered name: its routine}` — of the plain kind: none (stage 1's rows all switch)
+TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {   # ...and of the kind's rows that switch (the orchestrator's B2): stage 1's twenty (its fix pass's three among them)
+    "aes_desk_inf_show, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'A: Options > Install Disk Drive, Return'; Return at the first idle": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_SHOW,
+    "aes_desk_inf_show, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_SHOW,
+    "aes_desk_inf_finish, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle": w3a.INF_FINISH,
+    "aes_desk_inf_finish, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FINISH,
+    "aes_desk_inf_file, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FILE,
+    "aes_desk_inf_file, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FILE,
+    "aes_desk_inf_folder_dlg, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FOLDER_DLG,
+    "aes_desk_inf_disk, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search; Dfree's DISKINFO laid, every pointer recorded as handed]": w3a.INF_DISK,
+    "aes_desk_inf_pref, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode]": w3a.INF_PREF,
+    "aes_desk_ins_disk, arrival 0 of 'A: Options > Install Disk Drive, Return'; Return at the first idle": w3a.INS_DISK,
+    "aes_desk_ins_app, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INS_APP,
+    "aes_desk_opn_appl, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.OPN_APPL,
+    "aes_desk_inf_folder_dlg, arrival 0 of 'files: the long file dragged onto the folder, then the folder selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FOLDER_DLG,
+    "aes_desk_ins_app, arrival 1 of 'files: the program installed as TOS-takes parameters, then Install Application again, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INS_APP,
+}
+NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 12    # the user's ruling of 2026-10-24: its own count, beside F4's
+TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: the count pins how many, this which (RW3aP's F5)
+    "aes_desk_inf_show, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_show, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_show, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_show, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_finish, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_file, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_file, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_folder_dlg, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_ins_app, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_opn_appl, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_inf_folder_dlg, arrival 0 of 'files: the long file dragged onto the folder, then the folder selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_desk_ins_app, arrival 1 of 'files: the program installed as TOS-takes parameters, then Install Application again, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+))
 
 
 def _the_registries():
@@ -235,7 +283,7 @@ def test_the_target_only_rows_are_their_own_census_line_by_name_and_it_holds():
 
 def test_the_named_target_only_budgets_are_their_own_count_each_read_by_every_run_of_its_original():
     """THE USER'S RULING OF 2026-10-24, ITS COUNT: the target-only rows declaring a budget, by name — none before the
-    flip stages; each plain one's original run again as every consumer runs it (`test_boot_snapshot.run_original`,
+    flip stages but stage 1's (all of the switching kind); each plain one's original run again as every consumer runs it (`test_boot_snapshot.run_original`,
     under `case.row_cap`): past the oracle's own cap, inside its budget by the margin."""
     import test_boot_snapshot
     _the_registries()

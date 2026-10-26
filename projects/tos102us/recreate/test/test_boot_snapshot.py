@@ -348,6 +348,9 @@ import test_desk_util                                       # noqa: E402,F401  (
 # ---- band 6 slice F4 ---- (unit M's engine rows: `test_desk_util`, imported above)
 import test_desk_disk                                       # noqa: E402,F401  (unit N, flipped: its rows at the hands' arrivals)
 # ---- end of slice F4's ----
+# ---- band 6 W3a, stage 1 ----
+import test_desk_w3a_stage1                                # noqa: E402,F401  (the nine dialogs, flipped: their target-only rows)
+# ---- end of W3a stage 1's ----
 import test_aes_gemsuper                                 # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 
@@ -1066,13 +1069,38 @@ def _sweep_over(base, over_noise=False):
 
 @pytest.fixture(scope="module")
 def pristine_outputs():
-    """What each verified case leaves over the snapshot exactly as it was captured."""
-    outputs = _sweep_over(BASE_IMAGE)
-    return {case[0]: outputs(case) for case in VERIFIED_CASES}
+    """What each verified case leaves over the snapshot exactly as it was captured — made for a case the first time a
+    worker's chunk asks for it, and kept for the worker's other seeds."""
+    outputs, made = _sweep_over(BASE_IMAGE), {}
+
+    def pristine(case):
+        if case[0] not in made:
+            made[case[0]] = outputs(case)
+        return made[case[0]]
+    return pristine
 
 
+# THE NOISE SWEEP, SHARDED ACROSS THE WORKERS (README's "Writing a fuzz test so it parallelizes"; one item of every row
+# was the suite's wall-clock floor — 137 s of a seed alone, the 300 s watchdog reached under load): each seed's cases
+# in NOISE_CHUNKS round-robin chunks, an exact partition of VERIFIED_CASES — the same cases, the same checks. A sliced
+# session's rows go to its first row's chunk, so each sweep still runs a session once.
+NOISE_CHUNKS = 8
+
+
+def _noise_chunk_of_each_case():
+    """`[chunk, ...]`, one per case of VERIFIED_CASES in order: its index's round-robin chunk — a sliced session's rows
+    all its first row's."""
+    import aes_event
+    first, chunks = {}, []
+    for nth, case in enumerate(VERIFIED_CASES):
+        own = id(aes_event.session_of(case[0])) if case[0] in aes_event.SLICED_ROWS else ("row", nth)
+        chunks.append(first.setdefault(own, nth) % NOISE_CHUNKS)
+    return chunks
+
+
+@pytest.mark.parametrize("chunk", range(NOISE_CHUNKS))
 @pytest.mark.parametrize("seed", (1, 2, 3))
-def test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce(seed,
+def test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce(seed, chunk,
                                                                                pristine_outputs):
     """THE CASE THE MASK EXISTS FOR. Two captures of the same boot disagree in those regions, so a
     function that read one would be verified against one particular boot and would flake against the
@@ -1084,9 +1112,11 @@ def test_no_verified_function_depends_on_a_byte_the_capture_does_not_reproduce(s
     """
     # `bytes`: `set_base_image` installs a bytes image as it is, and copies sixteen megabytes of any other — per case.
     over_noise = _sweep_over(bytes(_scrambled_base(seed)), over_noise=True)
-    for case in VERIFIED_CASES:
+    for case, its_chunk in zip(VERIFIED_CASES, _noise_chunk_of_each_case(), strict=True):
+        if its_chunk != chunk:
+            continue
         name = case[0]
-        assert over_noise(case) == pristine_outputs[name], (
+        assert over_noise(case) == pristine_outputs(case), (
             f"{name} behaves differently over a snapshot whose masked regions hold noise, so it "
             f"reads a byte two captures of the same boot disagree about — its differential is "
             f"verified against one particular boot and will flake against the next. Find the read: "

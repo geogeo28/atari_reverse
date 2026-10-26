@@ -110,9 +110,15 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
     and its twin), an Fdatime's pointer replaced in the ledger by the four bytes it points at — and (band 6 wave 4,
     Format's space alert) a Dfree's: ITS POINTER RECORDED AS 0 (the address of dos_space's own frame: the ROM's stack
     there, a host slot here) and the DISKINFO the run in place's Dfree filled (`DFREE_FILLED`) laid at it from the
-    cell behind the DTA's (`diskinfo_at`)."""
+    cell behind the DTA's (`diskinfo_at`). `dfree_pointer_cleared` False: Dfree's pointer RECORDED AS HANDED, like every
+    other call's (band 6 W3a stage 1's fix pass, the user's ruling of 2026-10-25: inf_disk's row, whose frame addresses
+    handed to GEMDOS are a by-nature class of their own — `aes_switching.frame_addresses_handed` — and no recorder's
+    zeros)."""
+    # Fdatime's pointer is no pointer in this ledger: the time and date it points at are recorded in its place
+    pointer_offsets = {function: offsets for function, offsets in gd.Recorder.pointer_offsets.items() if function != FDATIME}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, dfree_pointer_cleared=True, **kwargs):
+        self.dfree_pointer_cleared = dfree_pointer_cleared      # (before the parent's `__init__`, which lays the handler out)
         super().__init__(*args, **kwargs)
         self.end = self.diskinfo_at + DISKINFO_BYTES
 
@@ -130,10 +136,11 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
                    + vdi.pack_words(op.LEA_D16_A0_A0, (W - self.ledger.stride) & aes.WORD_MASK, op.PUSH_A1,
                                     op.MOVEA_L_STACK_A1, ARGUMENTS_IN_FRAME + L, MOVE_L_A1_TO_A0, op.POP_A1),
                    ("label", "stamped")]
+        cleared = (vdi_helpers.MOVEA_L_ABSOLUTE_A0 + ledger
+                   + vdi.pack_words(op.LEA_D16_A0_A0, (W - self.ledger.stride) & aes.WORD_MASK, CLR_L_A0)
+                   if self.dfree_pointer_cleared else b"")
         spaced = [is_function(DFREE), (op.BNE_S, "spaced"),
-                  vdi_helpers.MOVEA_L_ABSOLUTE_A0 + ledger
-                  + vdi.pack_words(op.LEA_D16_A0_A0, (W - self.ledger.stride) & aes.WORD_MASK, CLR_L_A0, op.PUSH_A1,
-                                   op.MOVEA_L_STACK_A1, ARGUMENTS_IN_FRAME + L, op.LEA_ABSOLUTE_LONG_A0)
+                  cleared + vdi.pack_words(op.PUSH_A1, op.MOVEA_L_STACK_A1, ARGUMENTS_IN_FRAME + L, op.LEA_ABSOLUTE_LONG_A0)
                   + struct.pack(">I", self.diskinfo_at)
                   + vdi.pack_words(*(MOVE_L_A0_POSTINC_A1_POSTINC,) * (DISKINFO_BYTES // L), op.POP_A1),
                   ("label", "spaced")]
@@ -157,7 +164,8 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
             if function == FDATIME:
                 isr.poke(buf, entry + W, ctypes.string_at(ctypes.addressof(buf.contents) + (pointer & db.BUS), L))
             if function == DFREE:
-                isr.poke(buf, entry + W, bytes(L))
+                if self.dfree_pointer_cleared:
+                    isr.poke(buf, entry + W, bytes(L))
                 isr.poke(buf, pointer & db.BUS, ctypes.string_at(ctypes.addressof(buf.contents) + self.diskinfo_at,
                                                                  DISKINFO_BYTES))
             return answer
@@ -167,6 +175,10 @@ class EngineRecorder(aes_loader.DtaFilledAtItsSearches):
 ENGINE = EngineRecorder(addrs.VECTOR_TRAP_GEMDOS, aes_loader.REPLAYED_AT, ENGINE_HANDLER_ROOM, ENGINE_FRAME_BYTES,
                         entries=ENGINE_CALLS, searches=ENGINE_SEARCHES, parked=PARKED)
 assert ENGINE.end <= gd.BAND_AT + gd.BAND_BYTES, "the engine's recorder runs out of the band it borrows"
+# ...AND THE SAME RECORDER WITH DFREE'S POINTER RECORDED AS HANDED (`EngineRecorder`'s `dfree_pointer_cleared`): the
+# one a target-only row whose run hands Dfree its own frame's address is staged with (band 6 W3a: inf_disk's)
+ENGINE_DFREE_AS_HANDED = EngineRecorder(addrs.VECTOR_TRAP_GEMDOS, aes_loader.REPLAYED_AT, ENGINE_HANDLER_ROOM, ENGINE_FRAME_BYTES,
+                                        entries=ENGINE_CALLS, searches=ENGINE_SEARCHES, parked=PARKED, dfree_pointer_cleared=False)
 ENGINE_HANDLERS = {gemdos.rom_handler(function): ENGINE.twin(function) for function in ENGINE_FRAME_BYTES}
 
 
@@ -277,13 +289,13 @@ SPARE_ANSWER, SPARE_DTA = -1 & aes.LONG_MASK, bytes(DTA_BYTES)
 SPARE_ANSWERS = 3                       # ...three: a C that loops on past a failure makes a read, a close and a write more
 
 
-def replayed(replay, dta_at_first=None):
+def replayed(replay, dta_at_first=None, recorder=ENGINE):
     """The recorder's pokes for `replay`: its answers and fills (and the spares), the cell first at `dta_at_first` (a
     stale longword where none: every routine here names its DTA before it searches), the handles laid open, and the
-    DISKINFO its Dfree filled where it captured one (`DFREE_FILLED`)."""
+    DISKINFO its Dfree filled where it captured one (`DFREE_FILLED`). `recorder`: ENGINE, or ENGINE_DFREE_AS_HANDED."""
     diskinfo = [data for function, _at, data in replay.written if function == DFREE]
     assert len(diskinfo) <= 1, "a run of two Dfrees: the recorder lays one DISKINFO"
-    return merge_pokes(ENGINE.pokes((*replay.answers, *(SPARE_ANSWER,) * SPARE_ANSWERS),
+    return merge_pokes(recorder.pokes((*replay.answers, *(SPARE_ANSWER,) * SPARE_ANSWERS),
                                     vdi.STALE_LONG if dta_at_first is None else dta_at_first,
                                     (*replay.fills, SPARE_DTA), *diskinfo), replay.handles)
 

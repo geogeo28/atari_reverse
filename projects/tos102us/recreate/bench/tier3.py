@@ -106,6 +106,7 @@ import aes_event                                           # noqa: E402
 import aes_switching                                       # noqa: E402
 # ...and the screen manager made ours on a row's machine (FLIP 4): the two spans a row whose run enters it names.
 import aes_takeover                                        # noqa: E402
+import aes_desk_w3a                                        # noqa: E402  (band 6 W3a: the cycle's declared back-edge)
 # ...and ctlmgr's own rows: the screen manager woken, both shores from a booted machine's idle to its next.
 import aes_ctlmgr                                          # noqa: E402
 import aes_boot                                            # noqa: E402
@@ -2924,6 +2925,7 @@ class RomBench(rom_bench.RomBench):
             emu.prof_reset()
             emu.prof_enable(True)
         before, before_declared = (_cycles_in(AES_OWN_SPANS), _cycles_in(DECLARED_SPANS)) if within else (0, 0)
+        before_back_edge = _cycles_in(BACK_EDGE_SPANS) if within else 0
         our_switch, door_at_entry = our_selector_switch(self), behind_our_door(image, self)
         in_the_rom_s_before = emu.prof_cycles(*GEM_SELECTOR_SWITCH) if within else 0
         in_ours_before = emu.prof_cycles(*our_switch) if within and our_switch else 0
@@ -2933,6 +2935,8 @@ class RomBench(rom_bench.RomBench):
         finally:
             OUR_RUN.append(OurRun(symbol, _cycles_in(AES_OWN_SPANS) - before, within,
                                   _cycles_in(DECLARED_SPANS) - before_declared))
+            THROUGH_THE_TABLE_RUN.append(ThroughTheTableRun(_cycles_in(BACK_EDGE_SPANS) - before_back_edge,
+                                                            before_back_edge if within else None))
             in_ours = (emu.prof_cycles(*our_switch) if our_switch else 0) - in_ours_before
             in_the_rom_s = emu.prof_cycles(*GEM_SELECTOR_SWITCH) - in_the_rom_s_before
             if not within:
@@ -3012,6 +3016,12 @@ def _pushed_from_the_top(stored, lo, hi):
 # whether the measurement profiles both runs itself. What THE GENERAL GUARD reads (`vet_our_run_kept_out_of_the_aes`).
 OurRun = namedtuple("OurRun", "symbol in_the_aes profiled_with_the_original in_declared_spans")
 OUR_RUN = []
+# ...and, of each such run, what it spent in THE ROM TEXT A DECLARED CALL THROUGH THE TABLE ENTERS (band 6 W3a: inf_show's
+# Line-F word of hndl_msg, `aes_desk_w3a.CALLS_THROUGH_THE_TABLE`): `ThroughTheTableRun(ours, the original's)` — the
+# original's where the measurement profiles both runs (None else). What `vet_the_back_edge` reads.
+ThroughTheTableRun = namedtuple("ThroughTheTableRun", "ours the_original_s")
+THROUGH_THE_TABLE_RUN = []
+BACK_EDGE_SPANS = aes_desk_w3a.back_edge_spans()
 # WHO RAN THE SELECTOR SWITCH in a kit call of ours (`RomBench._call`), since `measure` last looked: whether the GEM
 # trap's vector held OUR handler as the run was entered and where it ended (before anything is mapped back), our
 # run's cycles in OUR selector switch and in THE ROM'S, and — where the measurement profiles both runs — the ROM's
@@ -3546,6 +3556,7 @@ def switching_run_on(blob, who, entry, symbol, args, pokes, switches, *, returns
     ours = our_switching_watch(blob, switches, symbol, windows, dropped)
     OUR_RUN.clear()
     DOOR_SPLIT.clear()
+    THROUGH_THE_TABLE_RUN.clear()
     measured = _profiled(lambda: blob.measure(entry, symbol, args, {}, pokes, returns=returns, dropped=dropped,
                                               watch=ours, original_watch=the_rom_s))
     held = Dropping(symbol, who, dropped)
@@ -3557,7 +3568,8 @@ def switching_run_on(blob, who, entry, symbol, args, pokes, switches, *, returns
     vet_the_images_at_the_stops(who, ours.taken, the_rom_s.taken)
     if through_the_door:
         vet_the_same_door_calls(who, windows, original)
-    in_the_aes, in_its_windows = sum(run.in_the_aes for run in OUR_RUN), the_rom_s_windows(measured).in_the_aes
+    in_the_aes = sum(run.in_the_aes for run in OUR_RUN)
+    in_its_windows = the_rom_s_windows(measured).in_the_aes + vet_the_back_edge(who)
     assert in_the_aes == in_its_windows, (
         f"{who}: OUR run spent {in_the_aes} cycles at the PCs of the AES's own ROM where its windows of the ROM's "
         f"process hold {in_its_windows} — our build executed the ROM's AES code outside another process's turn")
@@ -4585,7 +4597,8 @@ def _held_through_the_os(row, bench, **marked):
             f"{measured.original_cycles} — the windows were read off another run")
     if through_the_door:
         vet_the_same_door_calls(who, windows, original)
-    ours_in_the_aes = _cycles_in(AES_OWN_SPANS) - original_own - in_the_rom_s_windows
+    through_the_table = vet_the_back_edge(f"{row.registered}") if switches else 0
+    ours_in_the_aes = _cycles_in(AES_OWN_SPANS) - original_own - in_the_rom_s_windows - through_the_table
     assert not ours_in_the_aes, (
         f"{row.symbol} / {row.case}: our build spent {ours_in_the_aes} cycles inside the AES's own ROM spans — a (V) "
         f"row's C reaches the ROM only through the trap, never the AES's code itself (a `jsr` past a twin, a "
@@ -4599,7 +4612,9 @@ def _held_through_the_os(row, bench, **marked):
     # build's own cycles (and their thunks') on ours and the ROM's ctlmgr's on its shore, priced by themselves.
     reset = measured.overhead_cycles
     measured.glue_cycles = glue_cycles_of(measured) - sum(turn.glue for turn in measured.turns)
-    measured.own_cycles = (our_cycles(blob) - in_our_turns - glue_cycles_of(measured) - reset,
+    # (...and the ROM's code a declared call through the table runs on OUR shore — its body and the handler under it —
+    # is ours to own as it is the ROM's: the same work, in both own columns)
+    measured.own_cycles = (our_cycles(blob) - in_our_turns - glue_cycles_of(measured) - reset + through_the_table,
                            original_own - foreign_in_the_aes - reset)
     measured.turns_in_the_costs = (in_our_turns, sum(turn.the_rom_s for turn in measured.turns))
     shared, original_shared = shared_cycles(measured)
@@ -4960,6 +4975,7 @@ def measure(row, bench, sessions=None):
     _VETTED.clear()
     OUR_RUN.clear()
     DOOR_SPLIT.clear()
+    THROUGH_THE_TABLE_RUN.clear()
     with originals_capped_by_the_row_s_budget(row.registered):
         measured = _measured_on_its_path(row, bench)
     vet_our_run_kept_out_of_the_aes(row, bench, measured)
@@ -5015,9 +5031,35 @@ def declared_by_a_pointer(row):
 
 def declared_in_the_aes(row):
     """The cycles `row`'s own run may spend at the PCs of the AES's ROM: its declared entry by a pointer the machine
-    holds, and nothing else."""
+    holds, and its declared calls through the table (`through_the_table_of`) — nothing else."""
     by_a_pointer = declared_by_a_pointer(row)
-    return by_a_pointer.cycles if by_a_pointer else 0
+    return (by_a_pointer.cycles if by_a_pointer else 0) + through_the_table_of(row.registered)
+
+
+# BAND 6 W3a: THE CYCLE'S DECLARED BACK-EDGE (`aes_desk_w3a.CALLS_THROUGH_THE_TABLE`: inf_show's C calls hndl_msg, THE
+# ROM'S until W3a's stage 3, by the ROM's own Line-F word). A row whose run makes that call runs the ROM's hndl_msg —
+# our build's run in the AES's ROM — and is held to it EXACTLY, by its declaration (`aes_desk_w3a.ROWS_THROUGH_THE_TABLE`:
+# pinned by the battery that registers the row): our run's cycles in the callee's body are the declaration's AND THE
+# ROM'S OWN RUN's there (the same instructions over the same machine), and what it spends in the AES's ROM beyond its
+# foreign windows is that body and the declared Line-F handler's cycles, nothing else.
+def through_the_table_of(registered):
+    """The cycles the row `registered` declares spent in the AES's ROM through the table: body and handler, or 0."""
+    declared = aes_desk_w3a.ROWS_THROUGH_THE_TABLE.get(registered)
+    return declared.body + declared.handler if declared else 0
+
+
+def vet_the_back_edge(registered):
+    """THE BACK-EDGE HELD (above) on the runs just measured (`THROUGH_THE_TABLE_RUN`), refused by the row's name: the
+    cycles it declares spent through the table (`through_the_table_of`)."""
+    declared = aes_desk_w3a.ROWS_THROUGH_THE_TABLE.get(registered)
+    ours = sum(run.ours for run in THROUGH_THE_TABLE_RUN)
+    if not declared:
+        return 0                        # (a foreign window's cycles there — the desk's turn on the ROM's text — are its own)
+    originals = [run.the_original_s for run in THROUGH_THE_TABLE_RUN if run.the_original_s is not None]
+    assert ours == declared.body and originals == [declared.body], (
+        f"{registered}: OUR run spent {ours} cycles in the body a declared call through the table enters (the ROM's own "
+        f"run {originals}) where the row declares {declared.body}")
+    return declared.body + declared.handler
 
 
 def vet_our_run_kept_out_of_the_aes(row, bench, measured=None):

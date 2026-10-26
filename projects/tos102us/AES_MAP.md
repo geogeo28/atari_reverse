@@ -136,7 +136,7 @@ S cleared) and use `trap #2`, never Line-F. Interrupt handlers `jsr` into C (`0x
 at IPL≥ their level; the `ori #$700` around the patch is what makes that safe.
 **For a C reconstruction:** a Line-F call is exactly `jsr target` + clobber d1/d2/a0; a Line-F return is exactly the Alcyon epilogue.
 Nothing observable remains EXCEPT (a) the RAM word `0xCC44` the original rewrites, (b) the 100-byte Malloc + copy at init, (c) CCR
-restore (irrelevant to C). Direct C calls on target are faithful. 2,230 call sites / 454 return sites (304 with a mask) found.
+restore (irrelevant to C). Direct C calls on target are faithful. ONE C caller makes a Line-F call itself (band 6 W3a, until stage 3): inf_show's `$f558` of hndl_msg, a routine still the ROM's — the word the ROM's own inf_show holds at `$FDE99A`. 2,230 call sites / 454 return sites (304 with a mask) found.
 ### 1.4 Cost (68000, cycles): call path ≈ 34 (exception) + 118 = ~152 vs `jsr abs.l` 20 (+132); masked return ≈ 204+8n vs
 Alcyon epilogue 52+8n (+152); plain return ≈ 140 vs `unlk;rts` 28 (+112). **~250–285 cycles per call/return pair** that a gcc
 build (`jsr`/`bsr`) does not pay. Tier 3's denominator must run with `$2C` → `0xCC0E` as captured (it is) and drop `0xCC44`.
@@ -424,7 +424,8 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   (desk_inf_show `FDE8A6`, desk_inf_finish `FDE9A8`, desk_inf_file `FDEB10`, desk_inf_folder_dlg `FDED16`, desk_inf_disk
   `FDEDF0`, desk_inf_pref `FDEF12`, desk_opn_appl `FDF082`), the NEW deskins.c two (desk_ins_disk `FDF11A`, desk_ins_app
   `FDF3C8`) — declared target-only, not linked; entries the ROM's (DECLARED_NOT_LINKED). The cycle's one back-edge:
-  inf_show calls hndl_msg at `FDE99A` by the call word `$F558`.
+  inf_show calls hndl_msg at `FDE99A` by the call word `$F558`. STAGE 1 (2026-10-25): deskinf.c's seven and deskins.c's
+  two written in C and flipped (target-only).
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

@@ -29,6 +29,7 @@ import aes_event
 import aes_fslib as fsl
 import aes_gemdosif as gd
 import aes_loader as ld
+import aes_shell as sh
 import aes_switch
 import case
 import gemdos
@@ -221,6 +222,8 @@ DSETDRV, DSETPATH = addrs.GEMDOS_DSETDRV_FN, addrs.GEMDOS_DSETPATH_FN
 REPLAY_ARGUMENT_BYTES = {**fsl.SESSION_ARGUMENT_BYTES, DSETDRV: aes.WORD_BYTES, DSETPATH: aes.LONG_BYTES}
 REPLAY_HANDLER_AT = aes.SPAN.claim(0x7bf40, 0xC0, "test/aes_desksupp.py: group G3's GEMDOS replay handler (fslib's tables)")
 assert len(fsl.replay_handler(REPLAY_ARGUMENT_BYTES)) <= 0xC0
+sh.GEMDOS_LEDGERS.append(functools.partial(sh.GemdosLedger, REPLAY_HANDLER_AT, fsl.replay_handler(REPLAY_ARGUMENT_BYTES),
+                                           fsl.LEDGER, REPLAY_ARGUMENT_BYTES, fsl.RECORDED_ARGUMENT_BYTES, fsl.DTA_CELL_AT))
 WATCHED_INSNS = 6_000_000               # a window opened and drawn: do_dopen at A: File > Open runs ~2.1 M
 
 

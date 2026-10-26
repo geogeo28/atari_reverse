@@ -81,6 +81,8 @@ class Recorder:
     many answers. `parked`: longwords of RAM whose value AT EACH CALL is recorded behind the frame — the sites the glue
     parks before it traps (AES_DOS_RETURN, AES_TRAP1_RETURN): a routine that makes several calls overwrites each
     park with the next, and only the ledger shows the ones before the last."""
+    dta_cell = None                     # ...where it keeps the DTA an Fsetdta named: none (`aes_loader.DtaFilledAtItsSearches`)
+    pointer_offsets = shell.POINTER_ARGUMENTS   # ...where a pointer handed lies in each recorded frame: as handed
 
     def __init__(self, vector, at, room, frame_bytes, entries, parked=()):
         self.vector, self.at, self.frame_bytes, self.parked = vector, at, dict(frame_bytes), tuple(parked)
@@ -89,6 +91,14 @@ class Recorder:
         self.script = shell.Table(self.ledger.first + entries * self.ledger.stride, entries, LONG_BYTES, "script")
         self.end = self.script.first + entries * LONG_BYTES
         assert len(self.stub()) <= room, f"the handler is {len(self.stub())} bytes: more than its room of {room}"
+        if vector == addrs.VECTOR_TRAP_GEMDOS:
+            shell.GEMDOS_LEDGERS.append(self.gemdos_ledger)
+
+    def gemdos_ledger(self):
+        """This recorder as `aes_shell.GEMDOS_LEDGERS` knows a recording trap of GEMDOS's (its handler laid out now:
+        a subclass's cells are made after this class's `__init__`)."""
+        return shell.GemdosLedger(self.at, self.stub(), self.ledger, self.frame_bytes, self.recorded_bytes, self.dta_cell,
+                                  self.pointer_offsets)
 
     def stub(self):
         """The handler: the function word into the ledger, then its frame a word at a time — each function whose

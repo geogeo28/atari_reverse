@@ -370,7 +370,9 @@ THROUGH_THE_TWO_WORDS = {
     # (band 6 wave 2's, and its fix pass's) New Folder again; Show Info of an emptied drive A:; a folder made after the
     # read-only file and in the files window
     "folder: File > New Folder again, 'A', Return — the name taken, Return": (NEW_FOLDER_WORD,),
-    desk.EMPTIED_INFO: (SHOW_INFO_WORD,), desk.READ_ONLY_COPIED: (NEW_FOLDER_WORD,), desk.A_FIFTH_ENTRY: (NEW_FOLDER_WORD,)}
+    desk.EMPTIED_INFO: (SHOW_INFO_WORD,), desk.READ_ONLY_COPIED: (NEW_FOLDER_WORD,), desk.A_FIFTH_ENTRY: (NEW_FOLDER_WORD,),
+    # (band 6 W3a stage 1's fix pass) the filled folder's Show Info
+    desk.FILLED_FOLDER_INFO: (SHOW_INFO_WORD,)}
 
 
 def test_the_tables_of_this_battery_name_chains_there_are():
@@ -435,6 +437,10 @@ CHAINS_AND_STEPS_BY_BLOCK = {
     "band 6 W3a's prep": (3, 12),          # two windows: the lower one's title clicked (WM_TOPPED), the top one's dragged
                                            # (WM_MOVED); the program installed as TOS-takes parameters, double-clicked, Cancel
     # ---- end of band 6 W3a's prep ----
+    # ---- band 6 W3a stage 1's fix pass (two arms of the nine no chain's data reached) ----
+    "band 6 W3a stage 1's fix pass": (2, 16),   # the long file dragged into AUTO, then its Show Info; the program installed
+                                                # as TOS-takes parameters, selected again, Install Application, Return
+    # ---- end of band 6 W3a stage 1's fix pass ----
 }
 CHAINS, STEPS = (sum(chains for chains, _steps in CHAINS_AND_STEPS_BY_BLOCK.values()),
                  sum(steps for _chains, steps in CHAINS_AND_STEPS_BY_BLOCK.values()))
@@ -554,6 +560,9 @@ REACHED_BY_BLOCK = {
     # ---- band 6 W3a's prep ----
     "band 6 W3a's prep": 1,                # opn_appl (hndl_msg's two arms: no routine first reached)
     # ---- end of band 6 W3a's prep ----
+    # ---- band 6 W3a stage 1's fix pass ----
+    "band 6 W3a stage 1's fix pass": 0,
+    # ---- end of band 6 W3a stage 1's fix pass ----
 }
 REACHED = sum(REACHED_BY_BLOCK.values())
 

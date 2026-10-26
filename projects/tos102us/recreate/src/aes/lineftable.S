@@ -3,7 +3,7 @@
  *
  * 658 longwords, one for each entry of the ROM's table at `$fee900`: the build's own entry where it has one — a
  * byte-pinned `.S` entry as it is (84), or a thunk that re-pushes the ROM caller's Alcyon frame as the longword
- * slots a C core reads (551, 512 thunks) — and the ROM's own address in the rest (23: band 6's routines, the
+ * slots a C core reads (560, 521 thunks) — and the ROM's own address in the rest (14: band 6's routines, the
  * ROM's until each is ported).
  *
  * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. BOUND (band 6
@@ -361,14 +361,14 @@ aes_linef_table:
     .long   aes_rom_gsx_gclip               /* $f550  $fda846  ours, native */
     .long   linef_to_aes_desk_dr_code       /* $f554  $fde7b4  ours, through a thunk */
     .long   0xfe2344                        /* $f558  $fe2344  the ROM's */
-    .long   0xfde8a6                        /* $f55c  $fde8a6  the ROM's */
+    .long   linef_to_aes_desk_inf_show      /* $f55c  $fde8a6  ours, through a thunk */
     .long   linef_to_aes_desk_inf_field     /* $f560  $fdea5e  ours, through a thunk */
     .long   linef_to_aes_desk_inf_dttmsz    /* $f564  $fdea9a  ours, through a thunk */
     .long   linef_to_aes_inf_fldset         /* $f568  $fecfee  ours, through a thunk */
     .long   linef_to_aes_dos_rename         /* $f56c  $fe3ba0  ours, through a thunk */
     .long   linef_to_aes_dos_chmod          /* $f570  $fe3c16  ours, through a thunk */
     .long   linef_to_aes_desk_inf_folder    /* $f574  $fde9ce  ours, through a thunk */
-    .long   0xfde9a8                        /* $f578  $fde9a8  the ROM's */
+    .long   linef_to_aes_desk_inf_finish    /* $f578  $fde9a8  ours, through a thunk */
     .long   linef_to_aes_dos_space          /* $f57c  $fe3b6a  ours, through a thunk */
     .long   linef_to_aes_dos_label          /* $f580  $fe3b02  ours, through a thunk */
     .long   linef_to_aes_inf_gindex         /* $f584  $fed010  ours, through a thunk */
@@ -389,7 +389,7 @@ aes_linef_table:
     .long   linef_to_aes_win_sname          /* $f5c0  $fe384c  ours, through a thunk */
     .long   linef_to_aes_win_top            /* $f5c4  $fe2cf4  ours, through a thunk */
     .long   linef_to_aes_pro_chdir          /* $f5c8  $fe09cc  ours, through a thunk */
-    .long   0xfdf082                        /* $f5cc  $fdf082  the ROM's */
+    .long   linef_to_aes_desk_opn_appl      /* $f5cc  $fdf082  ours, through a thunk */
     .long   linef_to_aes_win_alloc          /* $f5d0  $fe2ba2  ours, through a thunk */
     .long   linef_to_aes_drive_check        /* $f5d4  $fe1ad0  ours, through a thunk */
     .long   linef_to_aes_do_diropen         /* $f5d8  $fe1068  ours, through a thunk */
@@ -398,9 +398,9 @@ aes_linef_table:
     .long   0xfe11b4                        /* $f5e4  $fe11b4  the ROM's */
     .long   linef_to_aes_do_fopen           /* $f5e8  $fe14ba  ours, through a thunk */
     .long   linef_to_aes_do_dopen           /* $f5ec  $fe13ea  ours, through a thunk */
-    .long   0xfdeb10                        /* $f5f0  $fdeb10  the ROM's */
-    .long   0xfded16                        /* $f5f4  $fded16  the ROM's */
-    .long   0xfdedf0                        /* $f5f8  $fdedf0  the ROM's */
+    .long   linef_to_aes_desk_inf_file      /* $f5f0  $fdeb10  ours, through a thunk */
+    .long   linef_to_aes_desk_inf_folder_dlg/* $f5f4  $fded16  ours, through a thunk */
+    .long   linef_to_aes_desk_inf_disk      /* $f5f8  $fdedf0  ours, through a thunk */
     .long   linef_to_aes_win_iname          /* $f5fc  $fe37c4  ours, through a thunk */
     .long   linef_to_aes_zoom_closed        /* $f600  $fe0f36  ours, through a thunk */
     .long   linef_to_aes_close_window       /* $f604  $fe18e4  ours, through a thunk */
@@ -416,12 +416,12 @@ aes_linef_table:
     .long   linef_to_aes_desk_do_format     /* $f62c  $fe1800  ours, through a thunk */
     .long   linef_to_aes_desk_menu_icheck   /* $f630  $fde1f0  ours, through a thunk */
     .long   linef_to_aes_win_view           /* $f634  $fe2a7c  ours, through a thunk */
-    .long   0xfdf11a                        /* $f638  $fdf11a  the ROM's */
+    .long   linef_to_aes_desk_ins_disk      /* $f638  $fdf11a  ours, through a thunk */
     .long   linef_to_aes_app_blddesk        /* $f63c  $fdbeec  ours, through a thunk */
-    .long   0xfdf3c8                        /* $f640  $fdf3c8  the ROM's */
+    .long   linef_to_aes_desk_ins_app       /* $f640  $fdf3c8  ours, through a thunk */
     .long   linef_to_aes_win_bdall          /* $f644  $fe3684  ours, through a thunk */
     .long   linef_to_aes_win_shwall         /* $f648  $fe36fa  ours, through a thunk */
-    .long   0xfdef12                        /* $f64c  $fdef12  the ROM's */
+    .long   linef_to_aes_desk_inf_pref      /* $f64c  $fdef12  ours, through a thunk */
     .long   linef_to_aes_cnx_put            /* $f650  $fe2536  ours, through a thunk */
     .long   linef_to_aes_app_save           /* $f654  $fdbb34  ours, through a thunk */
     .long   linef_to_aes_gsx_hardcopy       /* $f658  $fe8862  ours, through a thunk */
@@ -4202,6 +4202,18 @@ linef_to_aes_desk_dr_code:
     rts
     .size   linef_to_aes_desk_dr_code,.-linef_to_aes_desk_dr_code
 
+/* $fde8a6: aes_desk_inf_show(image, long, word) */
+    .type   linef_to_aes_desk_inf_show,@function
+linef_to_aes_desk_inf_show:
+    movea.w 8(%sp),%a0
+    move.l  %a0,-(%sp)
+    move.l  8(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_inf_show
+    lea     12(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_show,.-linef_to_aes_desk_inf_show
+
 /* $fdea5e: aes_desk_inf_field(image, long, long, long, word, word) */
     .type   linef_to_aes_desk_inf_field,@function
 linef_to_aes_desk_inf_field:
@@ -4297,6 +4309,18 @@ linef_to_aes_desk_inf_folder:
     lea     20(%sp),%sp
     rts
     .size   linef_to_aes_desk_inf_folder,.-linef_to_aes_desk_inf_folder
+
+/* $fde9a8: aes_desk_inf_finish(image, long, word) */
+    .type   linef_to_aes_desk_inf_finish,@function
+linef_to_aes_desk_inf_finish:
+    movea.w 8(%sp),%a0
+    move.l  %a0,-(%sp)
+    move.l  8(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_inf_finish
+    lea     12(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_finish,.-linef_to_aes_desk_inf_finish
 
 /* $fe3b6a: aes_dos_space(image, word, long, long) */
     .type   linef_to_aes_dos_space,@function
@@ -4570,6 +4594,19 @@ linef_to_aes_pro_chdir:
     rts
     .size   linef_to_aes_pro_chdir,.-linef_to_aes_pro_chdir
 
+/* $fdf082: aes_desk_opn_appl(image, long, long, long, long) */
+    .type   linef_to_aes_desk_opn_appl,@function
+linef_to_aes_desk_opn_appl:
+    move.l  16(%sp),-(%sp)
+    move.l  16(%sp),-(%sp)
+    move.l  16(%sp),-(%sp)
+    move.l  16(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_opn_appl
+    lea     20(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_opn_appl,.-linef_to_aes_desk_opn_appl
+
 /* $fe2ba2: aes_win_alloc(image, word) */
     .type   linef_to_aes_win_alloc,@function
 linef_to_aes_win_alloc:
@@ -4663,6 +4700,39 @@ linef_to_aes_do_dopen:
     lea     8(%sp),%sp
     rts
     .size   linef_to_aes_do_dopen,.-linef_to_aes_do_dopen
+
+/* $fdeb10: aes_desk_inf_file(image, long, long) */
+    .type   linef_to_aes_desk_inf_file,@function
+linef_to_aes_desk_inf_file:
+    move.l  8(%sp),-(%sp)
+    move.l  8(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_inf_file
+    lea     12(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_file,.-linef_to_aes_desk_inf_file
+
+/* $fded16: aes_desk_inf_folder_dlg(image, long, long) */
+    .type   linef_to_aes_desk_inf_folder_dlg,@function
+linef_to_aes_desk_inf_folder_dlg:
+    move.l  8(%sp),-(%sp)
+    move.l  8(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_inf_folder_dlg
+    lea     12(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_folder_dlg,.-linef_to_aes_desk_inf_folder_dlg
+
+/* $fdedf0: aes_desk_inf_disk(image, word) */
+    .type   linef_to_aes_desk_inf_disk,@function
+linef_to_aes_desk_inf_disk:
+    movea.w 4(%sp),%a0
+    move.l  %a0,-(%sp)
+    pea     (0).w
+    jsr     aes_desk_inf_disk
+    lea     8(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_disk,.-linef_to_aes_desk_inf_disk
 
 /* $fe37c4: aes_win_iname(image, word) */
     .type   linef_to_aes_win_iname,@function
@@ -4829,6 +4899,16 @@ linef_to_aes_win_view:
     rts
     .size   linef_to_aes_win_view,.-linef_to_aes_win_view
 
+/* $fdf11a: aes_desk_ins_disk(image, long) */
+    .type   linef_to_aes_desk_ins_disk,@function
+linef_to_aes_desk_ins_disk:
+    move.l  4(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_ins_disk
+    lea     8(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_ins_disk,.-linef_to_aes_desk_ins_disk
+
 /* $fdbeec: aes_app_blddesk(image) */
     .type   linef_to_aes_app_blddesk,@function
 linef_to_aes_app_blddesk:
@@ -4837,6 +4917,17 @@ linef_to_aes_app_blddesk:
     lea     4(%sp),%sp
     rts
     .size   linef_to_aes_app_blddesk,.-linef_to_aes_app_blddesk
+
+/* $fdf3c8: aes_desk_ins_app(image, long, long) */
+    .type   linef_to_aes_desk_ins_app,@function
+linef_to_aes_desk_ins_app:
+    move.l  8(%sp),-(%sp)
+    move.l  8(%sp),-(%sp)
+    pea     (0).w
+    jsr     aes_desk_ins_app
+    lea     12(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_ins_app,.-linef_to_aes_desk_ins_app
 
 /* $fe3684: aes_win_bdall(image) */
     .type   linef_to_aes_win_bdall,@function
@@ -4855,6 +4946,15 @@ linef_to_aes_win_shwall:
     lea     4(%sp),%sp
     rts
     .size   linef_to_aes_win_shwall,.-linef_to_aes_win_shwall
+
+/* $fdef12: aes_desk_inf_pref(image) */
+    .type   linef_to_aes_desk_inf_pref,@function
+linef_to_aes_desk_inf_pref:
+    pea     (0).w
+    jsr     aes_desk_inf_pref
+    lea     4(%sp),%sp
+    rts
+    .size   linef_to_aes_desk_inf_pref,.-linef_to_aes_desk_inf_pref
 
 /* $fe2536: aes_cnx_put(image) */
     .type   linef_to_aes_cnx_put,@function

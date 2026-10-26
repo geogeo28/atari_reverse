@@ -20,7 +20,9 @@ REC = Path(__file__).resolve().parents[1]
 
 # `## Verified — <component> (N)`, and the `| `0xADDR` | ... | ✅ verified |` rows beneath it.
 _SECTION_RE = re.compile(r"^## Verified — (?P<name>\S+) \((?P<count>\d+)\)\s*$", re.M)
-_ROW_RE = re.compile(r"^\| `0x[0-9a-f]+` \|.*\| ✅ verified \|", re.M)
+# ...a verified row of either kind: ✅ verified, and band 6 W3a's ✅ verified on target (R3) — the target-only kind (no host
+# twin, no Tier 1: its rows the kind's own, `aes_desk_w3a`)
+_ROW_RE = re.compile(r"^\| `0x[0-9a-f]+` \|.*\| ✅ verified(?: on target \(R3\))? \|", re.M)
 # ...and the same row with its ADDRESS and its Tier 3 cell picked out. The columns are
 # `| Addr | Name | Cases | Cost | Tier 3 | Status | Verification |`, so the cell is the fifth.
 _VERIFIED_ROW_RE = re.compile(r"^\| `0x(?P<addr>[0-9a-f]+)` \|(?:[^|]*\|){3}"

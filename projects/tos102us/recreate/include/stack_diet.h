@@ -35,6 +35,11 @@
  * `test/test_aes_desk_ours.py`. BAND 6 W3a's DIET (the user's ruling B1: opn_appl's Cancel, hndl_msg's WM_REDRAW down
  * to an icon's label, 1,618 -> 1,534): `noinline` on allchg_walked, act_allchg's walk (−52), and desk_clear's local
  * cut to its work area's end (−12) — beside two MARKS of the register, do_wredraw's (−12) and desk_objc_draw's (−8).
+ * BAND 6 W3a's STAGE 1 (the same path, under inf_show: hndl_msg's redraws after a dialog, opn_appl's Cancel 1,580 ->
+ * 1,524): `noinline` on dialog_run and messages_asked (inf_show's dialog and its message question, no frame of theirs
+ * under hndl_msg), and on opn_appl's three parts — its fields set, its dialog's run (LEFT TO BY A JUMP: opn_appl's frame
+ * and the fields' call's deferred arguments popped first) and its fields read back; NO MARK (a mark's reading follows
+ * its function into inf_show, whose Line-F call of hndl_msg it cannot count).
  */
 #ifndef TOS102US_STACK_DIET_H
 #define TOS102US_STACK_DIET_H

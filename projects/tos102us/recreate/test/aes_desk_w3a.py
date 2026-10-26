@@ -89,6 +89,24 @@ CALLS_THROUGH_THE_TABLE = {(INF_SHOW, HNDL_MSG): TableCall(0xF558, 0xFDE99A, 3)}
 OUTLIVED_ITS_STAGE = "a call declared through the table outlived its stage: its callee is flipped — make it the C's own call"
 
 
+# ...AND WHAT A ROW WHOSE RUN MAKES ONE SPENDS IN THE AES's ROM (Tier 3's general guard, `bench/tier3.py`): the callee's
+# own body — the ROM's instructions over the same machine, THE ROM'S OWN RUN's cycles there to the cycle — and the
+# Line-F handler's RAM copy under the calls and returns that ROM code makes. DECLARED BY ROW, measured and pinned by the
+# battery that registers it: `{registered row: ThroughTheTable(cycles in the callee's body, cycles in the handler's
+# copy)}` (`test_desk_w3a_stage1.py`); a row absent here spends none.
+ThroughTheTable = namedtuple("ThroughTheTable", "body handler")
+ROWS_THROUGH_THE_TABLE = {}
+
+
+def back_edge_spans():
+    """The ROM text each declared call through the table enters: its callee's body, `(entry, the next routine the AES
+    map's inventory lists)`."""
+    import aes_desk
+    starts = aes_desk.inventoried()
+    entries = sorted({getattr(addrs, callee) for _caller, callee in CALLS_THROUGH_THE_TABLE})
+    return tuple((entry, min(start for start in starts if start > entry)) for entry in entries)
+
+
 def calls_outliving_their_stage(flipped):
     """The declared calls through the table whose callee is FLIPPED (its ROM address in `flipped`), by name."""
     return sorted(f"{caller} -> {callee}" for caller, callee in CALLS_THROUGH_THE_TABLE if getattr(addrs, callee) in flipped)
@@ -154,7 +172,8 @@ def register_target_only(label, name, arguments, machine, *, answered=True, budg
 # leaves: the settling staged it) or INSIDE THE WINDOW OF A BY-NATURE CLASS, BY ADDRESS (the orchestrator's ruling on
 # review RW3aP's F1: never by its reason, never by the row's own hand). The windows are those THE SETTLING DERIVED off
 # the ROM's run (`aes_switching._settled`: each class's window — the mask word, the caller's context, the dispatcher's
-# stack and its brackets' words, a QPB's or a parked wait's parameter, the screen manager's, the desk's and another
+# stack and its brackets' words, a QPB's or a parked wait's parameter, a frame address handed to GEMDOS — the user's
+# ruling of 2026-10-25, `aes_switching.frame_addresses_handed` —, the screen manager's, the desk's and another
 # process's spans — cut to the bytes the run stored), and what the row names by its own hand (its own spans, its
 # declared X flag: `aes_switching.own_drops`) is none of them. A drop
 # of neither is refused by the row's name before anything is registered; THE SWITCHING CENSUS binds every class to its

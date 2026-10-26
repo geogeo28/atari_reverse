@@ -1005,6 +1005,17 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     ("aes_desk_util_error", "aes_crit_err"), ("aes_desk_format", "aes_max"), ("aes_desk_format", "aes_lbcopy"),
     ("aes_desk_format", "aes_merge_str"), ("aes_desk_copy_disk", "aes_ldiv"),
     # ---- end of group G2's wave-4 ----
+    # ---- band 6 W3a, stage 1 (`src/desk/deskinf.c`, `deskins.c`: target-only) ---- Show Info's dialogs (inf_field and
+    # inf_dttmsz inlined where they are): the search's copies, the name's forms, the label's, the bytes merged;
+    # opn_appl's two field halves; the install dialogs' copies, compares, INF texts measured and letters upcased
+    ("aes_desk_inf_disk", "aes_fmt_str"), ("aes_desk_inf_disk", "aes_merge_str"), ("aes_desk_inf_disk", "aes_strcpy"),
+    ("aes_desk_inf_file", "aes_fmt_str"), ("aes_desk_inf_file", "aes_strcpy"), ("aes_desk_inf_file", "aes_streq"),
+    ("aes_desk_inf_file", "aes_unfmt_str"), ("aes_desk_inf_folder_dlg", "aes_fmt_str"),
+    ("aes_desk_inf_folder_dlg", "aes_strcpy"), ("appl_fields_set", "aes_fmt_str"), ("appl_fields_read", "aes_unfmt_str"),
+    ("aes_desk_ins_app", "aes_fmt_str"), ("aes_desk_ins_app", "aes_strcpy"), ("aes_desk_ins_app", "aes_streq"),
+    ("aes_desk_ins_app", "aes_strlen"), ("aes_desk_ins_app", "aes_unfmt_str"), ("aes_desk_ins_disk", "aes_strcpy"),
+    ("aes_desk_ins_disk", "aes_streq"), ("aes_desk_ins_disk", "aes_strlen"), ("aes_desk_ins_disk", "aes_toupper"),
+    # ---- end of W3a stage 1's ----
     # ---- band 6 slice F1 (N12): trp13 a row of the table — its C callers reach the `.S` through glue: drive_check's
     # Drvmap and forced media change, Format's and the copy's Getbpb and Rwabs (their helpers inlined, the address
     # loaded once into a register) ----

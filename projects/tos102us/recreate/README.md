@@ -2693,6 +2693,35 @@ never ROWS_THAT_SWITCH), held over the real registries by `aes_desk_w3a.census_r
 crafted breach (nine) and holds over a well-formed crafted row. Its named budgets are pinned BY NAME beside their count
 (`test_desk_w3a.TARGET_ONLY_ROWS_DECLARING_A_BUDGET`).
 
+THE DECLARED BACK-EDGE (band 6 W3a stage 1): a row whose run makes a call
+declared through the table (`aes_desk_w3a.CALLS_THROUGH_THE_TABLE`) declares what it spends in the AES's ROM
+(`ROWS_THROUGH_THE_TABLE`: the callee's body, the handler's copy); `bench/tier3.py`'s `vet_the_back_edge` holds the
+body to the declaration AND to the ROM's own run's cycles there, on the switching path and on the (V) path, and the
+ROM's code so run is in both own columns.
+
+A FRAME ADDRESS HANDED TO GEMDOS (the user's ruling
+of 2026-10-25): where a run hands a `trap #1` the address of a place in its own frame, the run's recording trap keeps it
+— its ledger's argument longword, its DTA cell — another address on each shore. `aes_switching.frame_addresses_handed`
+reads the windows off the ROM run's own recorder (known by its handler's bytes at the vector: `aes_shell.GEMDOS_LEDGERS`)
+by address — each POINTER ARGUMENT of a recorded frame, at its own offset as the GEMDOS binding lays it
+(`aes_shell.POINTER_ARGUMENTS`; a recorder that records something else there leaves it out — the copy engine's Fdatime,
+whose ledger holds the time and date in its pointer's place), within the frame's OWN bytes, whose value lies in the stack
+band, and the DTA cell holding one of them — drops them cut to the bytes the run stored, never staged; the switching
+census reads them again off the ROM's scheduled run. Never a longword at any other offset: one straddling two arguments
+(an attribute after a path, a date and a handle, a handle and a count's high word) can read as a band address, and a
+function with no pointer argument yields none (review RS1F's G1). One row has it (inf_disk's). A recorder that zeroes such a pointer (the copy engine's Dfree, Format's
+rows) still stands for its own rows; inf_disk's is staged over `aes_deskdir.ENGINE_DFREE_AS_HANDED` instead.
+
+W3a STAGE 1 (2026-10-25; STATUS.md, "BAND 6 W3a's STAGE 1"): THE F FILE'S NINE IN C AND FLIPPED — `src/desk/deskinf.c`'s
+seven (inf_show, inf_finish, inf_file, inf_folder_dlg, inf_disk, inf_pref, opn_appl) and the NEW `src/desk/deskins.c`
+(ins_disk, ins_app), compiled `#ifndef RECREATE_HOST_DIFFERENTIAL` (O1), each table entry its thunk. inf_show calls
+hndl_msg — the ROM's until stage 3 — by the ROM's own Line-F word `$f558` (`desk/deskinf.h`), and Tier 3 holds the
+cost of that call per row (`aes_desk_w3a.ROWS_THROUGH_THE_TABLE`: hndl_msg's body to the cycle the ROM's own run's,
+and the handler's copy), the general guard's one declaration of the kind. Their rows: 20 target-only rows that switch
+(`test/test_desk_w3a_stage1.py`), one per arrival class — the cut's 18, and two its fix pass seeded with real data (a
+folder not empty; Install Application asked again of a program installed TOS-takes-parameters). The snapshot's noise sweep is sharded across xdist workers (`test_boot_snapshot.NOISE_CHUNKS`, a sliced
+session's rows in its first row's chunk): the same cases, the same check.
+
 A NAMED REGISTERED ROW MAY DECLARE ITS OWN BUDGET (since band 6 slice F3's stage 2, THE USER'S RULING of 2026-10-21,
 "rows may declare budget"). A registered row that switches and whose run is past the default derivation margin (a desk
 routine's copy or open, 300,000–730,000 instructions) declares `budget=` as a case and a session's slice do — on

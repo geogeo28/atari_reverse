@@ -49,6 +49,7 @@ from recreate_kit import rom_bench
 import abi
 import aes
 import aes_event
+import aes_shell
 import aes_switch
 import aes_accessory_turns_pinned
 import aes_desk_turns_pinned
@@ -965,6 +966,8 @@ def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, bu
     uda = aes_event.uda_of(switches.process, final)
     pokes, drops = aes_event.settled_in_windows(staged, stored, by_nature(uda), dropped=dropped_at_tier3(uda))
     qpbs = _qpbs_left(name, final, writes, watch)
+    # ...AND A FRAME ADDRESS HANDED TO GEMDOS (`frame_addresses_handed`): dropped where the run stored it, never staged
+    handed = tuple(span for window in frame_addresses_handed(final) for span in aes_event.stored_spans(window, stored))
     # ...AND, FOR A RUN THAT ENTERS THE SCREEN MANAGER AS ANOTHER PROCESS THAN ITS OWN: the screen manager's two
     # by-nature spans (`aes_takeover`), DROPPED where this run stored them and NEVER STAGED — they are LIVE at the
     # run's entry (its parked context, its frames), where the caller's own saved context is dead.
@@ -979,7 +982,7 @@ def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, bu
     others = sorted({pd for pd in reference.entered if pd in STACK_TOPS} - {switches.process, aes.SHELL_PD})
     of_others = tuple(span for pd in others for window in foreign_windows_of(pd, final)
                       for span in aes_event.stored_spans(window, stored))
-    return Settled(pokes, drops + qpb_address_drops(qpbs) + its_spans + the_desk_s + of_others, switches,
+    return Settled(pokes, drops + qpb_address_drops(qpbs) + handed + its_spans + the_desk_s + of_others, switches,
                    tuple(reference.entered), qpbs)
 
 
@@ -1016,6 +1019,46 @@ def qpb_address_drops(qpbs):
     """The Tier 3 drops of the QPB addresses `qpbs` (a `Settled`'s): one longword each, by name. NOT STAGED, as the
     windows are: no machine can hold beforehand an address in a frame its run has yet to push."""
     return tuple((at, at + aes.LONG_BYTES, aes_event.QPB_ADDRESS_WHY) for at in qpbs)
+
+
+# A FRAME ADDRESS HANDED TO GEMDOS (band 6 W3a stage 1's fix pass; the user's ruling of 2026-10-25: "a by-nature window"
+# of its own, derived from the ROM run's own trap ledger, BY ADDRESS — no ⚠️, no recorder that zeroes such pointers). A
+# routine that hands a `trap #1` the address of a place in ITS OWN FRAME (inf_disk's dos_label: the DTA and the search's
+# path; its dos_space: Dfree's DISKINFO) hands the ROM routine's stack on one shore and the C's on the other — and a
+# recording trap KEEPS it: its ledger records the frame's own bytes, its DTA cell the pointer an Fsetdta named. The
+# windows: of the run's recorder (`aes_shell.gemdos_ledger_of`: known by its handler's bytes at the vector), every
+# POINTER ARGUMENT of a recorded call — at its own offset in the frame, as the GEMDOS binding the recorder records
+# lays it (`GemdosLedger.pointer_offsets`), and within THE FRAME'S OWN BYTES — whose value lies in THE RUN'S STACK
+# BAND, and the recorder's DTA cell where it holds one of those very values. Never a longword at any other offset: one
+# that straddles two arguments (an attribute and the pad behind it, a date and a handle, a handle and a count's high
+# word) can read as a band address (review RS1F's G1); a function with no pointer argument yields none. Dropped cut to
+# the bytes the run stored (`_settled`), never staged (no machine holds beforehand an address in a frame its run has
+# yet to push), and held again by the switching census off the ROM's scheduled run
+# (`test_aes_event._the_switching_census`).
+FRAME_ADDRESS_WHY = ("a frame address handed to GEMDOS: a trap's argument naming a place in the caller's own stack "
+                     "frame — the ROM routine's on its shore, the C's on ours — as the run's recorder keeps it (an "
+                     "argument longword of its ledger, its DTA cell)")
+
+
+def frame_addresses_handed(image):
+    """THE CLASS (above) over `image` (a run's memory): `(lo, hi, FRAME_ADDRESS_WHY)` windows, in the ledger's order
+    then the DTA cell — none where no recorder of the tree's stands behind the GEMDOS vector."""
+    ledger = aes_shell.gemdos_ledger_of(image)
+    if ledger is None:
+        return ()
+    windows, handed = [], set()
+    for nth, (function, frame) in enumerate(ledger.ledger.recorded(image)):
+        arguments_at = ledger.ledger.first + nth * ledger.ledger.stride + aes.WORD_BYTES
+        own = ledger.frame_bytes.get(function, ledger.recorded_bytes)
+        for offset in (at for at in ledger.pointer_offsets.get(function, ()) if at + aes.LONG_BYTES <= own):
+            value = int.from_bytes(frame[offset:offset + aes.LONG_BYTES], "big") & BUS
+            if value in case.STACK_BAND:
+                windows.append((arguments_at + offset, arguments_at + offset + aes.LONG_BYTES, FRAME_ADDRESS_WHY))
+                handed.add(value)
+    cell = ledger.dta_cell
+    if cell is not None and case.long_in(image, cell) & BUS in handed:
+        windows.append((cell, cell + aes.LONG_BYTES, FRAME_ADDRESS_WHY))
+    return tuple(windows)
 
 
 def own_drops(row):

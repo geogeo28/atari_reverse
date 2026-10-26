@@ -124,7 +124,10 @@ FLIPPED_AT_F3 = {
 }
 # BAND 6 SLICE F4 (wave 4's twelve): the same triple. (The engine's eight `bsr`-only parts have no entry and no thunk.)
 FLIPPED_AT_F4 = (12, 12, 2)    # unit M's two, unit N's ten; 2 entered (show_file, util_redraw: by their plain rows) — UNENTERED's ten
-FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4)
+# BAND 6 W3a's STAGE 1 (the cycle's nine leaves, target-only): the same triple — none entered by a registered case (each
+# one's rows switch: UNENTERED's nine, below)
+FLIPPED_AT_W3A_STAGE_1 = (9, 9, 0)
+FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4, FLIPPED_AT_W3A_STAGE_1)
 ENTRIES_FLIPPED_SINCE_F1 = sum(entries for entries, _thunks, _entered in FLIPPED_SINCE_F1)
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_SINCE_F1,
             THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_SINCE_F1}
@@ -747,6 +750,11 @@ UNENTERED = {
         "PRINT_FILE", "UTIL_OPEN", "UTIL_SHOW", "UTIL_BARS", "UTIL_ERROR", "COPY_TRACKS", "FORMAT", "COPY_DISK")},
     **{f"AES_ROM_DESK_{routine}": [NO_CASE] for routine in ("FAT_MARK", "FAT_SWAP")},
     # ---- end of slice F4's ----
+    # ---- band 6 W3a, stage 1 ---- THE NINE, TARGET-ONLY: no Tier 1 case, every row switches (entered on our shore
+    # instead, `test_aes_desk_ours.py`)
+    **{f"AES_ROM_DESK_{routine}": [INTERRUPTED] for routine in (
+        "INF_SHOW", "INF_FINISH", "INF_FILE", "INF_FOLDER_DLG", "INF_DISK", "INF_PREF", "OPN_APPL", "INS_DISK", "INS_APP")},
+    # ---- end of W3a stage 1's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group and F3 stage-author adds its own entered count on its line of FLIPPED_AT_F2 / FLIPPED_AT_F3)

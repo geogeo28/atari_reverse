@@ -4794,6 +4794,10 @@ ANOTHER_S_CONTEXT, ANOTHER_S_STACK = "another process's saved context (its turn 
 # the caller's last arithmetic's — each build's own; one bit excused, the byte compared): the two rows whose yield
 # follows GCC's `seq` / `neg`, and since band 6 slice F1 the ten desk bindings' rows that declare it — and no other.
 THE_DECLARED_X_FLAG = "the X flag of the dispatcher's save word, declared"
+# ...and, since band 6 W3a stage 1's fix pass (the user's ruling of 2026-10-25), A FRAME ADDRESS HANDED TO GEMDOS: the
+# argument longwords of the run's recorder's ledger, and its DTA cell, that hold an address in the run's stack band
+# (`aes_switching.frame_addresses_handed`) — inf_disk's dos_label and dos_space hand their own frames' addresses.
+A_FRAME_ADDRESS_HANDED = "a frame address handed to GEMDOS"
 X_FLAG_NOT_AS_DECLARED = "the X flag's byte is not named once where the row declares it and nowhere else"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
@@ -4909,6 +4913,13 @@ WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tpla
 # ...and A ROW'S OWN by-nature bytes (`aes_switching.SwitchingRow.also_dropped`): ct_mouse's re-show under a menu
 # worked with the mouse shown — contrl[3] the ROM's stack word, the C's named one (`ctrl.c`'s MISSING ARGUMENT) — in
 # the three rows of hctl_rect whose run makes no VDI call after the menu.
+# ...and BAND 6 W3a's TARGET-ONLY ROWS THAT SWITCH (`aes_event.TARGET_ONLY_SWITCHING_ROWS`, by routine — the kind's own
+# census line, never ROWS_THAT_SWITCH): the same two by-nature kinds, held by this one census of both registers. Since
+# stage 1 (`test_desk_w3a_stage1.py`): the nine dialogs' twenty (the fix pass's inf_disk, folder and TTP rows among them)
+TARGET_ONLY_ROWS_THAT_SWITCH = {
+    "aes_desk_inf_show": 8, "aes_desk_inf_finish": 2, "aes_desk_inf_file": 2, "aes_desk_inf_folder_dlg": 2,
+    "aes_desk_inf_disk": 1, "aes_desk_inf_pref": 1, "aes_desk_opn_appl": 1, "aes_desk_ins_disk": 1, "aes_desk_ins_app": 2,
+}
 A_ROW_S_OWN = "a row's own by nature: "
 THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
 # (band 6 slice F2, group G2) a door's parked return the shipped glue's `jsr` makes the `.S` park where the ROM's door parks
@@ -4936,7 +4947,8 @@ BY_NATURE_CENSUS = {
     #     and every ev_multi that asks MU_MESAG (27: a local of its own frame), each vetted on every shore.
     # No DOOR USER's row drops a bracket's word: none of them waits on a time, and no tick reaches tchange's
     # bracket on a path that does not wait.
-    THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: ROWS_THAT_SWITCH, THE_DISPATCHER_S_STACK: ROWS_THAT_SWITCH,
+    THE_ROWS_THAT_SWITCH: {THE_CALLER_S_CONTEXT: {**ROWS_THAT_SWITCH, **TARGET_ONLY_ROWS_THAT_SWITCH},
+                           THE_DISPATCHER_S_STACK: {**ROWS_THAT_SWITCH, **TARGET_ONLY_ROWS_THAT_SWITCH},
                            # the desk's rsrc_free binding where GEMDOS frees the block, and desk_free through it — and,
                            # since band 6 slice F1, the ten desk bindings' rows that declare it (`test_desk_bind.X_FLAG_DIFFERS`)
                            THE_DECLARED_X_FLAG: {"aes_desk_free": 1, "aes_desk_rsrc_free": 1, "aes_desk_objc_find": 3,
@@ -5000,7 +5012,9 @@ BY_NATURE_CENSUS = {
                            THE_DESK_S_CONTEXT: {"aes_ap_rdwr": 1, "aes_ap_sendmsg": 1, "aes_ev_block": 1, "aes_mn_do": 2},
                            THE_DESK_S_STACK: {"aes_ap_rdwr": 1, "aes_ap_sendmsg": 1, "aes_ev_block": 1, "aes_mn_do": 2},
                            THE_DESK_S_PARKED: {"aes_mn_do": 2},
-                           ANOTHER_S_CONTEXT: {"aes_ct_msgup": 1}, ANOTHER_S_STACK: {"aes_ct_msgup": 1}},
+                           ANOTHER_S_CONTEXT: {"aes_ct_msgup": 1}, ANOTHER_S_STACK: {"aes_ct_msgup": 1},
+                           # (band 6 W3a stage 1's fix pass) inf_disk's one row: dos_label's DTA and path, dos_space's DISKINFO
+                           A_FRAME_ADDRESS_HANDED: {"aes_desk_inf_disk": 1}},
 }
 
 
@@ -5161,7 +5175,9 @@ def _the_switching_census(switching_rows, registered):
         uda = aes_event.uda_of(held.switches.process, the_rom_s.memory)
         kinds = {THE_CALLER_S_CONTEXT: aes_switch.uda_context_drop(uda), THE_DISPATCHER_S_STACK: aes_switch.DISPATCHER_STACK_DROP,
                  THE_BRACKET_S_SAVE_WORD: aes_event.sr_drops(aes.AES_SR_SPL), "psetup's SR save word": aes_event.SR_PSETUP_DROP,
-                 THE_DECLARED_X_FLAG: aes_switching.THE_X_FLAG_ALONE}
+                 THE_DECLARED_X_FLAG: aes_switching.THE_X_FLAG_ALONE,
+                 # ...a kind of several windows (none, on a run whose recorder is handed no frame address)
+                 A_FRAME_ADDRESS_HANDED: aes_switching.frame_addresses_handed(the_rom_s.memory)}
         # THE SCREEN MANAGER'S TWO SPANS (FLIP 4), named by exactly the rows whose ROM run ENTERS IT as another
         # process than the row's own — read off that run, and but for a row that says why it stays on the ROM's.
         enters_it = (held.switches.process != aes.SCREEN_MANAGER_PD and aes.SCREEN_MANAGER_PD in the_rom_s.entered
@@ -5200,9 +5216,9 @@ def _the_switching_census(switching_rows, registered):
         if qpb_addresses:
             census.setdefault(A_QPB_S_ADDRESS, collections.Counter())[routines.core_symbol(row.name)] += 1
         of_a_kind = []
-        for kind, ((lo, hi, _why),) in kinds.items():
-            changed = [at for at in range(lo, hi) if the_rom_s.memory[at] != the_rom_s.started[at]]
-            inside = [(low, high) for low, high in drops if lo <= low and high <= hi]
+        for kind, windows in kinds.items():
+            changed = [at for lo, hi, _why in windows for at in range(lo, hi) if the_rom_s.memory[at] != the_rom_s.started[at]]
+            inside = [(low, high) for low, high in drops if any(lo <= low and high <= hi for lo, hi, _why in windows)]
             if kind == THE_DECLARED_X_FLAG:
                 # THE X FLAG IS NO KIND THE ROM'S RUN ALONE CAN SAY (band 6 slice F1): over an arrival's machine it changes
                 # wherever the ROM's own arithmetic before the yield leaves another X than the machine's last dispatch
@@ -5234,6 +5250,17 @@ def _the_switching_census(switching_rows, registered):
         assert not any(low <= aes.AES_SR_DISPATCH < high for low, high in drops), name
         assert sorted(of_a_kind) == sorted(drops), f"{name}: a drop of no kind this census knows"
     return {kind: dict(sorted(counts.items())) for kind, counts in census.items()}
+
+
+def test_a_drop_of_the_frame_address_class_s_reason_outside_its_windows_is_refused_by_the_census():
+    """CRAFTED (band 6 W3a stage 1's fix pass): inf_disk's row registered with one drop more — the class "a frame address
+    handed to GEMDOS"'s reason over the ledger's function word of dos_label's Fsetdta, no argument — lies in no window
+    of a kind this census reads off the ROM's run: refused by the row's name."""
+    import test_desk_w3a_stage1 as stage_1
+    registered = aes_event.TARGET_ONLY_SWITCHING_ROWS[stage_1.DISK_ROW]
+    with pytest.raises(AssertionError, match="a drop of no kind this census knows"):
+        _the_switching_census({stage_1.DISK_ROW: registered},
+                              {stage_1.DISK_ROW: (*registered.drops, stage_1.FUNCTION_WORD_DROP)})
 
 
 @pytest.mark.parametrize("held_by", ("a byte named and never stored", "a row whose run changes its park"))

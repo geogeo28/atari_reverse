@@ -2812,20 +2812,20 @@ cmt 0xfe1e4c (item): Desk > Desktop Info — inf_show of the info tree. C: to be
 fn 0xfe11b4 do_aopen
 cmt 0xfe11b4 (anode, isapp, curr, drive, path, name): a file run (pro_run), shown or printed (the $f438 alert); a TOS-takes-parameters program (a_flags & 8, ins_app's store) asks opn_appl first. C: to be aes_do_aopen (src/desk/desksupp.c; W3a, not yet written)
 fn 0xfde8a6 desk_inf_show
-cmt 0xfde8a6 (tree, start): form_center, form_dial, objc_draw, form_do, form_dial; then evnt_multi(MU_MESAG|MU_TIMER) and hndl_msg ($fde99a) while a message is pending; 1. aes_desk.py's DIALOG_RUNNER. C: to be aes_desk_inf_show (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfde8a6 (tree, start): form_center, form_dial, objc_draw, form_do, form_dial; then evnt_multi(MU_MESAG|MU_TIMER) and hndl_msg ($fde99a) while a message is pending; 1. aes_desk.py's DIALOG_RUNNER. C: aes_desk_inf_show (src/desk/deskinf.c; band 6 W3a stage 1, target-only): its dialog run a noinline helper (dialog_run), its message question another (messages_asked); hndl_msg called BY THE ROM'S WORD $f558 (the declared back-edge) until stage 3
 fn 0xfde9a8 desk_inf_finish
-cmt 0xfde9a8 (tree, object): inf_show(tree, 0), then the object's ob_state cleared; void. C: to be aes_desk_inf_finish (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfde9a8 (tree, object): inf_show(tree, 0), then the object's ob_state cleared; void. C: aes_desk_inf_finish (src/desk/deskinf.c; W3a stage 1, target-only; void)
 fn 0xfdeb10 desk_inf_file
-cmt 0xfdeb10 (path, pnode): a file's Show Info — dos_rename, dos_chmod, inf_dttmsz. C: to be aes_desk_inf_file (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfdeb10 (path, pnode): a file's Show Info — dos_rename, dos_chmod, inf_dttmsz. C: aes_desk_inf_file (src/desk/deskinf.c; W3a stage 1, target-only)
 fn 0xfded16 desk_inf_folder_dlg
-cmt 0xfded16 (path, pnode): a folder's Show Info dialog — $fde9ce (desk_inf_folder, the counts) then inf_finish. C: to be aes_desk_inf_folder_dlg (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfded16 (path, pnode): a folder's Show Info dialog — $fde9ce (desk_inf_folder, the counts) then inf_finish. C: aes_desk_inf_folder_dlg (src/desk/deskinf.c; W3a stage 1, target-only)
 fn 0xfdedf0 desk_inf_disk
-cmt 0xfdedf0 (drive): a disk's Show Info — dos_label, dos_space, inf_finish; 1. C: to be aes_desk_inf_disk (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfdedf0 (drive): a disk's Show Info — dos_label, dos_space, inf_finish; 1. C: aes_desk_inf_disk (src/desk/deskinf.c; W3a stage 1, target-only): its one row held by the by-nature class "a frame address handed to GEMDOS" (the user's ruling of 2026-10-25; aes_switching.frame_addresses_handed)
 fn 0xfdef12 desk_inf_pref
-cmt 0xfdef12 (): Options > Set Preferences — trp14, app_reschange; word. C: to be aes_desk_inf_pref (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfdef12 (): Options > Set Preferences — trp14, app_reschange; word. C: aes_desk_inf_pref (src/desk/deskinf.c; W3a stage 1, target-only): Getrez through the door idiom (desk_xbios_parked + desk_xbios_trap), not trp14's .S
 fn 0xfdf082 desk_opn_appl
-cmt 0xfdf082 (name, text, &tail, &out): the OPEN APPLICATION parameters dialog; 1 OK / 0 Cancel. Reached by a program installed TOS-takes-parameters, double-clicked (the prep's probe; its chain held out, over W6-R4's gate). C: to be aes_desk_opn_appl (src/desk/deskinf.c; W3a, not yet written)
+cmt 0xfdf082 (name, text, &tail, &out): the OPEN APPLICATION parameters dialog; 1 OK / 0 Cancel. Reached by a program installed TOS-takes-parameters, double-clicked (the prep's probe; its chain landed at band 6's redraw diet). C: aes_desk_opn_appl (src/desk/deskinf.c; W3a stage 1, target-only): its fields set, its dialog run (left to by a jump: appl_dialog_run) and read back (appl_fields_read)
 fn 0xfdf11a desk_ins_disk
-cmt 0xfdf11a (anode): Options > Install Disk Drive. C: to be aes_desk_ins_disk (src/desk/deskins.c, NEW; W3a, not yet written)
+cmt 0xfdf11a (anode): Options > Install Disk Drive. C: aes_desk_ins_disk (src/desk/deskins.c, NEW; W3a stage 1, target-only)
 fn 0xfdf3c8 desk_ins_app
-cmt 0xfdf3c8 (name, anode): Options > Install Application — the type's flags stored into a_flags ($fdf502..$fdf510: GEM 3, TOS 0, TOS-takes parameters 8). C: to be aes_desk_ins_app (src/desk/deskins.c, NEW; W3a, not yet written)
+cmt 0xfdf3c8 (name, anode): Options > Install Application — the type's flags stored into a_flags ($fdf502..$fdf510: GEM 3, TOS 0, TOS-takes parameters 8). C: aes_desk_ins_app (src/desk/deskins.c, NEW; W3a stage 1, target-only)

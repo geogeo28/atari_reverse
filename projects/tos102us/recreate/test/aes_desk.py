@@ -1204,6 +1204,24 @@ CHAINS.update({
                             (addrs.AES_ROM_HNDL_MSG, addrs.AES_ROM_DO_XYFIX)),
 })
 # ---- end of band 6 W3a's prep ----
+# ---- band 6 W3a stage 1's fix pass: TWO ARMS OF THE NINE NO CHAIN'S DATA REACHED (review RS1's F4), REAL DATA SEEDED BY
+# HAND — inf_folder_dlg's two counts over a folder NOT EMPTY (the long file dragged into AUTO, then the folder's Show
+# Info: its files' count no longer its folders'), and ins_app's pre-dialog TTP arm (`had & AF_ISPARM`: TESTPRG.PRG
+# installed as TOS-takes parameters, then selected again and Install Application asked on it — the flags read back) ----
+FILLED_FOLDER_INFO = "files: the long file dragged onto the folder, then the folder selected, File > Show Info, Return"
+TTP_INSTALLED_THEN_ASKED_AGAIN = "files: the program installed as TOS-takes parameters, then Install Application again, Return"
+CHAINS.update({
+    FILLED_FOLDER_INFO: Chain(
+        "files: the long file dragged onto the folder, Return",
+        (*clicked("the folder's icon", icon(THE_FOLDER)), *item("File", "Show Info..."), *RETURN), (SHOW_INFO,)),
+    TTP_INSTALLED_THEN_ASKED_AGAIN: Chain(
+        "files: the window made full",
+        (*clicked("the program's icon", icon(THE_PROGRAM)), *item("Options", "Install Application..."),
+         *pressed("TOS-takes parameters"), *pressed("OK"),
+         *clicked("the program's icon", icon(THE_PROGRAM)), *item("Options", "Install Application..."), *RETURN),
+        (DIALOG_RUNNER, addrs.AES_ROM_DESK_INS_APP)),
+})
+# ---- end of band 6 W3a stage 1's fix pass ----
 
 # A LAUNCH FREES THE DESK'S BLOCKS (deskmain's return) and the loader CLEARS the program's memory over them: the
 # kilobyte that was the userdef stack is stored whole, which is no depth of a stack. (Band 6 wave 4: so does THE DISK

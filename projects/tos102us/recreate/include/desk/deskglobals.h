@@ -178,6 +178,16 @@
 #define AES_DESK_UTIL_BAR_Y   0xc910     /* word                                ($fed8c0, $fed8ce)             */
 #define AES_DESK_UTIL_COMMAND 0xc6e6     /* long: the command line shown        ($fed93c move.l 12(a6),$c6e6)  */
 /* ---- end of group G2's wave-4 ---- */
+/* ---- BAND 6 W3a, stage 1 (`desk/deskinf.h`, `desk/deskins.h`): the dialogs' trees and the desk's message buffer ---- */
+#define DESK_A_RMSG           7684       /* long: a_rmsg, the buffer evnt_multi reads a message into ($fde970 7684(a0)) */
+#define DESK_FILE_INFO_TREE   8056       /* long: Show Info's tree for a file    ($fdeb22 move.l 8056(a3),d7)   */
+#define DESK_DISK_INFO_TREE   8060       /* long: ...for a disk                  ($fdee08 move.l 8060(a5),d7)   */
+#define DESK_FOLDER_INFO_TREE 8064       /* long: ...for a folder                ($fded32 move.l 8064(a3))      */
+#define DESK_OPEN_APPL_TREE   8076       /* long: OPEN APPLICATION's parameters  ($fdf098 move.l 8076(a0),d7)   */
+#define DESK_INS_DISK_TREE    8080       /* long: Install Disk Drive's           ($fdf12c move.l 8080(a0),d7)   */
+#define DESK_INS_APP_TREE     8084       /* long: Install Application's          ($fdf3da move.l 8084(a0),d7)   */
+#define DESK_PREFS_TREE       8104       /* long: Set Preferences'               ($fdef20 move.l 8104(a5),d7)   */
+/* ---- end of band 6 W3a's ---- */
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

@@ -376,6 +376,55 @@ SCRIPT = Table(SCRIPT_AT, SCRIPT_ANSWERS, LONG_BYTES, "script")
 assert (LEDGER.first, SCRIPT.first) == (ENTRIES_AT, ANSWERS_AT)
 
 
+# ---- EVERY RECORDING TRAP OF GEMDOS'S, KNOWN BY ITS HANDLER (band 6 W3a stage 1's fix pass): what the class "a frame
+# address handed to GEMDOS" is read off (`aes_switching.frame_addresses_handed`, the user's ruling of 2026-10-25) ----
+# A recording `trap #1` of the tree — this module's scripted trap, an `aes_gemdosif.Recorder`, `aes_fslib`'s replay —
+# is known where a run stands BY ITS HANDLER'S OWN BYTES at the address the GEMDOS vector names: `at` the handler,
+# `handler` its bytes, `ledger` the `Table` it records each call in (the function word, then the frame's own bytes),
+# `frame_bytes` `{function: how many bytes of its frame are its own}` and `recorded_bytes` how many an entry holds for
+# any other function (past a frame's own bytes an entry is zeros), `dta_cell` where it keeps the DTA an Fsetdta named
+# (None: it keeps none), `pointer_offsets` where in each function's recorded frame a POINTER it was handed lies
+# (POINTER_ARGUMENTS, less a function whose recorder records something else there). Registered as each recorder is
+# made, by a callable that answers it (laid out on demand).
+#
+# POINTER_ARGUMENTS: `{function: the offsets of its pointer arguments into its frame}`, each read off the GEMDOS
+# binding it records (the frame's arguments in the order pushed, the function word not counted). A function absent —
+# Malloc's amount, Fclose's handle, Fseek, Dsetdrv, Dgetdrv, Fsnext, Cconout, Crawio — is handed no pointer: a count, a
+# handle, a mode, an attribute or a date is never read as an address (review RS1F's G1).
+POINTER_ARGUMENTS = {
+    addrs.GEMDOS_FSETDTA_FN: (0,),          # Fsetdta(dta.l)
+    addrs.GEMDOS_FSFIRST_FN: (0,),          # Fsfirst(filespec.l, attr.w)
+    addrs.GEMDOS_DFREE_FN: (0,),            # Dfree(buf.l, drive.w)
+    addrs.GEMDOS_FOPEN_FN: (0,),            # Fopen(name.l, mode.w)
+    addrs.GEMDOS_FCREATE_FN: (0,),          # Fcreate(name.l, attr.w)
+    addrs.GEMDOS_FDELETE_FN: (0,),          # Fdelete(name.l)
+    addrs.GEMDOS_FATTRIB_FN: (0,),          # Fattrib(name.l, wflag.w, attr.w)
+    addrs.GEMDOS_FDATIME_FN: (0,),          # Fdatime(timeptr.l, handle.w, wflag.w)
+    addrs.GEMDOS_DCREATE_FN: (0,),          # Dcreate(path.l)
+    addrs.GEMDOS_DDELETE_FN: (0,),          # Ddelete(path.l)
+    addrs.GEMDOS_DSETPATH_FN: (0,),         # Dsetpath(path.l)
+    addrs.GEMDOS_DGETPATH_FN: (0,),         # Dgetpath(buf.l, drive.w)
+    addrs.GEMDOS_MFREE_FN: (0,),            # Mfree(block.l)
+    addrs.GEMDOS_FREAD_FN: (6,),            # Fread(handle.w, count.l, buf.l)
+    addrs.GEMDOS_FWRITE_FN: (6,),           # Fwrite(handle.w, count.l, buf.l)
+    addrs.GEMDOS_FRENAME_FN: (2, 6),        # Frename(zero.w, oldname.l, newname.l)
+    addrs.GEMDOS_MSHRINK_FN: (2,),          # Mshrink(zero.w, block.l, newsize.l)
+    addrs.GEMDOS_PEXEC_FN: (2, 6, 10),      # Pexec(mode.w, name.l, tail.l, env.l)
+}
+GemdosLedger = namedtuple("GemdosLedger", "at handler ledger frame_bytes recorded_bytes dta_cell pointer_offsets",
+                          defaults=(POINTER_ARGUMENTS,))
+GEMDOS_LEDGERS = []
+
+
+def gemdos_ledger_of(image):
+    """The `GemdosLedger` of `GEMDOS_LEDGERS` whose handler the GEMDOS vector of `image` names, its bytes there — None
+    where no recorder of the tree's stands there."""
+    at = case.long_in(image, addrs.VECTOR_TRAP_GEMDOS) & aes.OS_BUS_ADDR_MASK
+    found = (ledger for ledger in (made() for made in GEMDOS_LEDGERS)
+             if ledger.at == at and bytes(image[at:at + len(ledger.handler)]) == ledger.handler)
+    return next(found, None)
+
+
 def laid_out(pieces):
     """68000 bytes out of `pieces`: bytes, ("label", name), or (branch opcode, label) — a `.s` branch, resolved."""
     at, labels = 0, {}
@@ -452,6 +501,7 @@ def handler_stub():
     return head + dispatch + table + blocks + tail
 
 
+GEMDOS_LEDGERS.append(lambda: GemdosLedger(HANDLER_AT, handler_stub(), LEDGER, FRAME_BYTES, RECORDED_BYTES, None))
 ROUTINE_AT = HANDLER_AT + len(handler_stub())
 # sh_find's ROUTINE: a LOGGER storing the longword it is called over at LOG_AT, and a SETTER that does that and sets
 # AES_DOS_ERR, which sh_find reads AFTER the call.

@@ -548,6 +548,8 @@ def replay_handler(argument_bytes=None):
 
 
 assert len(replay_handler()) <= len(replay_handler(SESSION_ARGUMENT_BYTES)) <= HANDLER_BYTES
+sh.GEMDOS_LEDGERS += [functools.partial(sh.GemdosLedger, HANDLER_AT, replay_handler(told), LEDGER, told,
+                                        RECORDED_ARGUMENT_BYTES, DTA_CELL_AT) for told in (ARGUMENT_BYTES, SESSION_ARGUMENT_BYTES)]
 NO_DTA = bytes([vdi.FILL]) * DTA_BYTES           # the 44 bytes of an entry no search reads
 Call = namedtuple("Call", "function frame")
 
