@@ -2722,6 +2722,24 @@ and the handler's copy), the general guard's one declaration of the kind. Their 
 folder not empty; Install Application asked again of a program installed TOS-takes-parameters). The snapshot's noise sweep is sharded across xdist workers (`test_boot_snapshot.NOISE_CHUNKS`, a sliced
 session's rows in its first row's chunk): the same cases, the same check.
 
+W3a STAGE 2 (2026-10-25; STATUS.md, "BAND 6 W3a's STAGE 2"): THE SELECTION OPENED AND SHOWN AND TWO MENUS' HANDLERS IN C
+AND FLIPPED — `src/desk/desksupp.c`'s do_open, do_aopen and do_info, `src/desk/desktop.c`'s do_optnmenu and do_deskmenu,
+compiled `#ifndef RECREATE_HOST_DIFFERENTIAL`, each table entry its thunk; their ROM callers (hndl_msg, hndl_menu,
+do_filemenu, hndl_button) stay the ROM's until stage 3 and enter them through the table. Their rows: 14 target-only rows
+that switch (`test/test_desk_w3a_stage2.py`), one per arrival class the cut's key measures (re-measured over every chain:
+22 classes — 14 held, 8 refused by name under the standing rulings), a class's row at the first of its arrivals a row
+can hold (`REPRESENTED_BY` says why where that is not its first). Where a row's run reaches drive_check it names
+AES_BIOS_RETURN its own (`aes_desksupp.BIOS_DOOR_PARKED`, R9's kind), which the target-only vouch admits STORED UNCHANGED
+(the arrival already holding drive_check's own park: the census's `A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED`) or — THE
+ORCHESTRATOR'S RULING AT THIS STAGE — INSIDE A DOOR'S PARK THE ROM'S RUN ITSELF STORES INTO: a window by address, the
+park longword only, read off that run's own write ledger (`aes_switching.door_parks_stored` / `door_park_windows`; the
+vouch `aes_desk_w3a.vouched_for`, the census `test_aes_event._its_own_in_a_door_s_park`, counted under the existing
+THE_BIOS_DOOR_S_PARK / THE_XBIOS_DOOR_S_PARK lines). Its crafted refusals: the park's reason on a run that never stores
+the cell, a span one byte wider than the longword either side (the vouch's half and the window's own in
+`test_desk_w3a_stage2.py`, the census's in `test_desk_w3a.py`); a companion row's census never reads the window. Save Desktop's row is staged over app_save's own
+recorder (`aes_deskapp.GEMDOS`): fslib's replay records six bytes whatever the call, a Dgetdrv's the stack beyond it.
+One named budget, `test_desk_w3a_stage2.ROW_INSNS` (3,700,000), on the nine rows past the default margin.
+
 A NAMED REGISTERED ROW MAY DECLARE ITS OWN BUDGET (since band 6 slice F3's stage 2, THE USER'S RULING of 2026-10-21,
 "rows may declare budget"). A registered row that switches and whose run is past the default derivation margin (a desk
 routine's copy or open, 300,000–730,000 instructions) declares `budget=` as a case and a session's slice do — on

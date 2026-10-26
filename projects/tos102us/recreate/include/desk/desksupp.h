@@ -116,6 +116,69 @@
 #define FUN_CLOSE_FRAME_DRIVE 136        /* word                                 ($fe1a4c -2(a6))                */
 #define FUN_CLOSE_FRAME_BYTES 138
 
+/* ==== BAND 6 W3a, STAGE 2: THE SELECTION OPENED AND SHOWN — do_open, do_aopen, do_info (`src/desk/desksupp.c`),
+ * COMPILED FOR THE TARGET ALONE (the user's R3, ruling O1: no host twin) ==============================================
+ *   $fe1568 do_open(icon)                    i_find's ANODE and FNODE of the icon; in a window, the window found and
+ *                                            AES_SH_CART_LAUNCH set by whether it is the cartridge's (its name
+ *                                            $9888's), its path's spec parsed; by the ANODE's type: a file run
+ *                                            (do_aopen), a folder opened in the window (do_fopen, its name joined to
+ *                                            the path), a drive's or the cartridge's window (do_dopen), the trash's
+ *                                            alert. The callee's answer, else 0
+ *   $fe11b4 do_aopen(anode, isapp, icon, drive, path, name)
+ *                                            the icon's box and the root's read (get_xywh, read by nothing after); the
+ *                                            path made current (not for a program that takes full memory); a document
+ *                                            of an installed application, an application (a TOS-takes-parameters one
+ *                                            through opn_appl), or the Show / Print / Cancel alert (pro_cmd of the
+ *                                            viewer's or the printer's command) — then the command and tail copied
+ *                                            into the desk's and pro_run. pro_run's answer, else 0
+ *   $fe16e6 do_info(icon)                    File > Show Info: a file's (inf_file, the window rebuilt where it said),
+ *                                            a folder's (inf_folder_dlg), a disk's (inf_disk) — each after
+ *                                            drive_check — or the trash's dialog. 0, always */
+#define DO_SUPP_NOTHING_DONE  0          /* do_open's / do_aopen's / do_info's answer where no arm sets one
+                                          * ($fe157a clr.w -2(a6), $fe1236 clr.w -4(a6), $fe16f8 clr.w -2(a6))   */
+#define AES_OPEN_SEPARATOR    0xfef63e   /* "\\": joined to a folder's path before its name ($fe164a move.l)    */
+#define AES_OPEN_APPL_NO_TAIL 0xfef630   /* "": opn_appl's parameters as it opens  ($fe12d8 move.l #$fef630)      */
+#define STRING_TRASH_OPENED   8          /* rsrc_gaddr's free string: the trash cannot be opened ($fe16b4 #$50008) */
+#define TRASH_ALERT_DEFAULT   1          /* ...form_alert's default button        ($fe16c2 move.w #1,-(sp))      */
+/* do_aopen: the Show / Print / Cancel alert (fun_alert 6, no parameters) and what its three buttons do */
+#define STRING_SHOW_PRINT_CANCEL 6       /* ($fe12fa move.l #$00010006)                                          */
+#define SHOW_PRINT_DEFAULT    1
+#define SHOW_CHOSEN           1          /* ($fe136a cmpw #1,d0)                                                 */
+#define PRINT_CHOSEN          2          /* ($fe1370 cmpw #2,d0)                                                 */
+#define CANCEL_CHOSEN         3          /* ($fe1376 cmpw #3,d0)                                                 */
+#define STRING_SHOW_COMMAND   1          /* ini_str's: the viewer's command      ($fe1326 move.w #1,-(sp))       */
+#define STRING_PRINT_COMMAND  2          /* ...the printer's                     ($fe134a move.w #2,-(sp))       */
+#define SHOW_TAIL_BYTE        254        /* pro_cmd's count byte: $fe            ($fe131a move.w #254,(sp))      */
+#define PRINT_TAIL_BYTE       253        /* ...$fd                               ($fe133e move.w #253,(sp))      */
+#define AOPEN_UNREAD          1          /* pro_cmd's third word                 ($fe131e move.w #1,-(sp))       */
+#define AOPEN_GRAPHIC         1          /* pro_run's isgraf for a print          ($fe1360 moveq #1,d7)          */
+#define AOPEN_OVER            1          /* pro_run's isover, always              ($fe1242 moveq #1,d6)          */
+#define AOPEN_FULL_MEMORY_TAIL 0xff      /* g_tail[0] for a program that takes full memory ($fe13ca move.b #-1) */
+/* ...an ANODE's application pattern that names no program: a document with no application installed for it */
+#define PATTERN_ANY           '*'        /* ($fe125c cmpib #42)                                                  */
+#define PATTERN_ONE           '?'        /* ($fe1266 cmpib #63)                                                  */
+/* do_aopen's frame: get_xywh's two boxes, the icon's and the root's, the root's corner added to the icon's (-20(a6)
+ * up: the icon's h, w, y, x, then the root's) — read by nothing after (a target local) */
+#define AOPEN_ICON_X          0          /* ($fe11e0 -14(a6))                                                    */
+#define AOPEN_ICON_Y          2          /* ($fe11d8 -16(a6))                                                    */
+#define AOPEN_ICON_W          4          /* ($fe11d0 -18(a6))                                                    */
+#define AOPEN_ICON_H          6          /* ($fe11c8 -20(a6))                                                    */
+#define AOPEN_ROOT_X          8          /* ($fe1210 -6(a6))                                                     */
+#define AOPEN_ROOT_Y          10         /* ($fe120c -8(a6))                                                     */
+#define AOPEN_ROOT_W          12         /* ($fe1204 -10(a6))                                                    */
+#define AOPEN_ROOT_H          14         /* ($fe11fc -12(a6))                                                    */
+#define AOPEN_BOXES_BYTES     16
+/* do_open's frame from -146(a6) (a target local): fpd_parse's extension, name and path, its drive word — the ROM's
+ * layout but for the drive word's place (the ROM's -8(a6), i_find's is-a-program word between) — and i_find's two
+ * answers after them (`desk/desktop.h`'s FIND_*: the ROM's -6(a6) and -10(a6)) */
+#define OPEN_PARSED_EXT       0          /* bytes[4]                             ($fe15d8 -146(a6))              */
+#define OPEN_PARSED_NAME      4          /* bytes[10]                            ($fe15e0 -142(a6))              */
+#define OPEN_PARSED_PATH      14         /* bytes[122]                           ($fe15e8 -132(a6))              */
+#define OPEN_PARSED_DRIVE     136        /* word                                 ($fe15f0 -8(a6))                */
+#define OPEN_FRAME_FOUND      138
+/* do_info's trash arm: the trash's dialog, its exit object's state cleared ($fe17d6 adda.l #178: object 7's) */
+#define TRASH_INFO_OK         7
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -131,6 +194,13 @@ int16_t aes_close_window(uint8_t *image, uint32_t window);                      
 int16_t aes_close_folder(uint8_t *image, uint32_t window, int16_t drive, uint32_t path, uint32_t name,
                          uint32_t ext);                                                          /* $fe1972 */
 int16_t aes_fun_close(uint8_t *image, uint32_t window, int16_t close_it);                        /* $fe1a18 */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+/* band 6 W3a, stage 2: target-only */
+int16_t aes_do_open(uint8_t *image, int16_t icon);                                               /* $fe1568 */
+int16_t aes_do_aopen(uint8_t *image, uint32_t anode, int16_t is_app, int16_t icon, int16_t drive, uint32_t path,
+                     uint32_t name);                                                             /* $fe11b4 */
+int16_t aes_do_info(uint8_t *image, int16_t icon);                                               /* $fe16e6 */
+#endif
 #ifdef RECREATE_HOST_DIFFERENTIAL
 /* The host's floppy read, which a case binds: Floprd(buffer, 0, device, sector, track, side, count)'s answer. */
 extern int32_t (*desk_floprd_door)(uint8_t *image, uint32_t buffer, uint16_t device, uint16_t sector, uint16_t track,

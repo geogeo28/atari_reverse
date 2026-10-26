@@ -101,6 +101,43 @@
 #define CNX_GET_FRAME_DRIVE   12         /* word                                 ($fe26b4 -2(a6))                */
 #define CNX_GET_FRAME_BYTES   14
 
+/* ==== BAND 6 W3a, STAGE 2: TWO MENUS' HANDLERS — do_optnmenu, do_deskmenu (`src/desk/desktop.c`), COMPILED FOR THE
+ * TARGET ALONE (the user's R3, ruling O1: no host twin) ==============================================================
+ *   $fe1fde do_optnmenu(item)                the Options menu: the selection's root's box read (get_xywh) and its
+ *                                            first selected icon's ANODE (win_isel, i_find); 37 Install Disk Drive
+ *                                            (ins_disk; changed: the desktop rebuilt and redrawn), 38 Install
+ *                                            Application (ins_app of a program; changed: the windows rebuilt and shown),
+ *                                            40 Set Preferences (inf_pref, its answer the handler's), 41 Save Desktop
+ *                                            and 42 Print Screen (each asked by an alert first), 44 the Blitter
+ *                                            (Blitmode, the check moved); 39 and 43 nothing. inf_pref's answer, else 0
+ *   $fe1e4c do_deskmenu(item)                Desk > Desktop Info (item 9): the info box shown, its exit object's
+ *                                            state cleared. 0, always */
+#define OPTN_INSTALL_DISK     37         /* the table $fef6e0's first row       ($fe2156 subw #37,d0)           */
+#define OPTN_INSTALL_APP      38
+#define OPTN_PREFERENCES      40
+#define OPTN_SAVE_DESKTOP     41
+#define OPTN_PRINT_SCREEN     42
+#define OPTN_BLITTER          44         /* ...and menu_icheck's item           ($fe2148 move.w #44,-(sp))      */
+#define MENU_NOTHING_DONE     0          /* do_optnmenu's and do_deskmenu's answer where no arm sets one
+                                          *                                     ($fe1fec clr.w d7, $fe1e58 clr.w d6) */
+#define OPTN_ALERT_DEFAULT    1          /* form_alert's default button         ($fe20d8 move.w #1,-(sp))       */
+#define OPTN_ALERT_OK         1          /* ...the button that goes on          ($fe20e0 cmpw #1,d0)            */
+#define AES_SAVE_DESKTOP_ALERT 0xfef56a  /* "[1][ |Save desktop ?][ OK |Cancel]" ($fe20d2 move.l #$fef56a,(sp)) */
+#define AES_PRINT_SCREEN_ALERT 0xfef58e  /* "[1][ |Print screen display ?][ OK |Cancel]" ($fe20fc)               */
+#define APP_SAVE_TO_DISK      1          /* app_save's word                     ($fe20ee move.w #1,(sp))        */
+#define XBIOS_BLITMODE_FN     64         /* Blitmode                            ($fe212c move.w #64,-(sp))      */
+#define AES_OPTNMENU_BLITMODE_RETURN 0xfe2132 /* trp14's parked return: the word after its Line-F call          */
+#define DESKTOP_WORK_WINDOW   0          /* wind_get's and do_wredraw's window: the desktop ($fe2074 clr.w -(sp)) */
+/* do_optnmenu's frame: get_xywh's (later wind_get's) box from -8(a6) up — h, w, y, x —, i_find's two answers below it
+ * (`FIND_*`: -12(a6) the FNODE, -14(a6) is-a-program) */
+#define OPTN_BOX_X            0          /* ($fe1ffe -2(a6))                                                     */
+#define OPTN_BOX_Y            2          /* ($fe1ffa -4(a6))                                                     */
+#define OPTN_BOX_W            4          /* ($fe1ff6 -6(a6))                                                     */
+#define OPTN_BOX_H            6          /* ($fe1ff2 -8(a6))                                                     */
+#define OPTN_BOX_BYTES        8
+#define DESK_INFO_ITEM        9          /* Desk > Desktop Info                 ($fe1e5a cmpw #9,d7)            */
+#define ABOUT_OK              11         /* the info box's exit object          ($fe1e74 adda.l #274: 11's state) */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -112,6 +149,11 @@ void aes_men_list(uint8_t *image, uint32_t tree, uint32_t items, int16_t enable)
 /* band 6 wave 2 (group G3) */
 int16_t aes_hndl_kbd(uint8_t *image, int16_t key);                                               /* $fe22a6 */
 void aes_cnx_get(uint8_t *image);                                                                /* $fe2618 */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+/* band 6 W3a, stage 2: target-only */
+int16_t aes_do_optnmenu(uint8_t *image, int16_t item);                                           /* $fe1fde */
+int16_t aes_do_deskmenu(uint8_t *image, int16_t item);                                           /* $fe1e4c */
+#endif
 #endif
 
 #endif /* TOS102US_DESK_DESKTOP_H */

@@ -11,11 +11,15 @@
 #include "aes/obedit.h"
 #include "aes/gsxif.h"
 #include "aes/strings.h"
+#include "aes/wmlib.h"
 #include "desk/deskact.h"
 #include "desk/deskapp.h"
 #include "desk/deskbind.h"
 #include "desk/deskfpd.h"
 #include "desk/deskfun.h"
+#include "desk/deskinf.h"
+#include "desk/deskins.h"
+#include "desk/deskleaf.h"
 #include "desk/desksupp.h"
 #include "desk/desktop.h"
 #include "desk/deskview.h"
@@ -231,3 +235,105 @@ void aes_cnx_get(uint8_t *image)
     aes_cnx_put(image);
     host_slot_release(AES_DESK_CNX_GET_FRAME);
 }
+
+/* ==== BAND 6 W3a, STAGE 2: TWO MENUS' HANDLERS ========================================================================
+ * COMPILED FOR THE TARGET ALONE (the user's R3, ruling O1): no host twin, no Tier 1 — each held by its target-only rows
+ * at the hands' arrivals (`test/test_desk_w3a_stage2.py`). */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+
+/* Install Disk Drive's change shown: the desktop's icons made again (app_blddesk) and the desk's work area (wind_get of
+ * window 0, into the handler's box) redrawn. */
+static void the_desktop_rebuilt(uint8_t *image, uint32_t box)
+{
+    (void)aes_app_blddesk(image);
+    (void)aes_desk_wind_get(image, DESKTOP_WORK_WINDOW, WF_WORKXYWH, box + OPTN_BOX_X, box + OPTN_BOX_Y, box + OPTN_BOX_W,
+                            box + OPTN_BOX_H);
+    aes_do_wredraw(image, DESKTOP_WORK_WINDOW, rect_word(image, box, OPTN_BOX_X), rect_word(image, box, OPTN_BOX_Y),
+                   rect_word(image, box, OPTN_BOX_W), rect_word(image, box, OPTN_BOX_H));
+}
+
+/* Whether the alert `alert` (its default button the first) is OK'd: Save Desktop's and Print Screen's question. */
+static int ok_asked(uint8_t *image, uint32_t alert)
+{
+    return aes_desk_form_alert(image, OPTN_ALERT_DEFAULT, alert) == OPTN_ALERT_OK;
+}
+
+/* The Blitter item: Blitmode through the ROM's trp14 door (its return site parked: `desk/deskleaf.h`'s idiom) set to
+ * the opposite of the preference, which then flips and the item's check follows it. */
+static void blitter_toggled(uint8_t *image, uint32_t desk)
+{
+    const uint16_t frame[] = {XBIOS_BLITMODE_FN, bus_word(image, desk + DESK_BLITTER_ON) ? 0 : 1};
+
+    desk_xbios_parked(image, AES_OPTNMENU_BLITMODE_RETURN);
+    (void)desk_xbios_trap(frame, sizeof frame / sizeof frame[0]);
+    set_bus_word(image, desk + DESK_BLITTER_ON, bus_word(image, desk + DESK_BLITTER_ON) ? 0 : 1);
+    (void)aes_desk_menu_icheck(image, bus_long(image, desk + DESK_MENU_TREE), OPTN_BLITTER,
+                               (int16_t)bus_word(image, desk + DESK_BLITTER_ON));
+}
+
+/* $fe1fde — do_optnmenu (`desk/desktop.h`). The selection read first, whatever the item: the root's box (get_xywh, into
+ * the frame wind_get later answers into) and its first selected icon's ANODE and FNODE (i_find's answers BY ADDRESS;
+ * none selected, no ANODE — the ROM's register keeps its caller's then, on an arm no menu enables). */
+int16_t aes_do_optnmenu(uint8_t *image, int16_t item)
+{
+    uint16_t box_local[FRAME_LOCAL_WORDS(OPTN_BOX_BYTES)], found_local[FRAME_LOCAL_WORDS(FIND_FRAME_BYTES)];
+    uint32_t box = desk_local_address(box_local), found = desk_local_address(found_local), desk = desk_globals(image);
+    uint32_t anode = ANODE_NONE;
+    int16_t root = desk_word(image, desk, DESK_SELECTION_ROOT), selected, done = MENU_NOTHING_DONE;
+
+    aes_get_xywh(image, screen_objects(image), root, box + OPTN_BOX_X, box + OPTN_BOX_Y, box + OPTN_BOX_W, box + OPTN_BOX_H);
+    selected = aes_win_isel(image, screen_objects(image), desk_word(image, desk, DESK_SELECTION_ROOT), 0);
+    if (selected)
+        anode = aes_i_find(image, desk_word(image, desk, DESK_SELECTION_WINDOW), selected, found + FIND_FNODE, found + FIND_IS_APP);
+    switch (item) {
+    case OPTN_INSTALL_DISK:
+        if (anode != ANODE_NONE && aes_desk_ins_disk(image, anode))
+            the_desktop_rebuilt(image, box);
+        break;
+    case OPTN_INSTALL_APP:
+        if (anode != ANODE_NONE && be16(image + found + FIND_IS_APP)
+            && aes_desk_ins_app(image, be32(image + found + FIND_FNODE) + FNODE_NAME, anode)) {
+            aes_desk_wait(image, DESK_WAIT_BUSY);
+            aes_win_bdall(image);
+            aes_win_shwall(image);
+            aes_desk_wait(image, DESK_WAIT_DONE);
+        }
+        break;
+    case OPTN_PREFERENCES:
+        done = aes_desk_inf_pref(image);
+        break;
+    case OPTN_SAVE_DESKTOP:
+        if (ok_asked(image, AES_SAVE_DESKTOP_ALERT)) {
+            aes_desk_wait(image, DESK_WAIT_BUSY);
+            aes_cnx_put(image);
+            aes_app_save(image, APP_SAVE_TO_DISK);
+            aes_desk_wait(image, DESK_WAIT_DONE);
+        }
+        break;
+    case OPTN_PRINT_SCREEN:
+        if (ok_asked(image, AES_PRINT_SCREEN_ALERT)) {
+            aes_desk_wait(image, DESK_WAIT_BUSY);
+            aes_gsx_hardcopy(image);
+            aes_desk_wait(image, DESK_WAIT_DONE);
+        }
+        break;
+    case OPTN_BLITTER:
+        blitter_toggled(image, desk);
+        break;
+    }
+    return done;
+}
+
+/* $fe1e4c — do_deskmenu (`desk/desktop.h`). */
+int16_t aes_do_deskmenu(uint8_t *image, int16_t item)
+{
+    uint32_t tree;
+
+    if (item == DESK_INFO_ITEM) {
+        tree = bus_long(image, desk_globals(image) + DESK_ABOUT_TREE);
+        (void)aes_desk_inf_show(image, tree, OB_ROOT);
+        set_object_word(image, tree, ABOUT_OK, OB_STATE, 0);
+    }
+    return MENU_NOTHING_DONE;
+}
+#endif

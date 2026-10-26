@@ -174,8 +174,9 @@ def register_target_only(label, name, arguments, machine, *, answered=True, budg
 # the ROM's run (`aes_switching._settled`: each class's window — the mask word, the caller's context, the dispatcher's
 # stack and its brackets' words, a QPB's or a parked wait's parameter, a frame address handed to GEMDOS — the user's
 # ruling of 2026-10-25, `aes_switching.frame_addresses_handed` —, the screen manager's, the desk's and another
-# process's spans — cut to the bytes the run stored), and what the row names by its own hand (its own spans, its
-# declared X flag: `aes_switching.own_drops`) is none of them. A drop
+# process's spans — cut to the bytes the run stored) and A DOOR'S PARK THE RUN STORES INTO (R9's kind, the orchestrator's
+# ruling at W3a stage 2: `aes_switching.door_park_windows`, the park longword off the run's own write ledger), and what
+# the row names by its own hand (its own spans, its declared X flag: `aes_switching.own_drops`) is none of them. A drop
 # of neither is refused by the row's name before anything is registered; THE SWITCHING CENSUS binds every class to its
 # window again, independently, off the ROM's scheduled run (`test_aes_event.py`, which reads this kind's register too).
 # The rows land in `aes_event.TARGET_ONLY_SWITCHING_ROWS` (never `SWITCHING_ROWS`, whose rows each have a companion).
@@ -209,10 +210,13 @@ def drops_unvouched(drops, staged, final, writes, windows):
 
 
 def vouched_for(row, held):
-    """THE VOUCH (above), of the row `row` as settled (`held`: its `aes_switching.Registered`): its drops' refusals."""
+    """THE VOUCH (above), of the row `row` as settled (`held`: its `aes_switching.Registered`): its drops' refusals. Its
+    windows: the settling's (`by_nature_windows`) and A DOOR'S PARK the run stores into (`aes_switching.door_park_windows`:
+    R9's kind, the orchestrator's ruling at W3a stage 2 — the park longword only, read off this run's write ledger)."""
     import aes_switching
     _reference, _watch, final, writes = aes_switching._replayed(row, held.pokes)
-    return drops_unvouched(held.drops, make_image(held.pokes), final, writes, by_nature_windows(row, held))
+    windows = by_nature_windows(row, held) + aes_switching.door_park_windows(writes)
+    return drops_unvouched(held.drops, make_image(held.pokes), final, writes, windows)
 
 
 def register_target_only_switching(row):

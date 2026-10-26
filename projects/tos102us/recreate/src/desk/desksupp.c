@@ -13,6 +13,7 @@
 #include "host_slot.h"
 #include "aes/objects.h"
 #include "aes/resource.h"
+#include "aes/shell.h"
 #include "aes/strings.h"
 #include "aes/wmlib.h"
 #include "aes/wmupdate.h"
@@ -21,6 +22,8 @@
 #include "desk/deskbind.h"
 #include "desk/deskfpd.h"
 #include "desk/deskfun.h"
+#include "desk/deskinf.h"
+#include "desk/deskins.h"
 #include "desk/deskleaf.h"
 #include "desk/desksupp.h"
 #include "desk/desktop.h"
@@ -185,10 +188,16 @@ int16_t aes_do_diropen(uint8_t *image, uint32_t window, int16_t new_window, int1
     return DO_DIROPEN_DONE;
 }
 
-/* The drive letter of a desktop icon: its ICONBLK's ib_char's low byte. */
+/* The drive letter an ICONBLK bears: its ib_char's low byte. */
+static inline int16_t spec_letter(const uint8_t *image, uint32_t spec)
+{
+    return (int16_t)(bus_word(image, spec + ICON_CHARACTER) & 0xff);
+}
+
+/* The drive letter of a desktop icon: its ICONBLK's. */
 static inline int16_t icon_letter(uint8_t *image, int16_t icon)
 {
-    return (int16_t)(bus_word(image, aes_get_spec(image, screen_objects(image), icon) + ICON_CHARACTER) & 0xff);
+    return spec_letter(image, aes_get_spec(image, screen_objects(image), icon));
 }
 
 /* $fe13ea — do_dopen (`desk/desksupp.h`). The alert's answer is read by nothing. */
@@ -348,3 +357,213 @@ int16_t aes_fun_close(uint8_t *image, uint32_t window, int16_t close_it)
     host_slot_release(AES_DESK_FUN_CLOSE_FRAME);
     return answer;
 }
+
+/* ==== BAND 6 W3a, STAGE 2: THE SELECTION OPENED AND SHOWN ============================================================
+ * COMPILED FOR THE TARGET ALONE (the user's R3, ruling O1): no host twin, no Tier 1 — each held by its target-only rows
+ * at the hands' arrivals (`test/test_desk_w3a_stage2.py`). */
+#ifndef RECREATE_HOST_DIFFERENTIAL
+
+/* do_open's window, where the selection is in one (g_cwin, read again as the ROM reads it): found (win_find),
+ * AES_SH_CART_LAUNCH set by whether it is the cartridge's (its name $9888's), and its spec parsed into do_open's `frame`
+ * where i_find found an FNODE; on the desktop none, the drive word cleared. A ROUTINE OF ITS OWN (`noinline`, W6-R4):
+ * what its three calls keep live would stand in do_open's frame under every arm (a drive's window the deepest, File >
+ * Open). The window, or 0. */
+__attribute__((noinline)) static uint32_t the_window_s_spec_parsed(uint8_t *image, uint32_t frame)
+{
+    int16_t current = (int16_t)bus_word(image, desk_globals(image) + DESK_SELECTION_WINDOW);
+    uint32_t window;
+
+    if (current == DESKTOP_WINDOW) {
+        wr16(image + frame + OPEN_PARSED_DRIVE, 0);
+        return 0;
+    }
+    window = aes_win_find(image, current);
+    wr16(image + AES_SH_CART_LAUNCH, aes_streq(image, window + WNODE_NAME, AES_DESK_ROOT_NAME) ? 1 : 0);
+    if (be32(image + frame + OPEN_FRAME_FOUND + FIND_FNODE) != FNODE_NONE)
+        aes_fpd_parse(image, bus_long(image, window + WNODE_PATH) + PNODE_SPEC, frame + OPEN_PARSED_DRIVE,
+                      frame + OPEN_PARSED_PATH, frame + OPEN_PARSED_NAME, frame + OPEN_PARSED_EXT);
+    return window;
+}
+
+/* A folder's name joined to do_open's parsed path: a backslash first where the path is not empty. */
+__attribute__((noinline)) static void folder_joined(uint8_t *image, uint32_t path, uint32_t fnode)
+{
+    if (bus_byte(image, path))
+        (void)aes_strcat(image, AES_OPEN_SEPARATOR, path);
+    (void)aes_strcat(image, fnode + FNODE_NAME, path);
+}
+
+/* The trash opened: its alert (rsrc_gaddr's free string into a_alert, form_alert). A routine of its own (`noinline`,
+ * W6-R4): the desk's block it reads twice would otherwise be kept in a register of do_open's frame. */
+__attribute__((noinline)) static void the_trash_refused(uint8_t *image)
+{
+    uint32_t alert = desk_globals(image) + DESK_G_ALERT;
+
+    (void)aes_desk_rsrc_gaddr(image, R_STRING, STRING_TRASH_OPENED, alert);
+    (void)aes_desk_form_alert(image, TRASH_ALERT_DEFAULT, bus_long(image, alert));
+}
+
+/* $fe1568 — do_open (`desk/desksupp.h`). Its frame the ROM's (`OPEN_*`): fpd_parse's answers and i_find's two, handed
+ * on BY ADDRESS. On the desktop (window 0) the drive is cleared and the path left as the frame holds it — the ROM's,
+ * which no run reaches: the desktop holds no file and no folder. */
+int16_t aes_do_open(uint8_t *image, int16_t icon)
+{
+    uint16_t frame_local[FRAME_LOCAL_WORDS(OPEN_FRAME_FOUND + FIND_FRAME_BYTES)];
+    uint32_t frame = desk_local_address(frame_local), found = frame + OPEN_FRAME_FOUND, anode, window;
+
+    anode = aes_i_find(image, (int16_t)bus_word(image, desk_globals(image) + DESK_SELECTION_WINDOW), icon, found + FIND_FNODE,
+                       found + FIND_IS_APP);
+    window = the_window_s_spec_parsed(image, frame);
+    if (anode == ANODE_NONE)
+        return DO_SUPP_NOTHING_DONE;
+    switch (bus_word(image, anode + ANODE_TYPE)) {
+    case AT_ISFILE:
+        return aes_do_aopen(image, anode, (int16_t)be16(image + found + FIND_IS_APP), icon,
+                            (int16_t)be16(image + frame + OPEN_PARSED_DRIVE), frame + OPEN_PARSED_PATH,
+                            be32(image + found + FIND_FNODE) + FNODE_NAME);
+    case AT_ISFOLD:
+        folder_joined(image, frame + OPEN_PARSED_PATH, be32(image + found + FIND_FNODE));
+        return aes_do_fopen(image, window, icon, (int16_t)be16(image + frame + OPEN_PARSED_DRIVE), frame + OPEN_PARSED_PATH,
+                            frame + OPEN_PARSED_NAME, frame + OPEN_PARSED_EXT);
+    case AT_ISDISK:
+    case AT_ISCART:
+        return aes_do_dopen(image, icon);
+    case AT_ISTRSH:
+        the_trash_refused(image);
+        break;
+    }
+    return DO_SUPP_NOTHING_DONE;
+}
+
+/* do_aopen's two boxes, read by nothing after — the icon's and the root's (get_xywh), the root's corner added to the
+ * icon's, as the ROM does. A ROUTINE OF ITS OWN (`noinline`, W6-R4): their sixteen bytes no frame under opn_appl's
+ * dialog and pro_run. */
+__attribute__((noinline)) static void the_boxes_read(uint8_t *image, int16_t icon)
+{
+    uint16_t boxes_local[FRAME_LOCAL_WORDS(AOPEN_BOXES_BYTES)];
+    uint32_t boxes = desk_local_address(boxes_local), globals = desk_globals(image);
+
+    aes_get_xywh(image, screen_objects(image), icon, boxes + AOPEN_ICON_X, boxes + AOPEN_ICON_Y, boxes + AOPEN_ICON_W,
+                 boxes + AOPEN_ICON_H);
+    aes_get_xywh(image, screen_objects(image), (int16_t)bus_word(image, globals + DESK_SELECTION_ROOT), boxes + AOPEN_ROOT_X,
+                 boxes + AOPEN_ROOT_Y, boxes + AOPEN_ROOT_W, boxes + AOPEN_ROOT_H);
+    wr16(image + boxes + AOPEN_ICON_X, (uint16_t)(be16(image + boxes + AOPEN_ICON_X) + be16(image + boxes + AOPEN_ROOT_X)));
+    wr16(image + boxes + AOPEN_ICON_Y, (uint16_t)(be16(image + boxes + AOPEN_ICON_Y) + be16(image + boxes + AOPEN_ROOT_Y)));
+}
+
+/* Whether an ANODE's application pattern names no program ('*', '?' or empty): a document with none installed. */
+static int names_no_program(const uint8_t *image, uint32_t anode)
+{
+    uint8_t first = bus_byte(image, bus_long(image, anode + ANODE_PAPPL));
+
+    return first == PATTERN_ANY || first == PATTERN_ONE || first == STRING_NUL;
+}
+
+/* The Show / Print / Cancel alert's command: the viewer's or the printer's (ini_str) over the document, its tail's
+ * count byte the ROM's; Cancel 0; any other answer itself. */
+static int16_t show_or_print_commanded(uint8_t *image, int16_t answer, uint32_t name)
+{
+    switch (answer) {
+    case SHOW_CHOSEN:
+        return aes_pro_cmd(image, aes_ini_str(image, STRING_SHOW_COMMAND), name, AOPEN_UNREAD, SHOW_TAIL_BYTE);
+    case PRINT_CHOSEN:
+        return aes_pro_cmd(image, aes_ini_str(image, STRING_PRINT_COMMAND), name, AOPEN_UNREAD, PRINT_TAIL_BYTE);
+    case CANCEL_CHOSEN:
+        return 0;
+    }
+    return answer;
+}
+
+/* $fe11b4 — do_aopen (`desk/desksupp.h`). The command and the tail are the desk's own buffers where an arm made them
+ * there, else copied into them; the ANODE's flags read once, as the ROM keeps them. */
+int16_t aes_do_aopen(uint8_t *image, uint32_t anode, int16_t is_app, int16_t icon, int16_t drive, uint32_t path,
+                     uint32_t name)
+{
+    uint16_t flags = bus_word(image, anode + ANODE_FLAGS);
+    int16_t graphic = (int16_t)(flags & AF_ISGRAF), unbound = (int16_t)names_no_program(image, anode), going = 1;
+    uint32_t globals, command = 0, tail = 0;
+
+    the_boxes_read(image, icon);
+    if (!(flags & AF_ISFMEM))
+        (void)aes_pro_chdir(image, drive, path);
+    globals = desk_globals(image);
+    set_bus_byte(image, globals + DESK_G_CMD, STRING_NUL);
+    set_bus_byte(image, globals + DESK_G_TAIL_TEXT, STRING_NUL);
+    if (!unbound && !is_app) {
+        command = bus_long(image, anode + ANODE_PAPPL);
+        tail = name;
+    } else if (is_app) {
+        if (flags & AF_ISPARM) {
+            command = globals + DESK_G_CMD;
+            tail = globals + DESK_G_TAIL_TEXT;
+            going = aes_desk_opn_appl(image, name, AES_OPEN_APPL_NO_TAIL, command, tail);
+        } else {
+            command = name;
+        }
+    } else {
+        going = aes_desk_fun_alert(image, SHOW_PRINT_DEFAULT, STRING_SHOW_PRINT_CANCEL, FUN_ALERT_NO_PARAMETERS);
+        command = globals + DESK_G_CMD;
+        tail = globals + DESK_G_TAIL_TEXT;
+        if (going == PRINT_CHOSEN)
+            graphic = AOPEN_GRAPHIC;
+        going = show_or_print_commanded(image, going, name);
+    }
+    if (!going)
+        return DO_SUPP_NOTHING_DONE;
+    globals = desk_globals(image);
+    if (command != globals + DESK_G_CMD && command != 0)
+        (void)aes_strcpy(image, command, globals + DESK_G_CMD);
+    if (tail != globals + DESK_G_TAIL_TEXT && tail != 0)
+        (void)aes_strcpy(image, tail, globals + DESK_G_TAIL_TEXT);
+    if (flags & AF_ISFMEM)
+        set_bus_byte(image, globals + DESK_G_TAIL, AOPEN_FULL_MEMORY_TAIL);
+    return aes_pro_run(image, graphic, AOPEN_OVER, (int16_t)bus_word(image, globals + DESK_SELECTION_WINDOW), icon);
+}
+
+/* The drive a window's spec names: its first byte, sign-extended (`ext.w`). */
+static int16_t spec_drive(const uint8_t *image, uint32_t window)
+{
+    return (int16_t)(int8_t)bus_byte(image, bus_long(image, window + WNODE_PATH) + PNODE_SPEC);
+}
+
+/* $fe16e6 — do_info (`desk/desksupp.h`). i_find's two answers handed BY ADDRESS (a target local, the ROM's -10 / -6);
+ * a disk's letter is its desktop icon's (its ICONBLK's ib_char, the low byte). The dialogs' answers, but inf_file's,
+ * are read by nothing; do_info answers 0. */
+int16_t aes_do_info(uint8_t *image, int16_t icon)
+{
+    uint16_t found_local[FRAME_LOCAL_WORDS(FIND_FRAME_BYTES)];
+    uint32_t found = desk_local_address(found_local), globals = desk_globals(image), anode, window = 0, tree, spec;
+    int16_t current = (int16_t)bus_word(image, globals + DESK_SELECTION_WINDOW);
+
+    anode = aes_i_find(image, current, icon, found + FIND_FNODE, found + FIND_IS_APP);
+    if (current != DESKTOP_WINDOW)
+        window = aes_win_find(image, current);
+    if (anode == ANODE_NONE)
+        return DO_SUPP_NOTHING_DONE;
+    switch (bus_word(image, anode + ANODE_TYPE)) {
+    case AT_ISFILE:
+        aes_drive_check(image, spec_drive(image, window));
+        if (!be16(image + AES_DOS_ERR)
+            && aes_desk_inf_file(image, bus_long(image, window + WNODE_PATH) + PNODE_SPEC, be32(image + found + FIND_FNODE)))
+            aes_desk_fun_rebld(image, window);
+        break;
+    case AT_ISFOLD:
+        aes_drive_check(image, spec_drive(image, window));
+        if (!be16(image + AES_DOS_ERR))
+            (void)aes_desk_inf_folder_dlg(image, bus_long(image, window + WNODE_PATH) + PNODE_SPEC, be32(image + found + FIND_FNODE));
+        break;
+    case AT_ISDISK:
+        spec = aes_get_spec(image, screen_objects(image), icon);
+        aes_drive_check(image, spec_letter(image, spec));
+        if (!be16(image + AES_DOS_ERR))
+            (void)aes_desk_inf_disk(image, spec_letter(image, spec));
+        break;
+    case AT_ISTRSH:
+        tree = bus_long(image, globals + DESK_TRASH_INFO_TREE);
+        (void)aes_desk_inf_show(image, tree, OB_ROOT);
+        set_object_word(image, tree, TRASH_INFO_OK, OB_STATE, 0);
+        break;
+    }
+    return DO_SUPP_NOTHING_DONE;
+}
+#endif

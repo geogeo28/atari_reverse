@@ -4798,6 +4798,8 @@ THE_DECLARED_X_FLAG = "the X flag of the dispatcher's save word, declared"
 # argument longwords of the run's recorder's ledger, and its DTA cell, that hold an address in the run's stack band
 # (`aes_switching.frame_addresses_handed`) — inf_disk's dos_label and dos_space hand their own frames' addresses.
 A_FRAME_ADDRESS_HANDED = "a frame address handed to GEMDOS"
+# ...and A TARGET-ONLY ROW'S OWN SPAN ITS ROM RUN STORES UNCHANGED (`_its_own_stored_unchanged`, below)
+A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED = "a target-only row's own span its ROM run stores unchanged"
 X_FLAG_NOT_AS_DECLARED = "the X flag's byte is not named once where the row declares it and nowhere else"
 # The registered rows that switch, by routine: the waits' leaf entries (the pilots among them), ev_multi's 45 (29
 # woken by an interrupt, 13 through the menu chain, 1 a key before the writer writes, 2 a key at a poll that is no
@@ -4919,6 +4921,8 @@ WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tpla
 TARGET_ONLY_ROWS_THAT_SWITCH = {
     "aes_desk_inf_show": 8, "aes_desk_inf_finish": 2, "aes_desk_inf_file": 2, "aes_desk_inf_folder_dlg": 2,
     "aes_desk_inf_disk": 1, "aes_desk_inf_pref": 1, "aes_desk_opn_appl": 1, "aes_desk_ins_disk": 1, "aes_desk_ins_app": 2,
+    # ...and stage 2's fourteen (`test_desk_w3a_stage2.py`): desksupp.c's three, do_optnmenu and do_deskmenu
+    "aes_do_open": 5, "aes_do_aopen": 1, "aes_do_info": 3, "aes_do_optnmenu": 4, "aes_do_deskmenu": 1,
 }
 A_ROW_S_OWN = "a row's own by nature: "
 THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
@@ -4998,9 +5002,12 @@ BY_NATURE_CENSUS = {
                            # do_dopen's, do_fopen's two, close_folder's and fun_close's
                            THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4},
                            # (band 6 slice F4) Format's three formats and the copy's two copies: their floppy replayed
-                           # reaches the BIOS
+                           # reaches the BIOS; (band 6 W3a's stage 2) the three TARGET-ONLY rows whose ROM run stores
+                           # drive_check's park over an arrival that holds none — inside the door's park that run stores
+                           # into (the orchestrator's ruling: a window by address, `_its_own_in_a_door_s_park`)
                            THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 5, "aes_do_dopen": 3, "aes_do_fopen": 4, "aes_close_folder": 2,
-                                                  "aes_fun_close": 2, "aes_desk_format": 3, "aes_desk_copy_disk": 2},
+                                                  "aes_fun_close": 2, "aes_desk_format": 3, "aes_desk_copy_disk": 2,
+                                                  "aes_do_open": 2, "aes_do_info": 1},
                            # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
@@ -5014,7 +5021,11 @@ BY_NATURE_CENSUS = {
                            THE_DESK_S_PARKED: {"aes_mn_do": 2},
                            ANOTHER_S_CONTEXT: {"aes_ct_msgup": 1}, ANOTHER_S_STACK: {"aes_ct_msgup": 1},
                            # (band 6 W3a stage 1's fix pass) inf_disk's one row: dos_label's DTA and path, dos_space's DISKINFO
-                           A_FRAME_ADDRESS_HANDED: {"aes_desk_inf_disk": 1}},
+                           # — and (band 6 W3a's stage 2) do_info's disk Show Info, whose run is inf_disk's under it
+                           A_FRAME_ADDRESS_HANDED: {"aes_desk_inf_disk": 1, "aes_do_info": 1},
+                           # (band 6 W3a's stage 2) the three rows whose run reaches drive_check, each arriving with its
+                           # own park held: AES_BIOS_RETURN named their own, which the ROM's run stores unchanged
+                           A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED: {"aes_do_info": 2, "aes_do_open": 1}},
 }
 
 
@@ -5139,8 +5150,8 @@ def test_every_row_that_switches_drops_what_its_own_scheduled_run_changes_and_th
 # hold what it drops — so NOTHING OF IT IS EXEMPT HERE BY ITS REASON OR BY ITS OWN HAND (the orchestrator's ruling on
 # review RW3aP's F1): its own spans (`also_dropped`) and a parked wait's parameter lie, like every drop, INSIDE THE
 # WINDOW of a kind this census reads off the ROM's run — but the own spans that run STORES UNCHANGED (every byte in its
-# replay's write ledger, none changed: F3 stage 2's ruling (a)), a kind of their own.
-A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED = "a target-only row's own span its ROM run stores unchanged"
+# replay's write ledger, none changed: F3 stage 2's ruling (a)), a kind of their own (`A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED`,
+# above `BY_NATURE_CENSUS`, which counts it since band 6 W3a's stage 2).
 
 
 def _its_own_stored_unchanged(row, staged, the_rom_s):
@@ -5152,6 +5163,28 @@ def _its_own_stored_unchanged(row, staged, the_rom_s):
     unstored = set(aes_switching.its_own_unstored(row, staged, the_rom_s))
     return tuple((lo, hi, why) for lo, hi, why in row.also_dropped
                  if not any(at in unstored or the_rom_s.memory[at] != the_rom_s.started[at] for at in range(lo, hi)))
+
+
+# ...AND A TARGET-ONLY ROW'S OWN SPAN IN A DOOR'S PARK ITS ROM RUN STORES INTO (R9's kind; the orchestrator's ruling at
+# band 6 W3a's stage 2): inside the park longword the run's own write ledger stores (`aes_switching.door_parks_stored`,
+# the vouch's one spelling), counted under that door's line — the companion rows' own (`A_ROW_S_OWN` + its reason).
+DOOR_PARK_KINDS = {aes.AES_BIOS_RETURN: THE_BIOS_DOOR_S_PARK, aes.AES_XBIOS_RETURN: THE_XBIOS_DOOR_S_PARK}
+
+
+def _its_own_in_a_door_s_park(row, staged, the_rom_s, stored_unchanged):
+    """`{the door's park kind: spans}` of `row.also_dropped` — but `stored_unchanged` — that lie inside a door's park the
+    ROM's scheduled run `the_rom_s` over `staged` stores into (read off its replay's write ledger)."""
+    import aes_switching
+    rest = [span for span in row.also_dropped if span not in stored_unchanged]
+    if not rest:
+        return {}
+    _watch, _final, writes = aes_switching._replay_of(row, staged, the_rom_s)
+    parked = {}
+    for cell, windows in aes_switching.door_parks_stored(writes).items():
+        inside = tuple(span for span in rest if any(lo <= span[0] and span[1] <= hi for lo, hi, _why in windows))
+        if inside:
+            parked[DOOR_PARK_KINDS[cell]] = inside
+    return parked
 
 
 def the_census_of_every_switching_row():
@@ -5198,10 +5231,14 @@ def _the_switching_census(switching_rows, registered):
         if parked:
             census.setdefault(THE_DESK_S_PARKED, collections.Counter())[routines.core_symbol(row.name)] += 1
         qpb_addresses = _the_qpb_addresses_dropped(name, registered[name], the_rom_s)
-        if target_only:     # ...its own spans held to a kind's window below, but those stored unchanged
+        if target_only:     # ...its own spans held to a kind's window below, but those stored unchanged — or in a door's park
             own = _its_own_stored_unchanged(row, staged, the_rom_s)
             if own:
                 census.setdefault(A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED, collections.Counter())[routines.core_symbol(row.name)] += 1
+            parked_own = _its_own_in_a_door_s_park(row, staged, the_rom_s, own)
+            for kind in parked_own:
+                census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
+            own += tuple(span for spans in parked_own.values() for span in spans)
         else:
             # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
             # kind, dropped only where the ROM's run changes it, but on THE ROWS NAMED STORED UNCHANGED (above).

@@ -60,7 +60,7 @@ def _unflipped():
     return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE]
 
 
-FLIPPED_THROUGH_STAGE = 1               # band 6 W3a's stage 1: the F file's nine
+FLIPPED_THROUGH_STAGE = 2               # band 6 W3a's stage 2: desksupp.c's three, do_optnmenu and do_deskmenu (stage 1: the F file's nine)
 
 
 def test_the_eighteen_are_band_6_s_routines_each_named_once_by_its_file_and_the_unflipped_ones_still_the_rom_s():
@@ -227,7 +227,8 @@ def test_hndl_button_s_store_into_its_argument_slot_is_read_back_by_no_caller():
 
 # ---- THE TARGET-ONLY ROW KIND: its census, by name (ruling O2) ---------------------------------------------------------------
 TARGET_ONLY_ROWS_BY_NAME = {}            # `{registered name: its routine}` — of the plain kind: none (stage 1's rows all switch)
-TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {   # ...and of the kind's rows that switch (the orchestrator's B2): stage 1's twenty (its fix pass's three among them)
+# ...and of the kind's rows that switch (the orchestrator's B2): stage 1's twenty (its fix pass's three among them), stage 2's fourteen
+TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {
     "aes_desk_inf_show, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.INF_SHOW,
     "aes_desk_inf_show, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle": w3a.INF_SHOW,
     "aes_desk_inf_show, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle": w3a.INF_SHOW,
@@ -248,8 +249,23 @@ TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {   # ...and of the kind's rows that switch
     "aes_desk_opn_appl, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.OPN_APPL,
     "aes_desk_inf_folder_dlg, arrival 0 of 'files: the long file dragged onto the folder, then the folder selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INF_FOLDER_DLG,
     "aes_desk_ins_app, arrival 1 of 'files: the program installed as TOS-takes parameters, then Install Application again, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.INS_APP,
+    # ...and stage 2's fourteen (`test_desk_w3a_stage2.py`): desksupp.c's three, do_optnmenu and do_deskmenu
+    "aes_do_open, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_OPEN,
+    "aes_do_open, arrival 0 of 'folder: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_OPEN,
+    "aes_do_open, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_OPEN,
+    'aes_do_open, arrival 0 of "c: opened (LABELLED: F3 THE CARTRIDGE\'S LINE A DRIVE)"; no wait': w3a.DO_OPEN,
+    "aes_do_open, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_OPEN,
+    "aes_do_aopen, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_AOPEN,
+    "aes_do_info, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_INFO,
+    "aes_do_info, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_INFO,
+    "aes_do_info, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search; Dfree's DISKINFO laid, every pointer recorded as handed; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_INFO,
+    "aes_do_optnmenu, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode]": w3a.DO_OPTNMENU,
+    "aes_do_optnmenu, arrival 0 of 'Options > Save Desktop, Return'; Return at the first idle [GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers; the created handle's record the run's]": w3a.DO_OPTNMENU,
+    "aes_do_optnmenu, arrival 0 of 'A: Options > Install Disk Drive, Return'; Return at the first idle": w3a.DO_OPTNMENU,
+    "aes_do_optnmenu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_OPTNMENU,
+    "aes_do_deskmenu, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.DO_DESKMENU,
 }
-NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 12    # the user's ruling of 2026-10-24: its own count, beside F4's
+NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 21    # the user's ruling of 2026-10-24: its own count, beside F4's (12 + 9)
 TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: the count pins how many, this which (RW3aP's F5)
     "aes_desk_inf_show, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
     "aes_desk_inf_show, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
@@ -263,6 +279,16 @@ TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: t
     "aes_desk_opn_appl, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
     "aes_desk_inf_folder_dlg, arrival 0 of 'files: the long file dragged onto the folder, then the folder selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
     "aes_desk_ins_app, arrival 1 of 'files: the program installed as TOS-takes parameters, then Install Application again, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    # ...stage 2's nine (`test_desk_w3a_stage2.ROW_INSNS`)
+    "aes_do_open, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_open, arrival 0 of 'folder: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_open, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    'aes_do_open, arrival 0 of "c: opened (LABELLED: F3 THE CARTRIDGE\'S LINE A DRIVE)"; no wait',
+    "aes_do_open, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_aopen, arrival 0 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_do_info, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_info, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_optnmenu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
 ))
 
 
@@ -706,6 +732,92 @@ def test_the_companion_kind_s_own_span_is_exempt_where_the_target_only_kind_s_is
     own = OUT_OF_EVERY_WINDOW["changed by the run, in no window"]
     census, _name = _the_pilot_s_census(own, monkeypatch, target_only=False)
     assert census[test_aes_event.A_ROW_S_OWN + A_REASON] == {_the_pilot_s_routine(): 1}
+
+
+# ---- ...AND THE DOOR'S PARK, A WINDOW BY ADDRESS (the orchestrator's ruling at W3a's stage 2, R9's kind): the census half --------
+# of its crafted refusals, over stage 2's real rows (`test_desk_w3a_stage2.py` holds the vouch's half and the window's own):
+# a target-only row's own span inside a door's park ITS ROM RUN STORES INTO is counted under that door's line
+# (`test_aes_event._its_own_in_a_door_s_park`); one byte wider, or on a run that never stores the cell, a drop of no kind.
+def _the_census_of(name, row, drops):
+    """The switching census of stage 2's registered row `name` held as `row` with `drops` its registered drops."""
+    import test_aes_event
+    held = aes_event.TARGET_ONLY_SWITCHING_ROWS[name]
+    return test_aes_event._the_switching_census({name: held._replace(row=row, drops=drops)}, {name: drops})
+
+
+def _a_drop_of_no_kind(name):
+    return re.escape(f"{name}: a drop of no kind this census knows")
+
+
+def test_the_census_counts_a_target_only_row_s_park_its_run_stores_under_the_door_s_line():
+    import test_aes_event
+    import test_desk_w3a_stage2 as stage_2
+    held = aes_event.TARGET_ONLY_SWITCHING_ROWS[stage_2.THE_DRIVE_S_OPEN]
+    census = _the_census_of(stage_2.THE_DRIVE_S_OPEN, held.row, held.drops)
+    assert census[test_aes_event.THE_BIOS_DOOR_S_PARK] == {"aes_do_open": 1}
+    assert test_aes_event.A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED not in census
+
+
+@pytest.mark.parametrize("what", ("a byte below the longword", "a byte past the longword"))
+def test_the_census_refuses_a_span_one_byte_wider_than_the_park_by_name(what):
+    """The vouch's twin (`test_desk_w3a_stage2.test_a_span_one_byte_wider_than_the_park_on_a_real_row_is_refused_by_the_vouch`,
+    which asserts the premise): "past" is refused for the WIDTH; "below" because File > Open's run leaves its extra byte
+    UNSTORED (it pins "an unstored byte refused") — the width below is pinned by the pure census test that follows
+    (`test_the_census_counts_a_door_s_park_by_its_cell_and_refuses_a_span_across_the_two`) and the vouch's pure test."""
+    import test_desk_w3a_stage2 as stage_2
+    import aes_desksupp
+    lo, hi = stage_2.A_BYTE_WIDER[what]
+    held = aes_event.TARGET_ONLY_SWITCHING_ROWS[stage_2.THE_DRIVE_S_OPEN]
+    wider = (lo, hi, aes_desksupp.BIOS_DOOR_PARKED[0][2])
+    drops = tuple(drop for drop in held.drops if drop not in aes_desksupp.BIOS_DOOR_PARKED) + (wider,)
+    with pytest.raises(AssertionError, match=_a_drop_of_no_kind(stage_2.THE_DRIVE_S_OPEN)):
+        _the_census_of(stage_2.THE_DRIVE_S_OPEN, held.row._replace(also_dropped=(wider,)), drops)
+
+
+def test_the_census_refuses_the_park_s_reason_on_a_row_whose_run_never_stores_the_cell_by_name():
+    import test_desk_w3a_stage2 as stage_2
+    import aes_desksupp
+    held = aes_event.TARGET_ONLY_SWITCHING_ROWS[stage_2.DESK_INFO_ROW]
+    parked_row = held.row._replace(also_dropped=aes_desksupp.BIOS_DOOR_PARKED)
+    with pytest.raises(AssertionError, match=_a_drop_of_no_kind(stage_2.DESK_INFO_ROW)):
+        _the_census_of(stage_2.DESK_INFO_ROW, parked_row, held.drops + aes_desksupp.BIOS_DOOR_PARKED)
+
+
+def test_a_companion_row_s_park_is_counted_as_before_and_never_through_the_window(monkeypatch):
+    """A COMPANION ROW'S CENSUS UNCHANGED: drive_check's row at File > Open (its ROM run stores its park over 0) counts
+    its park under the door's line by its own span, as before — the window is never asked for a row of that kind."""
+    import test_aes_event
+    import test_desk_supp
+
+    def never(_writes):
+        raise AssertionError("the door's window asked for a companion row")
+    monkeypatch.setattr(aes_switching, "door_parks_stored", never)
+    name = aes_switching.row_name(test_desk_supp.ROWS["A: File > Open"])
+    held = aes_event.SWITCHING_ROWS[name]
+    census = test_aes_event._the_switching_census({name: held}, {name: held.drops})
+    assert census[test_aes_event.THE_BIOS_DOOR_S_PARK] == {"aes_drive_check": 1}
+
+
+THE_DOOR_S_LINE = {"the BIOS door": "THE_BIOS_DOOR_S_PARK", "the XBIOS door": "THE_XBIOS_DOOR_S_PARK"}
+
+
+@pytest.mark.parametrize("door", THE_DOOR_S_LINE)
+def test_the_census_counts_a_door_s_park_by_its_cell_and_refuses_a_span_across_the_two(door, monkeypatch):
+    """THE KIND BY THE CELL, crafted (no real row's park drops the XBIOS twin): over a ledger storing both doors' parks
+    and a byte each side, a target-only row's own longword at either cell is counted under ITS door's line
+    (`test_aes_event.DOOR_PARK_KINDS`); the span one byte wider below or past — across the two abutting cells, or into
+    a byte of no park — under none."""
+    import test_aes_event
+    import test_desk_w3a_stage2 as stage_2
+    cells = stage_2.EACH_DOOR_S_PARK
+    writes = {at: 1 for at in range(min(cells.values()) - 1, max(cells.values()) + aes.LONG_BYTES + 1)}
+    monkeypatch.setattr(aes_switching, "_replay_of", lambda *_run: (None, None, writes))
+    cell = cells[door]
+    park = (cell, cell + aes.LONG_BYTES, A_REASON)
+    wider = ((cell - 1, cell + aes.LONG_BYTES, A_REASON), (cell, cell + aes.LONG_BYTES + 1, A_REASON))
+    row = namedtuple("CraftedRow", "also_dropped")((park, *wider))
+    parked = test_aes_event._its_own_in_a_door_s_park(row, None, None, ())
+    assert parked == {getattr(test_aes_event, THE_DOOR_S_LINE[door]): (park,)}
 
 
 # ---- ...AND ITS BUDGETS, READ BY THE TWO CENSUSES THAT NAME A DECLARED BUDGET (crafted registrations) -----------------------------

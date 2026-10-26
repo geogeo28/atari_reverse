@@ -127,7 +127,9 @@ FLIPPED_AT_F4 = (12, 12, 2)    # unit M's two, unit N's ten; 2 entered (show_fil
 # BAND 6 W3a's STAGE 1 (the cycle's nine leaves, target-only): the same triple — none entered by a registered case (each
 # one's rows switch: UNENTERED's nine, below)
 FLIPPED_AT_W3A_STAGE_1 = (9, 9, 0)
-FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4, FLIPPED_AT_W3A_STAGE_1)
+FLIPPED_AT_W3A_STAGE_2 = (5, 5, 0)    # stage 2's five, target-only: none entered by a registered case (UNENTERED's five)
+FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4, FLIPPED_AT_W3A_STAGE_1,
+                    FLIPPED_AT_W3A_STAGE_2)
 ENTRIES_FLIPPED_SINCE_F1 = sum(entries for entries, _thunks, _entered in FLIPPED_SINCE_F1)
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_SINCE_F1,
             THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_SINCE_F1}
@@ -755,6 +757,9 @@ UNENTERED = {
     **{f"AES_ROM_DESK_{routine}": [INTERRUPTED] for routine in (
         "INF_SHOW", "INF_FINISH", "INF_FILE", "INF_FOLDER_DLG", "INF_DISK", "INF_PREF", "OPN_APPL", "INS_DISK", "INS_APP")},
     # ---- end of W3a stage 1's ----
+    # ---- band 6 W3a, stage 2 ---- THE FIVE, TARGET-ONLY: no Tier 1 case, every row switches
+    **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("DO_OPEN", "DO_AOPEN", "DO_INFO", "DO_OPTNMENU", "DO_DESKMENU")},
+    # ---- end of W3a stage 2's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group and F3 stage-author adds its own entered count on its line of FLIPPED_AT_F2 / FLIPPED_AT_F3)

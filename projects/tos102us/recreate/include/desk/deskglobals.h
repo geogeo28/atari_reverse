@@ -187,6 +187,10 @@
 #define DESK_INS_DISK_TREE    8080       /* long: Install Disk Drive's           ($fdf12c move.l 8080(a0),d7)   */
 #define DESK_INS_APP_TREE     8084       /* long: Install Application's          ($fdf3da move.l 8084(a0),d7)   */
 #define DESK_PREFS_TREE       8104       /* long: Set Preferences'               ($fdef20 move.l 8104(a5),d7)   */
+/* ---- ...and stage 2's (`desk/desksupp.h`, `desk/desktop.h`): the two info boxes the menus show whole ---- */
+#define DESK_ABOUT_TREE       8068       /* long: Desk > Desktop Info's           ($fe1e66 move.l 8068(a0),d5)   */
+#define DESK_TRASH_INFO_TREE  8072       /* long: the trash's Show Info          ($fe17c8 move.l 8072(a3),d6)   */
+#define DESK_BLITTER_ON       (DESK_PREFERENCES + 4) /* word: the third preference, the Blitter item's check ($fe211e 8122) */
 /* ---- end of band 6 W3a's ---- */
 
 #ifndef __ASSEMBLER__

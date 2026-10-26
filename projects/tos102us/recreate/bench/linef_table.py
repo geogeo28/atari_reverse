@@ -232,8 +232,9 @@ LINKED_HELD_NO_TABLE_ENTRY = {}
 # routine LEAVES this list for LINKED_AND_NOT_FLIPPED (a W3a block of its own) once its C links — the authors' — and
 # flips at its stage of `aes_desk_w3a.STAGES`. `test_desk_w3a.py` reds by name on a core linked while it is listed here.
 # `{routine: why}`.
-# (STAGE 1's nine — deskinf.c's seven and deskins.c's two — WRITTEN, LINKED AND FLIPPED at band 6 W3a's stage 1.)
-DECLARED_NOT_LINKED = dict.fromkeys((name for name in aes_desk_w3a.W3A if aes_desk_w3a.STAGE_OF[name] > 1),
+# (STAGE 1's nine — deskinf.c's seven and deskins.c's two — WRITTEN, LINKED AND FLIPPED at band 6 W3a's stage 1; STAGE
+# 2's five — desksupp.c's three, do_optnmenu and do_deskmenu — at its stage 2.)
+DECLARED_NOT_LINKED = dict.fromkeys((name for name in aes_desk_w3a.W3A if aes_desk_w3a.STAGE_OF[name] > 2),
                                     "band 6 W3a: declared target-only, its C not yet written")
 # ---- end of band 6 W3a's ----
 

@@ -1061,6 +1061,29 @@ def frame_addresses_handed(image):
     return tuple(windows)
 
 
+# A DOOR'S PARK ON A TARGET-ONLY ROW (band 6 W3a stage 2; the orchestrator's ruling on R9's kind, not a new class): the
+# shipped glue's `jsr` parks ITS OWN return in AES_BIOS_RETURN / AES_XBIOS_RETURN where the ROM's door parks its caller's
+# (`aes_desksupp.BIOS_DOOR_PARKED`, `test_desk_app.XBIOS_DOOR_PARKED`). A window derived BY ADDRESS like every other:
+# THE PARK LONGWORD ONLY, and only on a run that ITSELF STORES INTO THAT CELL — read off its own write ledger (the door
+# entered), cut to the bytes it stored; never off the row's own hand or a reason string. The target-only vouch reads it
+# (`aes_desk_w3a.vouched_for`) and the switching census counts a row's own span inside it under the door's park line
+# (`test_aes_event._the_switching_census`).
+DOOR_PARK_CELLS = (aes.AES_BIOS_RETURN, aes.AES_XBIOS_RETURN)
+DOOR_PARK_WHY = "a door's park: the ROM's door parks its caller's return in the cell, the shipped glue its own"
+
+
+def door_parks_stored(writes):
+    """`{cell: its windows}` of each door park cell (`DOOR_PARK_CELLS`) the run whose write ledger is `writes` stores
+    into: the cell's longword cut to the bytes stored, as `(lo, hi, DOOR_PARK_WHY)` spans. A cell never stored, absent."""
+    parks = {cell: aes_event.stored_spans((cell, cell + aes.LONG_BYTES, DOOR_PARK_WHY), writes) for cell in DOOR_PARK_CELLS}
+    return {cell: spans for cell, spans in parks.items() if spans}
+
+
+def door_park_windows(writes):
+    """`door_parks_stored(writes)`'s spans, flat: the by-address windows of the doors' parks the run stores into."""
+    return tuple(span for spans in door_parks_stored(writes).values() for span in spans)
+
+
 def own_drops(row):
     """THE DROPS `row` NAMES BY ITS OWN HAND, as `(lo, hi, why)`: its declared X flag (`THE_X_FLAG_ALONE`, where
     `x_flag_differs`) and its own spans (`also_dropped`) — none of them derived off the ROM's run."""

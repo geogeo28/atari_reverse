@@ -426,6 +426,9 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   `FDF3C8`) — declared target-only, not linked; entries the ROM's (DECLARED_NOT_LINKED). The cycle's one back-edge:
   inf_show calls hndl_msg at `FDE99A` by the call word `$F558`. STAGE 1 (2026-10-25): deskinf.c's seven and deskins.c's
   two written in C and flipped (target-only).
+  STAGE 2 (2026-10-25): desksupp.c's three (do_open `FE1568`, do_aopen `FE11B4`, do_info `FE16E6`) and desktop.c's
+  do_optnmenu `FE1FDE` and do_deskmenu `FE1E4C` written in C and flipped (target-only); entered from the ROM's hndl_msg /
+  hndl_menu / do_filemenu / hndl_button through the table until stage 3.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

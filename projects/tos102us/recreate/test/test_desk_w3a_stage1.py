@@ -307,7 +307,9 @@ def test_the_rows_through_the_table_are_the_dialogs_over_a_window():
     """THE DECLARED BACK-EDGE'S ROWS: every row over a window, each at hndl_msg's redraw's measured cost, and no other."""
     over_a_window = {name for name, each in zip(ROWS, CLASSES) if each.chain in WINDOWED}
     assert {name: cost for name, cost in w3a.ROWS_THROUGH_THE_TABLE.items() if name in ROWS} == dict.fromkeys(over_a_window, HNDL_MSG_S_REDRAW)
-    assert set(w3a.ROWS_THROUGH_THE_TABLE) <= set(ROWS) and len(over_a_window) == THROUGH_THE_TABLE
+    # (every declaration a registered target-only row's: stage 2's own beside these — `test_desk_w3a_stage2.py` holds the
+    # whole set to the two stages' rows over a window, exactly)
+    assert set(w3a.ROWS_THROUGH_THE_TABLE) <= set(aes_event.TARGET_ONLY_SWITCHING_ROWS) and len(over_a_window) == THROUGH_THE_TABLE
 
 
 THROUGH_THE_TABLE = 12

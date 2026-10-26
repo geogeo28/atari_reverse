@@ -210,8 +210,10 @@ BAND_6_FLIPPED_AT_F3 = {
 BAND_6_FLIPPED_AT_F4 = 12 + 8
 # ...and band 6 W3a's stage 1 (the cycle's leaf-up split S2): deskinf.c's seven and deskins.c's two by their table entries
 BAND_6_FLIPPED_AT_W3A_STAGE_1 = 9
+# ...and its stage 2: desksupp.c's three, do_optnmenu and do_deskmenu by their table entries
+BAND_6_FLIPPED_AT_W3A_STAGE_2 = 5
 BAND_6_FLIPPED = (56 + sum(BAND_6_FLIPPED_AT_F2.values()) + sum(BAND_6_FLIPPED_AT_F3.values()) + BAND_6_FLIPPED_AT_F4
-                  + BAND_6_FLIPPED_AT_W3A_STAGE_1)
+                  + BAND_6_FLIPPED_AT_W3A_STAGE_1 + BAND_6_FLIPPED_AT_W3A_STAGE_2)
 
 
 def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text_they_reach_each_run():
@@ -479,6 +481,17 @@ NOT_ENTERED_ON_OUR_SHORE = {
                        "DOS_RENAME", "DOS_CHMOD", "DOS_LABEL", "DOS_SPACE", "APP_ALLOC", "APP_FREE", "SNAP_DISK",
                        "SCAN_STR")},
     # ---- end of W3a stage 1's ----
+    # ---- band 6 W3a, stage 2 ---- (who-ran's on the stage's tree, MEASURED): THE CALLEES WHOSE EVERY CALL ON A WALKED
+    # CHAIN WAS ONE OF THE FIVE'S — stage 1's nine dialogs (do_info's, do_optnmenu's, do_deskmenu's, opn_appl under
+    # do_aopen), the openers (do_aopen, do_dopen, do_fopen, drive_check), and what the five ask (i_find, fpd_parse,
+    # get_spec, get_xywh, pro_chdir, ini_str, pro_cmd, pro_run, fun_alert, fun_rebld, form_alert): called by our C alone
+    **{f"AES_ROM_{routine}": "its every call on a walked chain is one of stage 2's five's (flipped at band 6 W3a's "
+                             "stage 2): called by our C alone on our shore"
+       for routine in ("DESK_INF_SHOW", "DESK_INF_FILE", "DESK_INF_FOLDER_DLG", "DESK_INF_DISK", "DESK_INF_PREF",
+                       "DESK_OPN_APPL", "DESK_INS_DISK", "DESK_INS_APP", "DO_AOPEN", "DO_DOPEN", "DO_FOPEN", "DRIVE_CHECK",
+                       "I_FIND", "FPD_PARSE", "GET_SPEC", "GET_XYWH", "PRO_CHDIR", "INI_STR", "PRO_CMD", "PRO_RUN",
+                       "DESK_FUN_ALERT", "DESK_FUN_REBLD", "DESK_FORM_ALERT")},
+    # ---- end of W3a stage 2's ----
 }
 
 
@@ -564,7 +577,7 @@ THE_ROM_S_PD0 = {"folder: File > Close": 1398, "folder: opened": 1410, "file: Fi
                  "A: File > Open": 1460, "A: opened": 1446, "two windows: File > Close Window (one left on top)": 1364,
                  desk.FORMAT_UP: 1218, desk.FORMATTED: 816, "A: File > Format, OK, EXIT clicked": 886, desk.COPY_UP: 1212,
                  "file: shown, a key at its end": 1438}
-DEEPEST_PD0 = ("A: File > Open", 1536)     # (1,504 before units O and D flipped: band 6 slice F1)
+DEEPEST_PD0 = ("A: File > Open", 1534)     # (1,536 before band 6 W3a's stage 2; 1,504 before units O and D flipped: slice F1)
 
 
 def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_gate():
@@ -705,7 +718,10 @@ PD0_SPLIT_HELPERS = ("lay_the_items", "the_sliders_set", "zoom_onto_the_middle",
                      "allchg_walked",     # band 6 W3a's diet: inlined, act_allchg's walk saves 11 registers under its redraw
                      # band 6 W3a's stage 1 (opn_appl's Cancel, hndl_msg's redraws under inf_show): the dialog's run, its
                      # message question, and opn_appl's three parts round its dialog — no frame of theirs under hndl_msg
-                     "dialog_run", "messages_asked", "appl_fields_set", "appl_dialog_run", "appl_fields_read")
+                     "dialog_run", "messages_asked", "appl_fields_set", "appl_dialog_run", "appl_fields_read",
+                     # band 6 W3a's stage 2 (do_open's frame the ROM's 146 bytes over a drive's window; do_aopen's under
+                     # opn_appl's dialog): what do_open's window, folder and trash arms keep, and do_aopen's two boxes
+                     "the_window_s_spec_parsed", "folder_joined", "the_trash_refused", "the_boxes_read")
 PD0_INLINED = "act_redrawn_inside"
 SLIDERS_LEFT_TO = ("aes_win_bldview", "the_sliders_set")      # `(the routine, the one it ends by jumping to)`
 A_JUMP_TO = re.compile(r"(?:jmp|bra[swl]?) (?:0x)?[0-9a-f]+ <(\w+)>")
@@ -852,62 +868,62 @@ def test_a_boot_s_devices_are_vetted_as_a_continuation_s():
 # lines: a group's author hands back its partial flip's rows, and the ORCHESTRATOR'S INTEGRATION re-derives the
 # table over the merged flip, as tier3.txt and lineftable.S are made again, never hand-merged.)
 DEPTHS = {
-    'Desk > Desktop Info, Return': (1152, 668, 254, 0),
-    'Options > Set Preferences, Return': (1228, 668, 254, 0),
-    'Options > Save Desktop, Return': (998, 668, 254, 0),
-    'Options > Print Screen (its alert raised, not answered)': (998, 668, 254, 0),
+    'Desk > Desktop Info, Return': (1140, 668, 254, 0),
+    'Options > Set Preferences, Return': (1232, 668, 254, 0),
+    'Options > Save Desktop, Return': (1000, 668, 254, 0),
+    'Options > Print Screen (its alert raised, not answered)': (1000, 668, 254, 0),
     "a key typed at the desk's idle": (658, 0, 240, 0),
     'drive A: selected': (1124, 0, 254, 0),
-    'A: File > Show Info, Return': (1340, 668, 254, 0),
-    'A: Options > Install Disk Drive, Return': (1264, 668, 254, 0),
-    'A: Options > Install Disk Drive, Remove pressed': (1264, 668, 254, 0),
-    "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1264, 668, 254, 0),
-    'A: File > Open': (1536, 668, 254, 0),
+    'A: File > Show Info, Return': (1342, 668, 254, 0),
+    'A: Options > Install Disk Drive, Return': (1268, 668, 254, 0),
+    'A: Options > Install Disk Drive, Remove pressed': (1268, 668, 254, 0),
+    "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1268, 668, 254, 0),
+    'A: File > Open': (1534, 668, 254, 0),
     'A: File > Format, Return (the warning answered)': (1066, 668, 254, 0),
     'drive A: dragged to the trash, Return': (1380, 0, 254, 0),
     'a rubber box on the desktop, round the trash': (1208, 0, 254, 0),
-    'A: opened': (1522, 0, 254, 0),
+    'A: opened': (1520, 0, 254, 0),
     'window: View > Show as Text': (1132, 750, 254, 486),
     'window: View > Sort by Size': (1132, 750, 254, 0),
     'window: File > Close Window': (1454, 668, 254, 0),
     'window: its closer clicked': (1422, 520, 260, 0),
     'window: its fuller clicked': (1180, 520, 260, 0),
-    'window: A: opened again (two windows)': (1522, 0, 260, 0),
+    'window: A: opened again (two windows)': (1520, 0, 260, 0),
     'file: selected': (1124, 0, 254, 0),
-    'file: File > Show Info, Return': (1372, 668, 254, 0),
-    "file: File > Show Info, Backspace, 'A', Return (renamed)": (1372, 668, 254, 0),
-    'file: File > Show Info, Read-Only pressed, Return': (1372, 668, 254, 0),
+    'file: File > Show Info, Return': (1370, 668, 254, 0),
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": (1370, 668, 254, 0),
+    'file: File > Show Info, Read-Only pressed, Return': (1370, 668, 254, 0),
     'file: read-only, dragged to the trash, OK — access denied, Return': (1404, 0, 254, 0),
-    'file: File > Open (the Show / Print / Cancel alert)': (1274, 668, 254, 0),
-    'file: shown, a key at its end': (1516, 308, 240, 0),
-    'file: double-clicked (the alert)': (1260, 0, 254, 0),
+    'file: File > Open (the Show / Print / Cancel alert)': (1254, 668, 254, 0),
+    'file: shown, a key at its end': (1418, 308, 240, 0),
+    'file: double-clicked (the alert)': (1240, 0, 254, 0),
     "file: dragged to the trash, Return (Cancel, the dialog's default)": (1404, 0, 254, 0),
     'file: dragged to the trash, OK': (1404, 0, 254, 0),
     "folder: File > New Folder, 'A', Return": (1350, 668, 254, 0),
     'folder: the file dragged onto it, Return': (1472, 0, 254, 0),
-    'folder: opened': (1494, 0, 254, 0),
+    'folder: opened': (1488, 0, 254, 0),
     'folder: File > Close': (1494, 668, 254, 0),
-    'folder: selected, File > Show Info, Return': (1340, 668, 254, 0),
+    'folder: selected, File > Show Info, Return': (1338, 668, 254, 0),
     'folder: dragged to the trash, OK': (1404, 0, 254, 0),
-    'text view: A: opened': (1522, 0, 254, 486),
-    'text view: Options > Save Desktop, Return': (1280, 668, 254, 486),
-    'files: A: opened': (1522, 0, 254, 0),
+    'text view: A: opened': (1520, 0, 254, 486),
+    'text view: Options > Save Desktop, Return': (1296, 668, 254, 486),
+    'files: A: opened': (1520, 0, 254, 0),
     "files: the window's down arrow clicked": (658, 706, 260, 0),
     "files: the window's vertical bar clicked under its slider (a page)": (658, 706, 260, 0),
     "files: the window's right arrow clicked": (1152, 404, 260, 0),
-    "files: the long file shown, a blank at each page's end and at its end": (1516, 668, 254, 0),
+    "files: the long file shown, a blank at each page's end and at its end": (1418, 668, 254, 0),
     'files: the long file dragged onto the folder, Return': (1472, 0, 254, 0),
     'files: the folder (not empty) dragged to the trash, OK': (1404, 0, 254, 0),
     'files: the window made full': (1180, 520, 260, 0),
-    'files: the program selected, File > Show Info, Return': (1372, 668, 254, 0),
+    'files: the program selected, File > Show Info, Return': (1370, 668, 254, 0),
     'files: the program selected, Options > Install Application, Return': (1348, 668, 254, 0),
     'files: View > Show as Text': (1132, 750, 254, 486),
     'window: its fuller clicked again (back to its size)': (1180, 520, 260, 0),
     'files: the right arrow clicked, then the window made full': (1180, 520, 260, 0),
     'files: the right arrow clicked, then View > Sort by Size': (1132, 750, 254, 0),
     'window: View > Show as Icons (the view it has)': (1132, 750, 254, 0),
-    'window: Options > Save Desktop, Return': (1280, 668, 254, 0),
-    'files: the right arrow clicked, then Options > Save Desktop, Return': (1280, 668, 254, 0),
+    'window: Options > Save Desktop, Return': (1296, 668, 254, 0),
+    'files: the right arrow clicked, then Options > Save Desktop, Return': (1296, 668, 254, 0),
     'a rubber box on the desktop, round drive B: and the trash': (1208, 0, 254, 0),
     'drive A: dragged to a bare spot of the desktop': (1248, 0, 254, 0),
     "drive A:'s object clicked at its corner, outside its image and its label": (658, 0, 254, 0),
@@ -918,14 +934,14 @@ DEPTHS = {
     "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1436, 0, 254, 0),
     'folders: B dragged onto A, Return': (1472, 0, 254, 0),
     'folders: A (holding B) dragged to the trash, OK': (1404, 0, 254, 0),
-    'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1232, 668, 254, 0),
+    'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1236, 668, 254, 0),
     'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1472, 0, 254, 0),
     "files: View > Show as Text, the long file's line clicked": (976, 0, 254, 486),
-    'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1232, 668, 254, 0),
+    'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1236, 668, 254, 0),
     'folder: deletes unconfirmed — the file dragged to the trash': (1380, 0, 254, 0),
     'folder: deletes unconfirmed — the folder dragged to the trash': (1380, 0, 254, 0),
     "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1436, 0, 254, 0),
-    'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1396, 668, 260, 0),
+    'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1398, 668, 260, 0),
     "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1472, 668, 254, 0),
     'A: opened, drive A: dragged into its window, Return': (1424, 0, 260, 0),
     'A: opened, the trash dragged into its window, Return': (1150, 0, 260, 0),
@@ -944,9 +960,9 @@ DEPTHS = {
     'window: Esc typed (the top window read again)': (1164, 0, 240, 0),
     'two windows: File > Close Window (one left on top)': (1458, 668, 254, 0),
     'files: the window sized smaller, then its right arrow clicked': (1152, 404, 260, 0),
-    'files: the right arrow clicked, then the long file shown': (1516, 668, 254, 0),
-    'files: View > Sort by Size, then the long file shown': (1516, 668, 254, 0),
-    "files: View > Show as Text, then the long file's line shown": (1364, 668, 254, 486),
+    'files: the right arrow clicked, then the long file shown': (1418, 668, 254, 0),
+    'files: View > Sort by Size, then the long file shown': (1418, 668, 254, 0),
+    "files: View > Show as Text, then the long file's line shown": (1268, 668, 254, 486),
     "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1350, 668, 254, 0),
     'two windows: View > Show as Text': (1132, 750, 254, 486),
     'files: a fifth entry, then the down arrow gadget clicked (a row)': (658, 404, 260, 0),
@@ -958,24 +974,24 @@ DEPTHS = {
     "A: formatted, the alert's OK, EXIT clicked": (936, 308, 254, 0),
     "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1380, 308, 254, 0),
     'drive A: onto drive B:, OK, then Return (EXIT, the default)': (936, 308, 240, 0),
-    'file: File > Open, Print clicked (the printer not ready)': (1516, 308, 254, 0),
+    'file: File > Open, Print clicked (the printer not ready)': (1418, 308, 254, 0),
     'file: the printer not ready, Cancel': (1268, 308, 254, 0),
     'file: the printer not ready, Retry (not ready again)': (898, 0, 254, 0),  # 822 before band 6 slice F4
     'file: the printer not ready, five seconds, Retry (printed)': (1268, 308, 254, 0),
-    'file: File > Open, five seconds, Print clicked (printed)': (1516, 308, 254, 0),
-    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1516, 668, 254, 0),
+    'file: File > Open, five seconds, Print clicked (printed)': (1418, 308, 254, 0),
+    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1418, 668, 254, 0),
     'a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)': (1380, 308, 254, 0),
-    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1522, 0, 254, 0),
-    'files: the long file shown, then the folder AUTO double-clicked in the restored window': (1516, 668, 254, 0),
-    'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1516, 668, 254, 0),
+    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1520, 0, 254, 0),
+    'files: the long file shown, then the folder AUTO double-clicked in the restored window': (1488, 668, 254, 0),
+    'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1494, 668, 254, 0),
     "Esc typed at the desk's idle (no window open)": (658, 0, 240, 0),
     'drives A: and B: boxed, drive A: dragged onto drive B:, Return': (1208, 0, 254, 0),
     "two windows: the lower one's title clicked (WM_TOPPED)": (1100, 366, 260, 0),      # band 6 W3a's prep
     "two windows: the top one's title dragged lower (WM_MOVED)": (1086, 650, 260, 0),   # band 6 W3a's prep
     'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)':
-        (1524, 668, 254, 0),      # band 6 W3a's stage 1: 1,534 at its diet, 1,618 before (the ROM's 1,504)
+        (1496, 668, 254, 0),      # band 6 W3a's stage 2 (do_open, do_aopen C); 1,524 at stage 1, 1,534 at its diet (the ROM's 1,504)
     # ---- band 6 W3a stage 1's fix pass ----
-    desk.FILLED_FOLDER_INFO: (1340, 668, 254, 0),                # the ROM's 1,350
+    desk.FILLED_FOLDER_INFO: (1338, 668, 254, 0),                # the ROM's 1,350
     desk.TTP_INSTALLED_THEN_ASKED_AGAIN: (1348, 668, 254, 0),    # the ROM's 1,290
     # ---- end of W3a stage 1's fix pass ----
 }

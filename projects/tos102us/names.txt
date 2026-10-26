@@ -2292,12 +2292,13 @@ fn 0xfe272e deskmain # ctx
 fn 0xfe1e80 do_filemenu
 cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6, $fe3760): Open $fe1568, Show Info $fe16e6 (call word $f620 at $fe1ec2), Format $fe1800; of the top window (a5, $fe2d46): New Folder $fdfebc ($f624 at $fe1ece), Close and Close Window $fe1a18 (word 0 / 1). The kit's oracle executes $f620..$f627 as MOVE16: aes_boot.continued takes those two exceptions by hand
 fn 0xfe16e6 do_info
+cmt 0xfe16e6 (icon): File > Show Info — a file's (inf_file; fun_rebld where it said so), a folder's (inf_folder_dlg), a disk's (inf_disk), each after drive_check; the trash's dialog (tree 8072, object 7 cleared); 0. C: aes_do_info (src/desk/desksupp.c; W3a stage 2, target-only)
 fn 0xfe1568 do_open
-cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a folder's $fe14ba, a file's Show / Print / Cancel alert
+cmt 0xfe1568 the File menu's Open of the selection: a drive's window $fe13ea, a folder's $fe14ba, a file's Show / Print / Cancel alert. C: aes_do_open (src/desk/desksupp.c; W3a stage 2, target-only): its frame the ROM's (fpd_parse's buffers, i_find's answers); its window block, folder join and trash alert noinline helpers (W6-R4: File > Open 1,536 -> 1,534)
 fn 0xfe1f2a do_viewmenu
 cmt 0xfe1f2a do_viewmenu(item): items 29..35 by the table $fef6c4 — the view (0 icons / 1 text) and the sort key (0..3); where either changed: the old item's check cleared and the new one's set ($fde1f0), then win_view(view, sort); 0. C: aes_do_viewmenu (src/desk/desktop.c; band 6 wave 1b, G2)
 fn 0xfe1fde do_optnmenu
-cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40)
+cmt 0xfe1fde (item): items 37..44 by the table $fef6e0 — install disk drive $fdf11a / application $fdf3c8, preferences $fdef12, Save Desktop (alert $fde022, then the INF writer $fdbb34), Print Screen (alert, then gsx_hardcopy $fe8862), the blitter item (trp14 $40). C: aes_do_optnmenu (src/desk/desktop.c; W3a stage 2, target-only): Blitmode through the door idiom (desk_xbios_parked + desk_xbios_trap, the ROM's site $fe2132 parked)
 fn 0xfed5c2 cart_exec # ctx
 var 0xc93c sh_isdef_seen # ctx
 cmt 0xc93c stored by sh_main each pass ($feb130 clr, $feb146 := 1 where sh_isdef was set); read by nothing
@@ -2808,9 +2809,9 @@ cmt 0xfe22ce (title, item): Desk / File / View / Options -> do_deskmenu, do_file
 fn 0xfe2172 hndl_button
 cmt 0xfe2172 (clicks, mx, my, button, keys): wind_find, act_bsclick / act_bdown / fun_drag; a double click -> do_filemenu(OPEN). Hands graf_mkstate &14(a6), its OWN argument slot ($fe21f4), read back at $fe220c — deskmain pops it unread. C: to be aes_hndl_button (src/desk/desktop.c; W3a, not yet written)
 fn 0xfe1e4c do_deskmenu
-cmt 0xfe1e4c (item): Desk > Desktop Info — inf_show of the info tree. C: to be aes_do_deskmenu (src/desk/desktop.c; W3a, not yet written)
+cmt 0xfe1e4c (item): Desk > Desktop Info — inf_show of the info tree, its exit object (11) cleared; 0. C: aes_do_deskmenu (src/desk/desktop.c; band 6 W3a stage 2, target-only)
 fn 0xfe11b4 do_aopen
-cmt 0xfe11b4 (anode, isapp, curr, drive, path, name): a file run (pro_run), shown or printed (the $f438 alert); a TOS-takes-parameters program (a_flags & 8, ins_app's store) asks opn_appl first. C: to be aes_do_aopen (src/desk/desksupp.c; W3a, not yet written)
+cmt 0xfe11b4 (anode, isapp, curr, drive, path, name): a file run (pro_run), shown or printed (the $f438 alert); a TOS-takes-parameters program (a_flags & 8, ins_app's store) asks opn_appl first. C: aes_do_aopen (src/desk/desksupp.c; W3a stage 2, target-only): its two dead get_xywh boxes a noinline helper (the_boxes_read: PD0, under opn_appl's dialog)
 fn 0xfde8a6 desk_inf_show
 cmt 0xfde8a6 (tree, start): form_center, form_dial, objc_draw, form_do, form_dial; then evnt_multi(MU_MESAG|MU_TIMER) and hndl_msg ($fde99a) while a message is pending; 1. aes_desk.py's DIALOG_RUNNER. C: aes_desk_inf_show (src/desk/deskinf.c; band 6 W3a stage 1, target-only): its dialog run a noinline helper (dialog_run), its message question another (messages_asked); hndl_msg called BY THE ROM'S WORD $f558 (the declared back-edge) until stage 3
 fn 0xfde9a8 desk_inf_finish

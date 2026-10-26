@@ -40,6 +40,10 @@
  * under hndl_msg), and on opn_appl's three parts — its fields set, its dialog's run (LEFT TO BY A JUMP: opn_appl's frame
  * and the fields' call's deferred arguments popped first) and its fields read back; NO MARK (a mark's reading follows
  * its function into inf_show, whose Line-F call of hndl_msg it cannot count).
+ * BAND 6 W3a's STAGE 2 (do_open's frame the ROM's 146 bytes of locals, over a drive's window — File > Open, 1,536 ->
+ * 1,534): `noinline` on what do_open's window, folder and trash arms keep (the_window_s_spec_parsed, folder_joined,
+ * the_trash_refused) and on do_aopen's two dead boxes (the_boxes_read, under opn_appl's dialog); NO MARK (the same
+ * reading's reason: do_open's callees reach inf_show).
  */
 #ifndef TOS102US_STACK_DIET_H
 #define TOS102US_STACK_DIET_H
