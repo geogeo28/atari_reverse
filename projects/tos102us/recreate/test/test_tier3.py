@@ -1712,7 +1712,8 @@ def test_the_one_drop_our_run_need_not_have_stored_is_the_line_f_mask_word():
     screen manager is ours, where two builds' frames are not laid over the same bytes and what is held is that OUR
     screen manager ran on that stack at all (`vet_our_frames_were_laid`: refused where our run stored nothing there)."""
     assert tier3.ONE_SIDED_BY_NATURE == {(lo, hi) for lo, hi, _why in aes.LINE_F_MASK_WINDOW}
-    assert tier3.EACH_BUILD_S_OWN_FRAMES == {aes_takeover.STACK_WHY, *tier3.aes_switching.FOREIGN_STACK_WHYS}   # (band 6's binding)
+    assert tier3.EACH_BUILD_S_OWN_FRAMES == {aes_takeover.STACK_WHY, *tier3.aes_switching.FOREIGN_STACK_WHYS,   # (band 6's binding)
+                                             tier3.aes_switching.USERDEF_STACK_WHY}   # (W3a stage 3: the user's ruling of 2026-10-26)
     exempt = {(lo, hi) for row in tier3.ROWS for lo, hi, why in row.dropped
               if (lo, hi, why) not in tier3.drops_held_to_our_run(row) and why not in tier3.EACH_BUILD_S_OWN_FRAMES}
     assert exempt == tier3.ONE_SIDED_BY_NATURE
@@ -1997,18 +1998,20 @@ def test_the_glue_is_relocated_at_exit_alone_and_only_in_its_own_slots(monkeypat
     read = tier3.code_relocations(tier3.BUILT_ELF, "aes_forker")
     assert [(each.what, each.slots, each.at_entry) for each in read] == [
         (each.what, each.slots, each.at_entry) for each in aes_event.CODE_RELOCATIONS]
-    assert [each.at_entry for each in read] == [True, False, False, True, True, False, False, False, False, False, True], (
+    assert [each.at_entry for each in read] == [True, False, False, True, True, False, False, False, False, True, True], (
         "the queue's at entry and exit; the glue's and the GEMDOS glue's text sites at exit alone; the screen "
         "manager's entry at entry and exit (FLIP 4: a build's machine holds its own ctlmgr's address in p_ldaddr); OF "
         "THE TRAP DOOR'S THREE, THE GEM TRAP'S VECTOR AT ENTRY AND EXIT (THE FULL FLIP, band 5 wave 4, slice F: every "
         "run of ours is entered behind the build's own `trap #2` handler) and a program's first-entry frame and the "
         "critical-error vector at exit alone (a row's machine holds what it came with); AND gem_entry's THREE BY-VALUE "
-        "STORES — justretf's slot, the tick glue's, the desk's trampoline — at exit alone too (band 5 wave 4, slice B: "
-        "stored by the build's own gem_entry on the our-boot machine); AND THE LINE-F CALL TABLE the handler's copy "
+        "STORES — justretf's slot and the tick glue's at exit alone too (band 5 wave 4, slice B: stored by the build's own "
+        "gem_entry on the our-boot machine), the desk's trampoline at entry and exit since band 6 W3a stage 3 (the text "
+        "view's rows draw through the arrival machine's USERBLKs); AND THE LINE-F CALL TABLE the handler's copy "
         "indexes at entry and exit (band 6's binding: every run of ours is entered with our table behind the ROM's "
         "desk's Line-F words)")
     assert [each.what for each in read if each.at_entry] == [
-        aes_event.FORK_CODES.what, aes_event.SCREEN_MANAGER_ENTRY.what, aes_event.GEM_TRAP_VECTOR.what, aes_event.LINEF_TABLE_SLOT.what]
+        aes_event.FORK_CODES.what, aes_event.SCREEN_MANAGER_ENTRY.what, aes_event.GEM_TRAP_VECTOR.what,
+        aes_event.USERBLK_TRAMPOLINE_SLOT.what, aes_event.LINEF_TABLE_SLOT.what]
     assert [each.what for each in read][-7:-4] == [part.what for part in aes_event.THE_TRAP_DOOR]
     assert [each.what for each in read][-4:-1] == [declared.what for declared in aes_event.STORED_BY_GEM_ENTRY]
     assert read[-1].what == aes_event.LINEF_TABLE_SLOT.what
@@ -3515,7 +3518,7 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (257418, 220594), SHIPPED_BLOB: (257418, 217614)},
     "aes_gr_watchbox, the mouse enters at the second wait; the third blocks; the rise wakes it: in, 1": {
         BENCH_BLOB: (144852, 124532), SHIPPED_BLOB: (144852, 123758)},
-    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 542436), SHIPPED_BLOB: (639424, 541868)},
+    SENDMSG_TO_A_FULL_PIPE: {BENCH_BLOB: (639424, 542100), SHIPPED_BLOB: (639424, 541534)},
     "aes_wm_update, the lock handed to the screen manager, which waits for it: a yield inside unsync's call": {
         BENCH_BLOB: (14588, 11826), SHIPPED_BLOB: (14588, 11948)},
     "aes_mn_do, View dropped; an item reached, then clicked, each while a pass is blocked: chosen": {

@@ -4923,12 +4923,17 @@ TARGET_ONLY_ROWS_THAT_SWITCH = {
     "aes_desk_inf_disk": 1, "aes_desk_inf_pref": 1, "aes_desk_opn_appl": 1, "aes_desk_ins_disk": 1, "aes_desk_ins_app": 2,
     # ...and stage 2's fourteen (`test_desk_w3a_stage2.py`): desksupp.c's three, do_optnmenu and do_deskmenu
     "aes_do_open": 5, "aes_do_aopen": 1, "aes_do_info": 3, "aes_do_optnmenu": 4, "aes_do_deskmenu": 1,
+    # ...and stage 3's fifty-one (`test_desk_w3a_stage3.py`): the three dispatchers and the File menu
+    "aes_hndl_msg": 10, "aes_hndl_menu": 16, "aes_do_filemenu": 8, "aes_hndl_button": 17,
 }
 A_ROW_S_OWN = "a row's own by nature: "
 THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
 # (band 6 slice F2, group G2) a door's parked return the shipped glue's `jsr` makes the `.S` park where the ROM's door parks
 # its caller's — R9's kind, declared (`test_desk_app.XBIOS_DOOR_PARKED`, `aes_desksupp.BIOS_DOOR_PARKED`)
 THE_XBIOS_DOOR_S_PARK, THE_BIOS_DOOR_S_PARK = A_ROW_S_OWN + "AES_XBIOS_RETURN", A_ROW_S_OWN + "AES_BIOS_RETURN"
+# (band 6 W3a stage 3) a target-only row's own spans of THE DESK'S G_USERDEF STACK and its park, on a row whose ROM run
+# enters ub_trampoline (the user's ruling of 2026-10-26: `aes_switching.userdef_stack_windows`, by address)
+THE_USERDEF_STACK = A_ROW_S_OWN + "the desk's G_USERDEF stack"
 BY_NATURE_CENSUS = {
     # No wait's row reaches psetup's or the dispatcher's bracket, takes a trap or leaves a QPB's address.
     "the waits": {},
@@ -5007,7 +5012,9 @@ BY_NATURE_CENSUS = {
                            # into (the orchestrator's ruling: a window by address, `_its_own_in_a_door_s_park`)
                            THE_BIOS_DOOR_S_PARK: {"aes_drive_check": 5, "aes_do_dopen": 3, "aes_do_fopen": 4, "aes_close_folder": 2,
                                                   "aes_fun_close": 2, "aes_desk_format": 3, "aes_desk_copy_disk": 2,
-                                                  "aes_do_open": 2, "aes_do_info": 1},
+                                                  "aes_do_open": 2, "aes_do_info": 1,
+                                                  # (band 6 W3a's stage 3) its rows over drive_check whose run stores the park
+                                                  "aes_hndl_button": 1, "aes_hndl_menu": 2, "aes_do_filemenu": 3},
                            # ---- end of group G2's ----
                            # FLIP 4: the screen manager's two spans, on every row whose run enters it (above)
                            THE_SCREEN_MANAGER_S_CONTEXT: WITH_THE_SCREEN_MANAGER_OURS,
@@ -5022,10 +5029,20 @@ BY_NATURE_CENSUS = {
                            ANOTHER_S_CONTEXT: {"aes_ct_msgup": 1}, ANOTHER_S_STACK: {"aes_ct_msgup": 1},
                            # (band 6 W3a stage 1's fix pass) inf_disk's one row: dos_label's DTA and path, dos_space's DISKINFO
                            # — and (band 6 W3a's stage 2) do_info's disk Show Info, whose run is inf_disk's under it
-                           A_FRAME_ADDRESS_HANDED: {"aes_desk_inf_disk": 1, "aes_do_info": 1},
+                           # — and (band 6 W3a's stage 3) hndl_menu's and do_filemenu's disk Show Info, inf_disk's under them,
+                           # and hndl_button's file dragged onto a folder (the copy's Fdatime: its frame's DOSTIME)
+                           A_FRAME_ADDRESS_HANDED: {"aes_desk_inf_disk": 1, "aes_do_info": 1, "aes_hndl_menu": 1, "aes_do_filemenu": 1,
+                                                    "aes_hndl_button": 1},
                            # (band 6 W3a's stage 2) the three rows whose run reaches drive_check, each arriving with its
                            # own park held: AES_BIOS_RETURN named their own, which the ROM's run stores unchanged
-                           A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED: {"aes_do_info": 2, "aes_do_open": 1}},
+                           # — and (band 6 W3a's stage 3) the four's rows over drive_check whose arrival holds its park,
+                           # and hndl_button's two text-view rows, whose ROM draw stores spans of the G_USERDEF block as
+                           # the arrival's earlier draw left them (the same frames: both rows also count below)
+                           A_TARGET_ONLY_ROW_S_OWN_STORED_UNCHANGED: {"aes_do_info": 2, "aes_do_open": 1, "aes_hndl_button": 4,
+                                                                      "aes_hndl_menu": 1, "aes_do_filemenu": 1},
+                           # (band 6 W3a's stage 3, the user's ruling of 2026-10-26) hndl_button's two text-view rows, whose
+                           # ROM run enters ub_trampoline: the block's bytes it stores and the park, each build's own
+                           THE_USERDEF_STACK: {"aes_hndl_button": 2}},
 }
 
 
@@ -5187,6 +5204,21 @@ def _its_own_in_a_door_s_park(row, staged, the_rom_s, stored_unchanged):
     return parked
 
 
+# ...AND A TARGET-ONLY ROW'S OWN SPANS OF THE DESK'S G_USERDEF STACK (the user's ruling of 2026-10-26): inside the block or
+# the park of a ROM run that enters ub_trampoline — its write ledger stores the park — the block under the top the row's
+# machine holds (`aes_switching.userdef_stack_windows`, the vouch's one spelling), counted on one line.
+def _its_own_on_the_userdef_stack(row, staged, the_rom_s, counted):
+    """The spans of `row.also_dropped` — but `counted` — inside the G_USERDEF stack's windows of the ROM's scheduled run
+    `the_rom_s` over `staged` (its replay's write ledger; the top off the staged machine)."""
+    import aes_switching
+    rest = [span for span in row.also_dropped if span not in counted]
+    if not rest:
+        return ()
+    _watch, _final, writes = aes_switching._replay_of(row, staged, the_rom_s)
+    windows = aes_switching.userdef_stack_windows(make_image(staged), writes)
+    return tuple(span for span in rest if any(lo <= span[0] and span[1] <= hi for lo, hi, _why in windows))
+
+
 def the_census_of_every_switching_row():
     """THE CENSUS (above) of every registered row that switches, of either register (`aes_event.every_switching_row`),
     over its registered Tier 3 drops."""
@@ -5239,6 +5271,10 @@ def _the_switching_census(switching_rows, registered):
             for kind in parked_own:
                 census.setdefault(kind, collections.Counter())[routines.core_symbol(row.name)] += 1
             own += tuple(span for spans in parked_own.values() for span in spans)
+            drawn_own = _its_own_on_the_userdef_stack(row, staged, the_rom_s, own)
+            if drawn_own:
+                census.setdefault(THE_USERDEF_STACK, collections.Counter())[routines.core_symbol(row.name)] += 1
+            own += drawn_own
         else:
             # A ROW'S OWN (`also_dropped`): named by the row, a kind each by its reason's first words — and, like every
             # kind, dropped only where the ROM's run changes it, but on THE ROWS NAMED STORED UNCHANGED (above).
@@ -5298,6 +5334,33 @@ def test_a_drop_of_the_frame_address_class_s_reason_outside_its_windows_is_refus
     with pytest.raises(AssertionError, match="a drop of no kind this census knows"):
         _the_switching_census({stage_1.DISK_ROW: registered},
                               {stage_1.DISK_ROW: (*registered.drops, stage_1.FUNCTION_WORD_DROP)})
+
+
+# ...AND THE G_USERDEF STACK'S (band 6 W3a stage 3, the user's ruling of 2026-10-26): the span the text view's clicked row
+# names beside its own — just outside the block or the park, in no window of the census's
+BELOW_THE_BLOCK, PAST_THE_BLOCK = "a byte below the block", "a byte past the block"
+ONTO_THE_TOP_POINTER = "the park a byte wider, onto the top pointer"
+ONTO_THE_TRAMPOLINE_SLOT = "the park a byte wider below, onto the trampoline slot"     # $8c35: $8c32's low byte, live
+
+
+@pytest.mark.parametrize("what", (BELOW_THE_BLOCK, PAST_THE_BLOCK, ONTO_THE_TOP_POINTER, ONTO_THE_TRAMPOLINE_SLOT))
+def test_a_drawing_row_s_span_outside_the_userdef_windows_is_a_drop_of_no_kind_in_the_census(what):
+    """CRAFTED: the text view's clicked row (`test_desk_w3a_stage3.DRAWING`) naming one span more, just outside the
+    G_USERDEF block or its park — a drop the census reads in no window of a kind: refused by the row's name."""
+    import aes_switching
+    import test_desk_w3a_stage3 as stage_3
+    name = next(name for name in sorted(stage_3.DRAWING) if "clicked" in name)
+    held = aes_event.TARGET_ONLY_SWITCHING_ROWS[name]
+    lo, top = aes_switching.userdef_stack_block(make_image(held.pokes))
+    park = aes_switching.USERDEF_SP_PARK
+    span = {BELOW_THE_BLOCK: (lo - 1, lo, aes_switching.USERDEF_STACK_WHY),
+            PAST_THE_BLOCK: (top, top + 1, aes_switching.USERDEF_STACK_WHY),
+            ONTO_THE_TOP_POINTER: (park, park + aes.LONG_BYTES + 1, aes_switching.USERDEF_PARK_WHY),
+            ONTO_THE_TRAMPOLINE_SLOT: (park - 1, park + aes.LONG_BYTES, aes_switching.USERDEF_PARK_WHY)}[what]
+    row = held.row._replace(also_dropped=(*held.row.also_dropped, span))
+    drops = (*held.drops, span)
+    with pytest.raises(AssertionError, match="a drop of no kind this census knows"):
+        _the_switching_census({name: held._replace(row=row, drops=drops)}, {name: drops})
 
 
 @pytest.mark.parametrize("held_by", ("a byte named and never stored", "a row whose run changes its park"))

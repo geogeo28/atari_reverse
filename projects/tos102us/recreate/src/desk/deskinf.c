@@ -19,6 +19,7 @@
 #include "desk/deskglobals.h"
 #include "desk/deskinf.h"
 #include "desk/deskleaf.h"
+#include "desk/desktop.h"
 #include "desk/deskusr.h"
 
 _Static_assert(DTTMSZ_FRAME_BYTES == HOST_SLOT_AES_DESK_INF_DTTMSZ_FRAME_BYTES, "inf_dttmsz's frame and its host slot");
@@ -85,18 +86,6 @@ int16_t aes_desk_inf_folder(uint8_t *image, uint32_t tree, int16_t files_object,
  * the ROM's from its lowest text up (an over-long text runs into the next as there). */
 #ifndef RECREATE_HOST_DIFFERENTIAL
 
-#define LINE_F_WORD_TEXT_(word) ".short " #word
-#define LINE_F_WORD_TEXT(word) LINE_F_WORD_TEXT_(word)
-
-/* hndl_msg `$fe2344`, THE ROM'S, THROUGH THE TABLE (the cycle's one back-edge, declared: `desk/deskinf.h`): inf_show's
- * own Line-F call word, which the handler dispatches through the table of ours as it does every ROM caller's. An
- * Alcyon callee under the handler: D0-D2 / A0-A2 its scratch (the handler's own D1, D2 and A0 among them), the rest
- * kept — A6 by its `unlk`. Its answer is read by no one here. */
-static inline void hndl_msg_through_the_table(void)
-{
-    __asm__ volatile (LINE_F_WORD_TEXT(INF_SHOW_HNDL_MSG_CALL_WORD) : : : "d0", "d1", "d2", "a0", "a1", "a2", "memory", "cc");
-}
-
 /* inf_show's dialog: `tree` centred, its box opened, drawn whole, run from `start` (form_do) and put away. A ROUTINE OF
  * ITS OWN (`noinline`, PD0: band 6 W3a's stage 1) — its four words and the registers that hold them off the stack
  * before the messages that follow are handled, the deepest path of any dialog (hndl_msg's redraws under it). */
@@ -142,7 +131,7 @@ __attribute__((noinline)) int16_t aes_desk_inf_show(uint8_t *image, uint32_t tre
     do {
         which = messages_asked(image);
         if (which & EV_MU_MESAG)
-            hndl_msg_through_the_table();
+            (void)aes_hndl_msg(image);
     } while (which & EV_MU_MESAG);
     return INF_SHOW_DONE;
 }

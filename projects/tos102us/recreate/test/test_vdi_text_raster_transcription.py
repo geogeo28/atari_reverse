@@ -16,6 +16,8 @@ sweep's equivalents, above in `test_vdi_textblt.py`) — EQUIVALENT; and a shift
 and its carry mask ($ffff) takes every bit from the carried word — believed EQUIVALENT, not proved.
 """
 
+import random
+
 import pytest
 
 import test_vdi_text_raster_fast as fast
@@ -105,11 +107,45 @@ def test_a_wide_row_with_no_shift():
     vdi_text.run_transcription("LINEA_ROM_CPU_TEXTBLT", textblt.run_pokes((x, 0, 40), style=THICKEN))
 
 
-@pytest.mark.parametrize("chup", (*vdi_text.ROTATIONS[1:], 450))
+# CHUP 450 IS NONE OF THE THREE TURNS: `.Lrotate` takes it as 270 for the source ($fd2a1e) and as 90 for the copy
+# ($fd2a40), so the step it hands the blit is NEGATIVE ($fd2ada) and the blit's `mulu.w` ($fd219a) takes it UNSIGNED:
+# the source starts (rows - 1) * (64K - step) bytes above the scratch half the copy went to, in RAM nobody owns, and
+# is read from there a longword a row ($fd2536). The case stages those bytes stale, as it does the scratch buffer.
+# ITS GLYPH IS RUN ONE COLUMN PAST THE 'F' (a Line-A caller's DELX): at the 'F''s own 8 rows the read lands at
+# $717aa, inside the span the bench stages our build in — zeroes in the original's image, our code in ours — so the
+# case compared two machines and its verdict moved with the link layout. At 9 it lands past the stack band, where
+# nothing is linked; a geometry that brought it back over the blob is a poke the bench refuses by name.
+UNKNOWN_TURN = 450
+UNKNOWN_TURN_WIDTH = 9
+UNKNOWN_TURN_SEED = 0x450_5EED
+# THICKEN | SKEW's pre-pass grows the copy past 16 rows, and the read leaves the 1 MB machine: nothing to stage.
+UNKNOWN_TURN_READS_RAM = (0, OUTLINE, LIGHTEN)
+
+
+def unknown_turn_source(effect):
+    """The stale rows the blit reads for CHUP 450: an outline's pre-pass grows the copy and takes the first
+    scratch half, so the turn's copy goes to the second ($fd2c7e)."""
+    growth = vdi_text.HEADER["TEXT_OUTLINE_GROWTH"] if effect & OUTLINE else 0
+    rows = UNKNOWN_TURN_WIDTH + growth
+    copy_row_bytes = (vdi_text.font_field("8x16", "FORM_HEIGHT") + growth) // vdi.PIXELS_PER_GROUP * vdi.WORD_BYTES \
+        + vdi.WORD_BYTES                                                       # $fd2a2a..$fd2a32
+    half = vdi_text.SCRATCH_HALF if effect & OUTLINE else 0
+    at = vdi_text.SCRATCH_AT + half + (rows - 1) * ((1 << 16) - copy_row_bytes)
+    return {at: random.Random(UNKNOWN_TURN_SEED).randbytes(rows * vdi.LONG_BYTES)}
+
+
+def rotation_pokes(chup, effect):
+    if chup != UNKNOWN_TURN:
+        return textblt_pokes("8x16", ord("F"), x=150, y=120, chup=chup, style=effect)
+    stale = unknown_turn_source(effect) if effect in UNKNOWN_TURN_READS_RAM else None
+    return textblt_pokes("8x16", ord("F"), x=150, y=120, chup=chup, style=effect, width=UNKNOWN_TURN_WIDTH,
+                         extra=stale)
+
+
+@pytest.mark.parametrize("chup", (*vdi_text.ROTATIONS[1:], UNKNOWN_TURN))
 @pytest.mark.parametrize("effect", (0, THICKEN | SKEW, OUTLINE, LIGHTEN))
 def test_rotation(chup, effect):
-    vdi_text.run_transcription("LINEA_ROM_CPU_TEXTBLT", textblt_pokes("8x16", ord("F"), x=150, y=120, chup=chup,
-                                                                       style=effect))
+    vdi_text.run_transcription("LINEA_ROM_CPU_TEXTBLT", rotation_pokes(chup, effect))
 
 
 @pytest.mark.parametrize("requested", (4, 12, 24, 32))

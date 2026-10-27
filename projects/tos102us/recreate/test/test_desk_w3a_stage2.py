@@ -88,9 +88,6 @@ STAGINGS = {REPLAYED: stage_1.gemdos_replayed, GETREZ_STAGED: stage_1.getrez_sta
 PARKED = {FLOPPY: ds.BIOS_DOOR_PARKED, DISK_FLOPPY: ds.BIOS_DOOR_PARKED}
 THE_PARK_DRIVE_CHECK_HOLDS = ds.RWABS_BACK          # drive_check's last BIOS call's site: its park, where an arrival holds it
 
-# ---- THE DECLARED BACK-EDGE (stage 1's): a dialog over a window — inf_show's C hands the window's redraw to hndl_msg ----
-HNDL_MSG_S_REDRAW = stage_1.HNDL_MSG_S_REDRAW
-
 # ---- A NAMED ROW'S BUDGET: one constant, every row that declares one (its own runs measured: 375,709 .. 726,111) ----------
 ROW_INSNS = 3_700_000
 
@@ -126,7 +123,6 @@ REPRESENTED_BY = {
     (w3a.DO_OPEN, FOLDER_OPENED): ("file: double-clicked (the alert)", "the first's chain ends with the alert up: no hand ends it"),
     (w3a.DO_OPEN, TTP): (LAUNCHED, "the first is W6-R8's launch"),
 }
-WINDOWED = (TTP, FILE_INFO, PROGRAM_INFO, INSTALL_APP)     # a window open under the dialog: its redraw after it
 
 
 def label_of(each):
@@ -146,15 +142,7 @@ def row_of(each):
                                       budget=each.budget, also_dropped=PARKED.get(each.staging, ()))
 
 
-def registered(each):
-    """The class's row registered target-only — over a window, its cost through the table declared first."""
-    row = row_of(each)
-    if each.chain in WINDOWED:
-        w3a.ROWS_THROUGH_THE_TABLE[aes_switching.row_name(row)] = HNDL_MSG_S_REDRAW
-    return w3a.register_target_only_switching(row)
-
-
-ROWS = {aes_switching.row_name(row): row for row in map(registered, CLASSES)}
+ROWS = {aes_switching.row_name(row): row for row in map(w3a.register_target_only_switching, map(row_of, CLASSES))}
 
 # ---- THE CLASSES NO ROW HOLDS, by name: `{(routine, the class's key, its arrivals' chains): why}` -------------------------------
 THE_SHOW_ARM = "the alert answered Show: pro_cmd and pro_run, the viewer run by the shell — W6-R8's launch arm (do_aopen's pro_run)"

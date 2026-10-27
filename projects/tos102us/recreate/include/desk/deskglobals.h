@@ -191,6 +191,8 @@
 #define DESK_ABOUT_TREE       8068       /* long: Desk > Desktop Info's           ($fe1e66 move.l 8068(a0),d5)   */
 #define DESK_TRASH_INFO_TREE  8072       /* long: the trash's Show Info          ($fe17c8 move.l 8072(a3),d6)   */
 #define DESK_BLITTER_ON       (DESK_PREFERENCES + 4) /* word: the third preference, the Blitter item's check ($fe211e 8122) */
+/* ---- ...and stage 3's (`desk/desktop.h`): the message the desk's loop read, which hndl_msg handles ---- */
+#define DESK_G_RMSG           7668       /* words[8]: the message itself, a_rmsg's buffer ($fe2356 move.w 7668(a4),d0) */
 /* ---- end of band 6 W3a's ---- */
 
 #ifndef __ASSEMBLER__

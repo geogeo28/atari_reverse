@@ -60,7 +60,7 @@ def _unflipped():
     return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE]
 
 
-FLIPPED_THROUGH_STAGE = 2               # band 6 W3a's stage 2: desksupp.c's three, do_optnmenu and do_deskmenu (stage 1: the F file's nine)
+FLIPPED_THROUGH_STAGE = w3a.FLIPPED_THROUGH_STAGE    # its one home: the cycle's module (stage 3: the cycle whole)
 
 
 def test_the_eighteen_are_band_6_s_routines_each_named_once_by_its_file_and_the_unflipped_ones_still_the_rom_s():
@@ -137,7 +137,7 @@ def test_the_generator_holds_the_unflipped_stages_declared_and_not_linked_and_le
     addresses = {getattr(addrs, name) for name in held}
     assert not addresses & set(generator.native_entries())
     verdicts = {entry.verdict for entry in generator.entries() if entry.target in addresses}
-    assert verdicts == {generator.THE_ROM_S}
+    assert verdicts == ({generator.THE_ROM_S} if addresses else set())     # (none held since stage 3: the cycle whole)
 
 
 def test_the_list_is_what_keeps_them_the_rom_s(monkeypatch):
@@ -171,40 +171,44 @@ def w3a_callees():
 
 def test_the_stages_are_the_eighteen_leaf_up_each_a_dag_but_the_one_back_edge_declared():
     """S2: the three stages partition the eighteen; every W3a callee of a routine flips at its stage or before, BUT the
-    calls declared through the table (inf_show -> hndl_msg, the cycle's one back-edge); and a declared call is a
-    back-edge indeed, retired at its callee's stage."""
+    back-edges the split declared (inf_show -> hndl_msg, the cycle's one); a declared one is a back-edge indeed,
+    retired at its callee's stage — and SINCE STAGE 3 EVERY ONE IS RETIRED: no call is made through the table."""
     staged = [name for names in w3a.STAGES.values() for name in names]
     assert sorted(staged) == sorted(w3a.W3A)
     callees = w3a_callees()
     assert set(callees) == set(w3a.W3A)
     upward = {(caller, callee) for caller, called in callees.items() for callee in called
               if w3a.STAGE_OF[callee] > w3a.STAGE_OF[caller]}
-    assert upward == set(w3a.CALLS_THROUGH_THE_TABLE)
-    assert all(call.retired_at == w3a.STAGE_OF[callee] for (_caller, callee), call in w3a.CALLS_THROUGH_THE_TABLE.items())
+    assert upward == set(w3a.BACK_EDGES)
+    assert all(call.retired_at == w3a.STAGE_OF[callee] for (_caller, callee), call in w3a.BACK_EDGES.items())
+    assert w3a.FLIPPED_THROUGH_STAGE == max(w3a.STAGES) and w3a.CALLS_THROUGH_THE_TABLE == {}
 
 
 DESKINF = layouts.parse_constants((aes.INCLUDE / "desk" / "deskinf.h",), known={**vdi.CONSTANTS, **aes.CONSTANTS})
 
 
-def test_the_back_edge_is_the_rom_s_own_call_word_at_its_site_and_the_header_s():
-    """THE DECLARED CALL IS THE ROM'S: its word is the call word of the callee's entry of the ROM's table, it lies at
-    the declared site, an instruction of the caller's body (before the next routine the inventory lists), and it is the
-    one word the caller's C is handed (`desk/deskinf.h`)."""
+RETIRED_CALL_WORD = "INF_SHOW_HNDL_MSG_CALL_WORD"     # the word inf_show's C was handed until stage 3 (`desk/deskinf.h`)
+
+
+def test_the_back_edge_is_the_rom_s_own_call_word_at_its_site_and_the_header_hands_it_no_more():
+    """THE DECLARED CALL WAS THE ROM'S: its word is the call word of the callee's entry of the ROM's table, it lies at
+    the declared site, an instruction of the caller's body (before the next routine the inventory lists) — and since
+    stage 3 retired it, the caller's C is handed that word no more (`desk/deskinf.h`: the C calls the C)."""
     starts = aes_desk.inventoried()
-    for (caller, callee), call in w3a.CALLS_THROUGH_THE_TABLE.items():
+    for (caller, callee), call in w3a.BACK_EDGES.items():
         assert call.site in aes.line_f_call_sites(callee).get(call.word, ())
         entry = getattr(addrs, caller)
         assert entry < call.site < min(start for start in starts if start > entry)
-    (inf_show_s,) = w3a.CALLS_THROUGH_THE_TABLE.values()
-    assert DESKINF["INF_SHOW_HNDL_MSG_CALL_WORD"] == inf_show_s.word
+    assert RETIRED_CALL_WORD not in DESKINF
 
 
 def test_a_call_through_the_table_reds_by_name_once_its_callee_is_flipped():
-    """THE RETIREMENT, standing: no declared call's callee is flipped (`aes_desk.flipped`, the blob's own table) — and
-    with hndl_msg read as flipped, the back-edge is named."""
+    """THE RETIREMENT, standing: no call still made through the table has its callee flipped (`aes_desk.flipped`, the
+    blob's own table) — and the back-edge the split declared, were it still made so, would be named: hndl_msg IS
+    flipped (stage 3), which is why it is retired."""
     assert not w3a.calls_outliving_their_stage(aes_desk.flipped()), w3a.OUTLIVED_ITS_STAGE
-    with_hndl_msg = aes_desk.flipped() | {addrs.AES_ROM_HNDL_MSG}
-    assert w3a.calls_outliving_their_stage(with_hndl_msg) == [f"{w3a.INF_SHOW} -> {w3a.HNDL_MSG}"]
+    assert addrs.AES_ROM_HNDL_MSG in aes_desk.flipped()
+    assert w3a.calls_outliving_their_stage(aes_desk.flipped(), w3a.BACK_EDGES) == [f"{w3a.INF_SHOW} -> {w3a.HNDL_MSG}"]
 
 
 # ---- hndl_button's store into its own argument slot (ruling O5: do_fopen's, fat_mark's precedent) -------------------------------
@@ -227,7 +231,8 @@ def test_hndl_button_s_store_into_its_argument_slot_is_read_back_by_no_caller():
 
 # ---- THE TARGET-ONLY ROW KIND: its census, by name (ruling O2) ---------------------------------------------------------------
 TARGET_ONLY_ROWS_BY_NAME = {}            # `{registered name: its routine}` — of the plain kind: none (stage 1's rows all switch)
-# ...and of the kind's rows that switch (the orchestrator's B2): stage 1's twenty (its fix pass's three among them), stage 2's fourteen
+# ...and of the kind's rows that switch (the orchestrator's B2): stage 1's twenty (its fix pass's three among them), stage 2's fourteen,
+# stage 3's fifty-one
 TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {
     "aes_desk_inf_show, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.INF_SHOW,
     "aes_desk_inf_show, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle": w3a.INF_SHOW,
@@ -264,8 +269,62 @@ TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {
     "aes_do_optnmenu, arrival 0 of 'A: Options > Install Disk Drive, Return'; Return at the first idle": w3a.DO_OPTNMENU,
     "aes_do_optnmenu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_OPTNMENU,
     "aes_do_deskmenu, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.DO_DESKMENU,
+    # ...and stage 3's forty-six (`test_desk_w3a_stage3.py`): hndl_msg, hndl_menu, do_filemenu and hndl_button
+    "aes_hndl_msg, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.HNDL_MSG,
+    "aes_hndl_msg, arrival 1 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "two windows: the lower one\'s title clicked (WM_TOPPED)"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    "aes_hndl_msg, arrival 0 of 'window: its closer clicked'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_MSG,
+    "aes_hndl_msg, arrival 0 of 'window: its fuller clicked'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "files: the window\'s right arrow clicked"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "files: the window\'s horizontal slider dragged right"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "files: the window\'s down arrow clicked"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "files: the window\'s sizer pulled up and left (smaller)"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    'aes_hndl_msg, arrival 0 of "two windows: the top one\'s title dragged lower (WM_MOVED)"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_MSG,
+    "aes_hndl_menu, arrival 0 of 'Desk > Desktop Info, Return'; Return at the first idle": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'Options > Set Preferences, Return'; Return at the first idle [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'Options > Save Desktop, Return'; Return at the first idle [GEMDOS SCRIPTED: the recording trap answers the ROM's own run's answers; the created handle's record the run's]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search; Dfree's DISKINFO laid, every pointer recorded as handed; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'A: Options > Install Disk Drive, Return'; Return at the first idle": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'A: File > Format, Return (the warning answered)'; Return at the first idle": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'window: View > Show as Text'; no wait": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'window: View > Sort by Size'; no wait": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'window: File > Close Window'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'folder: File > Close'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'window: View > Show as Icons (the view it has)'; no wait": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'files: View > Sort by Date'; no wait": w3a.HNDL_MENU,
+    "aes_hndl_menu, arrival 0 of 'files: View > Sort by Type'; no wait": w3a.HNDL_MENU,
+    "aes_do_filemenu, arrival 0 of 'A: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's own run in place — its answers, its DTAs at each search; Dfree's DISKINFO laid, every pointer recorded as handed; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'A: File > Format, Return (the warning answered)'; Return at the first idle": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'window: File > Close Window'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'window: its closer clicked'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.DO_FILEMENU,
+    "aes_do_filemenu, arrival 0 of 'folder: File > Close'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.DO_FILEMENU,
+    "aes_hndl_button, arrival 0 of 'drive A: selected'; no wait": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'a rubber box on the desktop, round the trash'; the box carried and let go at its door calls": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'window: A: opened again (two windows)'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'file: selected'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'folder: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]": w3a.HNDL_BUTTON,
+    'aes_hndl_button, arrival 0 of "files: the long file shown, a blank at each page\'s end and at its end"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'files: the program selected, File > Show Info, Return'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 1 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'a rubber box on the desktop, round drive B: and the trash'; the box carried and let go at its door calls": w3a.HNDL_BUTTON,
+    'aes_hndl_button, arrival 0 of "drive A:\'s object clicked at its corner, outside its image and its label"; no wait': w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_BUTTON,
+    "aes_hndl_button, arrival 0 of 'A: opened, the trash dragged into its window, Return'; the chain's own hands after the press [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]": w3a.HNDL_BUTTON,
+    'aes_hndl_button, arrival 0 of "c: opened (LABELLED: F3 THE CARTRIDGE\'S LINE A DRIVE)"; no wait': w3a.HNDL_BUTTON,
+    # ...and the stage's finish: the five classes ruled on (New Folder and the drag onto a folder over the frame-telling
+    # replay; the text view's two under the G_USERDEF stack's window, the user's ruling of 2026-10-26)
+    'aes_hndl_menu, arrival 0 of "folder: File > New Folder, \'A\', Return"; the chain\'s own hands after the item [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs; Dcreate\'s and Fclose\'s own frames told]': w3a.HNDL_MENU,
+    'aes_do_filemenu, arrival 0 of "folder: File > New Folder, \'A\', Return"; the chain\'s own hands after the item [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs; Dcreate\'s and Fclose\'s own frames told]': w3a.DO_FILEMENU,
+    "aes_hndl_button, arrival 0 of 'folder: the file dragged onto it, Return'; the chain's own hands after the press [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dcreate's and Fclose's own frames told]": w3a.HNDL_BUTTON,
+    'aes_hndl_button, arrival 0 of "files: View > Show as Text, the long file\'s line clicked"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_BUTTON,
+    'aes_hndl_button, arrival 0 of "text view: A: opened, the file\'s line dragged to the trash, Return (Cancel)"; the chain\'s own hands after the press [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_BUTTON,
 }
-NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 21    # the user's ruling of 2026-10-24: its own count, beside F4's (12 + 9)
+NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 38    # the user's ruling of 2026-10-24: its own count, beside F4's (12 + 9 + 17)
 TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: the count pins how many, this which (RW3aP's F5)
     "aes_desk_inf_show, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
     "aes_desk_inf_show, arrival 0 of 'folder: selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
@@ -289,6 +348,25 @@ TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: t
     "aes_do_info, arrival 0 of 'file: File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
     "aes_do_info, arrival 0 of 'files: the program selected, File > Show Info, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
     "aes_do_optnmenu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    # ...stage 3's seventeen (`test_desk_w3a_stage3.ROW_INSNS`, `DIALOG_ROW_INSNS`)
+    "aes_hndl_msg, arrival 0 of 'window: its fuller clicked'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    'aes_hndl_msg, arrival 0 of "files: the window\'s sizer pulled up and left (smaller)"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]',
+    "aes_hndl_menu, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_menu, arrival 0 of 'folder: File > Close'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_menu, arrival 0 of 'files: the program selected, Options > Install Application, Return'; Return at the first idle [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    "aes_do_filemenu, arrival 0 of 'A: File > Open'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_filemenu, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_do_filemenu, arrival 0 of 'folder: File > Close'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_button, arrival 0 of 'A: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_button, arrival 0 of 'window: A: opened again (two windows)'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_button, arrival 0 of 'folder: opened'; no wait [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; THE ROM'S FLOPPY DRIVER REPLAYED: its sector laid, its two answers staged]",
+    "aes_hndl_button, arrival 1 of 'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)'; the dialog's Cancel clicked [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs]",
+    'aes_hndl_button, arrival 0 of "c: opened (LABELLED: F3 THE CARTRIDGE\'S LINE A DRIVE)"; no wait',
+    # ...and the stage's finish: four more (`ROW_INSNS`)
+    'aes_hndl_menu, arrival 0 of "folder: File > New Folder, \'A\', Return"; the chain\'s own hands after the item [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs; Dcreate\'s and Fclose\'s own frames told]',
+    'aes_do_filemenu, arrival 0 of "folder: File > New Folder, \'A\', Return"; the chain\'s own hands after the item [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs; Dcreate\'s and Fclose\'s own frames told]',
+    "aes_hndl_button, arrival 0 of 'folder: the file dragged onto it, Return'; the chain's own hands after the press [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dcreate's and Fclose's own frames told]",
+    'aes_hndl_button, arrival 0 of "text view: A: opened, the file\'s line dragged to the trash, Return (Cancel)"; the chain\'s own hands after the press [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]',
 ))
 
 

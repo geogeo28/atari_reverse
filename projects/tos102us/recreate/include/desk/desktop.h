@@ -138,6 +138,65 @@
 #define DESK_INFO_ITEM        9          /* Desk > Desktop Info                 ($fe1e5a cmpw #9,d7)            */
 #define ABOUT_OK              11         /* the info box's exit object          ($fe1e74 adda.l #274: 11's state) */
 
+/* ==== BAND 6 W3a, STAGE 3: THE DESK'S THREE DISPATCHERS AND THE FILE MENU — hndl_msg, hndl_menu, do_filemenu,
+ * hndl_button (`src/desk/desktop.c`), COMPILED FOR THE TARGET ALONE (the user's R3, ruling O1: no host twin) ===========
+ *   $fe2344 hndl_msg()                       the message the desk's loop read (DESK_G_RMSG): a window's message clears
+ *                                            the selection first; MN_SELECTED the menu's (hndl_menu, the last window
+ *                                            verified first), its answer the handler's; WM_REDRAW, TOPPED, CLOSED (File >
+ *                                            Close's arm), FULLED, ARROWED, H/VSLID, SIZED, MOVED each its window's act;
+ *                                            the INF's windows kept (cnx_put) after a close, a full, a size or a move;
+ *                                            the message emptied, the menu brought up to date. MN_SELECTED's answer, else 0
+ *   $fe22ce hndl_menu(title, item)           the title's handler (Desk, File, View — the windows sorted, rebuilt and shown
+ *                                            again under the busy bee —, Options), then the title shown normal. Its answer
+ *   $fe1e80 do_filemenu(item)                File: Open / Show Info / Format of the first icon selected, New Folder in the
+ *                                            window on top (the selection cleared), Close / Close Window of it. The
+ *                                            opener's, the shower's or Format's answer, else 0
+ *   $fe2172 hndl_button(clicks, x, y, button, keys)  a click: its window found (the selection cleared where another,
+ *                                            the window verified, kept as the last); one click selects (act_bsclick) and,
+ *                                            the button still down (graf_mkstate INTO ITS OWN ARGUMENT `button` — the
+ *                                            thunk's copy: deskmain pops the ROM's unread), drags what act_bdown answers
+ *                                            (fun_drag); two open (act_bsclick, then do_filemenu's Open). The menu brought
+ *                                            up to date. fun_drag's or the opener's answer, else 0 */
+/* the message's words (DESK_G_RMSG): its type, then its window (or a menu's title) and four more */
+#define RMSG_TYPE             0          /* msg[0]                              ($fe2356 7668(a4))              */
+#define RMSG_HANDLE           6          /* msg[3]: the window, or MN_SELECTED's title ($fe2390 7674(a4))       */
+#define RMSG_TITLE            RMSG_HANDLE
+#define RMSG_X                8          /* msg[4]: MN_SELECTED's item, an arrow, a slider's place ($fe2458 7676) */
+#define RMSG_ITEM             RMSG_X
+#define RMSG_Y                10         /* msg[5]                              ($fe245e 7678(a4))              */
+#define RMSG_W                12         /* msg[6]                              ($fe2470 7680(a4))              */
+#define RMSG_H                14         /* msg[7]                              ($fe2476 7682(a4))              */
+#define HNDL_MSG_NOTHING_DONE 0          /* ($fe2354 move.w d4,d7: 0)                                           */
+#define REDRAW_NO_WINDOW      0          /* WM_REDRAW of window 0: nothing      ($fe239c tst.w 7674(a4))        */
+#define DESK_VERIFY_UNCHANGED 0          /* desk_verify's `changed`: MN_SELECTED's, a top's, a click's ($fe2384, $fe23f6, $fe219e clr.w (sp)) */
+/* win_slide's `vertical`: the H and V sliders' messages */
+#define SLIDE_HORIZONTAL      0          /* ($fe243a clr.w (sp))                                                */
+#define SLIDE_VERTICAL        1          /* ($fe2448 move.w #1,(sp))                                            */
+#define TOPPED_ZERO           0          /* wind_set WF_TOP's four words        ($fe23b6 clr.l, clr.l)          */
+/* hndl_menu's titles: the menu bar's */
+#define MENU_TITLE_DESK       3          /* ($fe231a cmpw #3,d0)                                                */
+#define MENU_TITLE_FILE       4
+#define MENU_TITLE_VIEW       5
+#define MENU_TITLE_OPTIONS    6
+#define MENU_TITLE_NORMAL     1          /* menu_tnormal's `normal`             ($fe2332 move.w #1,(sp))        */
+/* do_filemenu's items: the table $fef6a0's rows (20, 24 and 26 do nothing) */
+#define FILE_ITEM_OPEN        18         /* ($fe1f0e subw #18,d0)                                               */
+#define FILE_ITEM_SHOW_INFO   19
+#define FILE_ITEM_NEW_FOLDER  21
+#define FILE_ITEM_CLOSE       22         /* ...and WM_CLOSED's                  ($fe240a move.w #22,(sp))       */
+#define FILE_ITEM_CLOSE_WINDOW 23
+#define FILE_ITEM_FORMAT      25
+#define FUN_CLOSE_A_FOLDER    0          /* fun_close's `close_it`: up one folder ($fe1ee0 clr.w (sp))          */
+#define FUN_CLOSE_THE_WINDOW  1          /* ...the window whole                 ($fe1ef4 move.w #1,(sp))        */
+#define FILEMENU_NOTHING_DONE 0          /* ($fe1e8e clr.w d7)                                                  */
+/* hndl_button */
+#define BUTTON_ONE_CLICK      1          /* ($fe21c6 cmpi.w #1,8(a6))                                           */
+#define BSCLICK_ONE           0          /* act_bsclick's `double_click`        ($fe21d0 clr.w (sp))            */
+#define BSCLICK_TWO           1          /* ($fe2268 move.w #1,(sp))                                            */
+#define BUTTON_LEFT_DOWN      0x0001     /* graf_mkstate's button word, bit 0  ($fe220c btst #0,15(a6))        */
+#define BDOWN_NOTHING_DRAGGED (-1)       /* act_bdown's answer                  ($fe223c cmpw #-1,d4)           */
+#define BUTTON_NOTHING_DONE   0          /* ($fe2184 clr.w -2(a6))                                              */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -153,6 +212,11 @@ void aes_cnx_get(uint8_t *image);                                               
 /* band 6 W3a, stage 2: target-only */
 int16_t aes_do_optnmenu(uint8_t *image, int16_t item);                                           /* $fe1fde */
 int16_t aes_do_deskmenu(uint8_t *image, int16_t item);                                           /* $fe1e4c */
+/* band 6 W3a, stage 3: target-only */
+int16_t aes_hndl_msg(uint8_t *image);                                                            /* $fe2344 */
+int16_t aes_hndl_menu(uint8_t *image, int16_t title, int16_t item);                              /* $fe22ce */
+int16_t aes_do_filemenu(uint8_t *image, int16_t item);                                           /* $fe1e80 */
+int16_t aes_hndl_button(uint8_t *image, int16_t clicks, int16_t x, int16_t y, int16_t button, int16_t keys); /* $fe2172 */
 #endif
 #endif
 

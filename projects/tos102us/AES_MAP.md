@@ -136,7 +136,7 @@ S cleared) and use `trap #2`, never Line-F. Interrupt handlers `jsr` into C (`0x
 at IPL≥ their level; the `ori #$700` around the patch is what makes that safe.
 **For a C reconstruction:** a Line-F call is exactly `jsr target` + clobber d1/d2/a0; a Line-F return is exactly the Alcyon epilogue.
 Nothing observable remains EXCEPT (a) the RAM word `0xCC44` the original rewrites, (b) the 100-byte Malloc + copy at init, (c) CCR
-restore (irrelevant to C). Direct C calls on target are faithful. ONE C caller makes a Line-F call itself (band 6 W3a, until stage 3): inf_show's `$f558` of hndl_msg, a routine still the ROM's — the word the ROM's own inf_show holds at `$FDE99A`. 2,230 call sites / 454 return sites (304 with a mask) found.
+restore (irrelevant to C). Direct C calls on target are faithful. No C caller makes a Line-F call itself since band 6 W3a's stage 3 (until then inf_show's `$f558` of hndl_msg, the ROM's own word at `$FDE99A`: the cycle's back-edge, retired when hndl_msg flipped). 2,230 call sites / 454 return sites (304 with a mask) found.
 ### 1.4 Cost (68000, cycles): call path ≈ 34 (exception) + 118 = ~152 vs `jsr abs.l` 20 (+132); masked return ≈ 204+8n vs
 Alcyon epilogue 52+8n (+152); plain return ≈ 140 vs `unlk;rts` 28 (+112). **~250–285 cycles per call/return pair** that a gcc
 build (`jsr`/`bsr`) does not pay. Tier 3's denominator must run with `$2C` → `0xCC0E` as captured (it is) and drop `0xCC44`.
@@ -429,6 +429,9 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   STAGE 2 (2026-10-25): desksupp.c's three (do_open `FE1568`, do_aopen `FE11B4`, do_info `FE16E6`) and desktop.c's
   do_optnmenu `FE1FDE` and do_deskmenu `FE1E4C` written in C and flipped (target-only); entered from the ROM's hndl_msg /
   hndl_menu / do_filemenu / hndl_button through the table until stage 3.
+  STAGE 3 (2026-10-26): desktop.c's hndl_msg `FE2344`, hndl_menu `FE22CE`, do_filemenu `FE1E80` and hndl_button `FE2172`
+  written in C and flipped (target-only); the back-edge retired (inf_show's C calls hndl_msg's C). The cycle whole:
+  band 6's ROM's still are deskmain (W3b) and the cartridge pair.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

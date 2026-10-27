@@ -251,12 +251,14 @@ def gemdos_script(name, chain, nth=1):
     return tuple(script)
 
 
-def replay_pokes(script):
-    """The trap vector at THIS GROUP'S handler, fslib's ledger empty, its DTA cell STALE, the script."""
+def replay_pokes(script, handler_at=REPLAY_HANDLER_AT, argument_bytes=REPLAY_ARGUMENT_BYTES):
+    """The trap vector at THIS GROUP'S handler, fslib's ledger empty, its DTA cell STALE, the script. `handler_at`,
+    `argument_bytes`: another handler of fslib's tables, laid in its own span (band 6 W3a stage 3's, which tells two
+    more functions' frames)."""
     assert len(script) <= fsl.REPLAY_CALLS, f"{len(script)} calls: more than the replay's band holds"
     entries = b"".join(struct.pack(">I", answer & aes.LONG_MASK) + filled for answer, filled in script)
-    return {addrs.VECTOR_TRAP_GEMDOS: struct.pack(">I", REPLAY_HANDLER_AT),
-            REPLAY_HANDLER_AT: fsl.replay_handler(REPLAY_ARGUMENT_BYTES), fsl.DTA_CELL_AT: struct.pack(">I", vdi.STALE_LONG),
+    return {addrs.VECTOR_TRAP_GEMDOS: struct.pack(">I", handler_at),
+            handler_at: fsl.replay_handler(argument_bytes), fsl.DTA_CELL_AT: struct.pack(">I", vdi.STALE_LONG),
             **fsl.LEDGER.staged(), **fsl.SCRIPT.staged(entries)}
 
 

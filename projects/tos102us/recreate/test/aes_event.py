@@ -2991,12 +2991,15 @@ def declare_critical_error_slots(*slots):
     CRITICAL_ERROR_SLOTS.extend(slot for slot in slots if slot not in CRITICAL_ERROR_SLOTS)
 
 
-# (EXIT-ONLY since band 5 wave 4's slice B activated it — what our own gem_entry stores is given the ROM's name where a
-# run ends; a row's machine AT ITS ENTRY holds what it came with. STILL SO AFTER THE FULL FLIP, slice F: no routine of
-# band ≤ 5 reads `$8c32` — the desk copies it — so an entry mapping would be one no row could miss; a takeover's DOOR
-# maps it instead (`THE_DOOR`, below), where the desk's draws then arrive at ours.)
+# (EXIT-ONLY from band 5 wave 4's slice B to band 6 W3a stage 3 — what our own gem_entry stores is given the ROM's name
+# where a run ends; a takeover's DOOR maps it, below. MAPPED AT A RUN'S ENTRY TOO SINCE W3a STAGE 3 (the orchestrator's
+# call, option (a), on the text view's rows): a target-only row of the desk's draws a text line through the ARRIVAL
+# machine's USERBLK, which the ROM's boot filled with the ROM's trampoline — so our run would execute the ROM's
+# ub_trampoline and `$fde844`, a translation gap and no behaviour: on the shipped system the USERBLKs name OUR
+# trampoline (the our-boot walk's). `$8c32` and the walked USERBLKs (`userblk_slots`) are given the build's entry as
+# every Tier 3 run of ours is entered (`tier3._mapped_at_entry`); no committed row moved by it, measured.)
 USERBLK_TRAMPOLINE_SLOT = RelocatedCode("the desk's user-block trampoline ($8c32)", (aes.AES_USERDEF_TRAMPOLINE,),
-                                        {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, False)
+                                        {USERBLK_TRAMPOLINE: "aes_rom_ub_trampoline"}, True)
 ROM_TEXT_OF = {GEM_TRAP_VECTOR.what: ((addrs.GEM_TRAP2, GEM_TRAP_EXIT_END), (addrs.AES_ROM_ENTRY, AES_ENTRY_END)),
                PROGRAM_ENTRY.what: ((addrs.AES_ROM_GOTOPGM, GOTOPGM_END),),
                CRITICAL_ERROR_VECTOR.what: ((addrs.AES_ROM_CRIT_ERR, CRIT_ERR_END),),
@@ -3141,7 +3144,8 @@ SLOTS_WALKED_FROM_THE_MACHINE[USERBLK_TRAMPOLINE_SLOT.what] = userblk_slots
 # to the VDI's tick vector and through the AES's contrl by our own gsx_tick. So the three are among `CODE_RELOCATIONS`:
 # what our run stored of them is given the ROM's name before a compare and compared exactly. EXIT-ONLY, all three (the
 # glue's rule — a snapshot row's machine is the ROM-made one as it is; nothing of them at a row's entry: the full
-# flip, slice F's, puts them in a takeover's DOOR, below, with the VDI's button and motion vectors). EACH IS PROVED A
+# flip, slice F's, puts them in a takeover's DOOR, below, with the VDI's button and motion vectors) — but the
+# trampoline, at entry too since band 6 W3a stage 3 (`USERBLK_TRAMPOLINE_SLOT`, above). EACH IS PROVED A
 # MAPPING BY ROWS CUT FROM THE BUILD'S OWN START-UP RUN — gem_main's stretches (`aes_ourboot.STRETCHES`): the megabyte
 # where one ends holds all three as OUR gem_entry stored them in that same run, and un-mapping any reddens them by
 # name (`test_aes_ourboot.py`). No declaration is pending.
@@ -3169,8 +3173,9 @@ del _activated                          # (no second name for a declaration: the
 # machine has. EACH ADDITION IS THE MAPPING OF A STORE THE BUILD'S OWN
 # START-UP MAKES — `MAPPING_PROVED_BY`: gem_main's stretches on the our-boot machine hold all of them where our own
 # gem_entry, gsx_tick and gsx_init stored them — never a poke; each un-mapped from the door reddens the scan and the
-# who-ran of the door machine's runs for ITS longword. THE REGISTRY'S OWN FLAGS DO NOT MOVE BY IT: the four stay
-# exit-only on a snapshot row (a machine the ROM made holds the ROM's until a run of ours stores).
+# who-ran of the door machine's runs for ITS longword. THE REGISTRY'S OWN FLAGS DO NOT MOVE BY IT: the four stayed
+# exit-only on a snapshot row (a machine the ROM made holds the ROM's until a run of ours stores) — the trampoline
+# until band 6 W3a stage 3 mapped it at entry (`USERBLK_TRAMPOLINE_SLOT`).
 # ACCESSORY MACHINES STAY DOOR TAKEOVERS (ruling W4-R2); the Line-F table behind `$2c` is OURS since band 6's slice B0
 # (the door's ninth part, `LINEF_TABLE_SLOT`, below).
 BUTTON_GLUE_END, MOTION_GLUE_END = addrs.AES_ROM_MOTION_GLUE, addrs.AES_ROM_DRAWRAT     # (each end the next routine's entry)

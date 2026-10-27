@@ -1020,6 +1020,10 @@ C_CALLERS_OF_TRANSCRIBED_CORES = {
     # a folder's name joined to its path; do_aopen's command and tail copied into the desk's
     ("the_window_s_spec_parsed", "aes_streq"), ("folder_joined", "aes_strcat"), ("aes_do_aopen", "aes_strcpy"),
     # ---- end of W3a stage 2's ----
+    # ---- band 6 W3a, stage 3 (`src/desk/desktop.c`: target-only) ---- hndl_msg's WM_MOVED: the window's root put on
+    # its new work area
+    ("window_placed", "aes_r_set"),
+    # ---- end of W3a stage 3's ----
     # ---- band 6 slice F1 (N12): trp13 a row of the table — its C callers reach the `.S` through glue: drive_check's
     # Drvmap and forced media change, Format's and the copy's Getbpb and Rwabs (their helpers inlined, the address
     # loaded once into a register) ----

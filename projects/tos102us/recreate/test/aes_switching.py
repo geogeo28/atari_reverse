@@ -1084,6 +1084,59 @@ def door_park_windows(writes):
     return tuple(span for spans in door_parks_stored(writes).values() for span in spans)
 
 
+# THE DESK'S G_USERDEF STACK ON A TARGET-ONLY ROW (band 6 W3a stage 3; THE USER'S RULING of 2026-10-26): "New exemption:
+# the desktop's drawing scratch stack (the 1 KB below the pointer at $8c3a, plus the saved stack pointer at $8c36),
+# located by address, only for test cases whose ROM run goes through the drawing trampoline; a standing filler-byte
+# test proves nothing reads the leftovers; tests confirm it is refused if one byte too wide, if it covers $8c3a itself,
+# or if a case outside the text view claims it. The first exemption that covers bytes the ROM itself never wrote."
+# ub_trampoline ($fe3f3e) parks its caller's SP in AES_USERDEF_SP_SAVE (`move.l sp,$8c36`, $fe3f42), runs the desk's
+# draw code on the block whose TOP desk_alloc keeps in AES_USERDEF_STACK (`movea.l $8c3a,sp`, $fe3f48; desk_alloc's
+# `addi.l #1024,$8c3a`, $fee864) and takes the SP back ($fe3f56): the park is read only inside that activation, and
+# every later one loads its SP from the top and stores before it reads. Under the trampoline the draw is the ROM's
+# $fde844 on both shores, calling OUR gsx / dr_code through the table on ours — other frames, deeper (`$1d478` against
+# the ROM's `$1d4ac`), so the block differs in bytes THE ROM'S RUN NEVER STORES: no drop may name those (the kit's
+# `vet_dropped`), and Tier 3 PUTS THE WHOLE BLOCK BACK in our image as our run found it (`bench/tier3.py`) for a row
+# that drops a span of it. The windows, BY ADDRESS, only for a run whose own write ledger stores the park (the
+# trampoline entered): the block `[top - USERDEF_STACK_BYTES, top)`, `top` read off the row's ARRIVAL machine, and the
+# park longword — NEVER the top pointer itself (`AES_USERDEF_STACK`'s longword is live: refused by name).
+USERDEF_STACK_TOP_CELL, USERDEF_SP_PARK = aes.AES_USERDEF_STACK, aes.AES_USERDEF_SP_SAVE
+USERDEF_STACK_BYTES = aes.header_constants("deskmem.h")["USERDEF_STACK_BYTES"]
+USERDEF_STACK_WHY = ("the desk's G_USERDEF stack, under ub_trampoline: each build's draw frames below the top desk_alloc "
+                     "keeps (dead once the trampoline returns; the user's ruling of 2026-10-26)")
+USERDEF_PARK_WHY = "the desk's G_USERDEF stack's park: ub_trampoline parks its caller's SP, each build's own depth"
+USERDEF_TOP_COVERED = "the G_USERDEF stack's window covers its own top pointer (AES_USERDEF_STACK), which is live"
+
+
+def userdef_stack_block(image):
+    """`(lo, hi)` of the desk's G_USERDEF stack over `image`: the USERDEF_STACK_BYTES below the top AES_USERDEF_STACK
+    holds — refused by name where it would cover that pointer's own longword."""
+    top = case.long_in(image, USERDEF_STACK_TOP_CELL) & BUS
+    lo = top - USERDEF_STACK_BYTES
+    assert not (lo < USERDEF_STACK_TOP_CELL + aes.LONG_BYTES and USERDEF_STACK_TOP_CELL < top), (
+        f"[{lo:#x}, {top:#x}): {USERDEF_TOP_COVERED}")
+    return lo, top
+
+
+def userdef_stack_windows(image, writes):
+    """THE WINDOWS (above) of a run whose write ledger is `writes` over the arrival machine's `image`, as `(lo, hi,
+    why)`: the block and the park — none where the run never stores the park (the trampoline never entered)."""
+    if USERDEF_SP_PARK not in writes:
+        return ()
+    lo, top = userdef_stack_block(image)
+    return (lo, top, USERDEF_STACK_WHY), (USERDEF_SP_PARK, USERDEF_SP_PARK + aes.LONG_BYTES, USERDEF_PARK_WHY)
+
+
+def userdef_stack_drops(image, writes):
+    """What a row whose run enters the trampoline names as its own (`SwitchingRow.also_dropped`): the windows cut to
+    the bytes the ROM's run stores (`aes_event.stored_spans`, the kit's rule) — Tier 3 puts the rest of the block back."""
+    return tuple(span for window in userdef_stack_windows(image, writes) for span in aes_event.stored_spans(window, writes))
+
+
+def names_the_userdef_stack(dropped):
+    """Does a row that drops `dropped` name a span of the G_USERDEF stack's block (Tier 3's put-back asked)?"""
+    return any(why == USERDEF_STACK_WHY for _lo, _hi, why in dropped)
+
+
 def own_drops(row):
     """THE DROPS `row` NAMES BY ITS OWN HAND, as `(lo, hi, why)`: its declared X flag (`THE_X_FLAG_ALONE`, where
     `x_flag_differs`) and its own spans (`also_dropped`) — none of them derived off the ROM's run."""

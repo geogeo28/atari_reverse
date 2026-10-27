@@ -2250,7 +2250,7 @@ var 0xfef826 screnmgr_name
 fn 0xfe3f08 gem_trap2_exit
 cmt 0xfe3f08 the AES arm's way out, reached only by aes_entry's Line-F call at 0xfe65c0 (table index 175): D0.w := the word aes_entry cleared (always 0); adda.l #24,sp drops its own return, aes_entry's local and saved A6, the handler's return and the three arguments; UDA+0 := 0, UDA+62 := SP, SP := UDA+70; D1-A6 reloaded off the user stack; USP; rte. D0's HIGH word is set by nobody: the last longword the AES's code left there, or the program's own.
 fn 0xfe3f3e ub_trampoline
-cmt 0xfe3f3e ub_trampoline(parmblk): the caller's SP parked in 0x8c36, SP := 0x8c3a (the desk's 1 KB userdef stack, desk_alloc's), the PARMBLK pushed, jsr 0xfde844 (the desk's G_USERDEF draw code), SP back from 0x8c36, rts. Named by value at 0xfd9f9e (gem_entry stores it in 0x8c32); the desk copies 0x8c32 into each window icon's USERBLK. recreate: aes_rom_ub_trampoline (src/aes/trapdoor.S).
+cmt 0xfe3f3e ub_trampoline(parmblk): the caller's SP parked in 0x8c36, SP := 0x8c3a (the desk's 1 KB userdef stack, desk_alloc's), the PARMBLK pushed, jsr 0xfde844 (the desk's G_USERDEF draw code), SP back from 0x8c36, rts. Named by value at 0xfd9f9e (gem_entry stores it in 0x8c32); the desk copies 0x8c32 into each window icon's USERBLK. recreate: aes_rom_ub_trampoline (src/aes/trapdoor.S). Its slot $8c32 and the desk's USERBLKs are mapped to the build's own at every Tier 3 run's entry since W3a stage 3 (aes_event.USERBLK_TRAMPOLINE_SLOT.at_entry); its stack ($8c3a's 1 KB) and park ($8c36) are the G_USERDEF window's (the user's ruling of 2026-10-26).
 cmt 0xfe3fa2 signal's second `move.l a4,d0` (the PD it is about to wake): the last longword moved into D0 on the path of a wind_set that sends a message — the high word a program then reads in D0 after its trap (1 where that PD lies above 64 KB). See recreate/test/test_aes_trapdoor_rows.py.
 # gemdosif's last two (src/aes/gemdosif.S; band 5 wave 3, slice G) — crit_err's fn and cmt are above (0xfe3cbe)
 fn 0xfe3d2e dos_exec
@@ -2290,7 +2290,7 @@ cmt 0xfeb2fc sh_cmd(): the tail's first byte $c42e: $fe -> $fed61e(text $c42f); 
 fn 0xfe272e deskmain # ctx
 # band 6 wave 0 (the hands' campaign, test/aes_desk.py): desk routines READ by slice H, its reviewer or the fix pass — each # ctx until its unit's slice
 fn 0xfe1e80 do_filemenu
-cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6, $fe3760): Open $fe1568, Show Info $fe16e6 (call word $f620 at $fe1ec2), Format $fe1800; of the top window (a5, $fe2d46): New Folder $fdfebc ($f624 at $fe1ece), Close and Close Window $fe1a18 (word 0 / 1). The kit's oracle executes $f620..$f627 as MOVE16: aes_boot.continued takes those two exceptions by hand
+cmt 0xfe1e80 (item): items 18..26 by the table $fef6a0 — of the selection (d6, $fe3760): Open $fe1568, Show Info $fe16e6 (call word $f620 at $fe1ec2), Format $fe1800; of the top window (a5, $fe2d46): New Folder $fdfebc ($f624 at $fe1ece), Close and Close Window $fe1a18 (word 0 / 1). The kit's oracle executes $f620..$f627 as MOVE16: aes_boot.continued takes those two exceptions by hand. C: aes_do_filemenu (src/desk/desktop.c; band 6 W3a stage 3, target-only)
 fn 0xfe16e6 do_info
 cmt 0xfe16e6 (icon): File > Show Info — a file's (inf_file; fun_rebld where it said so), a folder's (inf_folder_dlg), a disk's (inf_disk), each after drive_check; the trash's dialog (tree 8072, object 7 cleared); 0. C: aes_do_info (src/desk/desksupp.c; W3a stage 2, target-only)
 fn 0xfe1568 do_open
@@ -2803,11 +2803,11 @@ var 0xcc24 linef_copy_table_operand
 cmt 0xcc24 the RAM copy of the Line-F handler's `movea.l #<table>,a0` operand (gem_entry copies $fee8c2.. to $cc00): the ROM's holds $fee900; every build of ours holds aes_linef_table there since band 6's slice B0 (gemstart.S's eighth relocation; aes_event.LINEF_TABLE_SLOT, mapped at a run's entry)
 # ---- AES band 6 W3a prep (2026-10-24): the cycle's eighteen less the four renamed above — declared target-only (no host twin, the user's R3), not linked; each entry the ROM's (bench/linef_table.py DECLARED_NOT_LINKED)
 fn 0xfe2344 hndl_msg
-cmt 0xfe2344 (): the desk's message (desk block +7668: msg[0]) by a switch on msg[0]-20 ($fef700) — MN_SELECTED -> hndl_menu(msg[3], msg[4]) at $fe2392; WM_REDRAW, WM_TOPPED (win_top), WM_CLOSED / FULLED / ARROWED / HSLID / VSLID / SIZED / MOVED (do_xyfix, wind_set); word: done. Called by deskmain and by inf_show ($fde99a, the cycle's back-edge). C: to be aes_hndl_msg (src/desk/desktop.c; band 6 W3a, target-only, not yet written)
+cmt 0xfe2344 (): the desk's message (desk block +7668: msg[0]) by a switch on msg[0]-20 ($fef700) — MN_SELECTED -> hndl_menu(msg[3], msg[4]) at $fe2392; WM_REDRAW, WM_TOPPED (win_top), WM_CLOSED / FULLED / ARROWED / HSLID / VSLID / SIZED / MOVED (do_xyfix, wind_set); word: done. Called by deskmain and by inf_show ($fde99a, the cycle's back-edge: a C call since stage 3). C: aes_hndl_msg (src/desk/desktop.c; band 6 W3a stage 3, target-only; the window arms TOPPED and SIZED / MOVED in noinline window_topped / window_placed)
 fn 0xfe22ce hndl_menu
-cmt 0xfe22ce (title, item): Desk / File / View / Options -> do_deskmenu, do_filemenu, do_viewmenu, do_optnmenu; menu_tnormal at the end. C: to be aes_hndl_menu (src/desk/desktop.c; W3a, not yet written)
+cmt 0xfe22ce (title, item): Desk / File / View / Options -> do_deskmenu, do_filemenu, do_viewmenu, do_optnmenu; menu_tnormal at the end. C: aes_hndl_menu (src/desk/desktop.c; band 6 W3a stage 3, target-only)
 fn 0xfe2172 hndl_button
-cmt 0xfe2172 (clicks, mx, my, button, keys): wind_find, act_bsclick / act_bdown / fun_drag; a double click -> do_filemenu(OPEN). Hands graf_mkstate &14(a6), its OWN argument slot ($fe21f4), read back at $fe220c — deskmain pops it unread. C: to be aes_hndl_button (src/desk/desktop.c; W3a, not yet written)
+cmt 0xfe2172 (clicks, mx, my, button, keys): wind_find, act_bsclick / act_bdown / fun_drag; a double click -> do_filemenu(OPEN). Hands graf_mkstate &14(a6), its OWN argument slot ($fe21f4), read back at $fe220c — deskmain pops it unread. C: aes_hndl_button (src/desk/desktop.c; band 6 W3a stage 3, target-only; graf_mkstate's button into the C's own copy of the argument; one click / two clicks in noinline one_click / two_clicks, fun_drag called after one_click returns, PD0)
 fn 0xfe1e4c do_deskmenu
 cmt 0xfe1e4c (item): Desk > Desktop Info — inf_show of the info tree, its exit object (11) cleared; 0. C: aes_do_deskmenu (src/desk/desktop.c; band 6 W3a stage 2, target-only)
 fn 0xfe11b4 do_aopen

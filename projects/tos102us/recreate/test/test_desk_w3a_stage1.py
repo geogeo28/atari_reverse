@@ -3,8 +3,8 @@ inf_file, inf_folder_dlg, inf_disk, inf_pref, opn_appl; the new `src/desk/deskin
 HELD TARGET-ONLY (the user's R3: no host twin, no Tier 1 case):
 
   * THE FLIP: each one's Line-F table entry its thunk, on both blobs (`aes_deskarrive.flipped`); inf_show's call of
-    hndl_msg — the cycle's one back-edge, the ROM's still until stage 3 — made BY THE ROM'S OWN CALL WORD
-    (`aes_desk_w3a.CALLS_THROUGH_THE_TABLE`), once, in its body.
+    hndl_msg — the cycle's one back-edge — made BY THE ROM'S OWN CALL WORD until stage 3 flipped hndl_msg
+    (`aes_desk_w3a.BACK_EDGES`), and since then a call of its C: no call word in any body of ours.
   * THE ROWS: ONE PER ARRIVAL CLASS THE W3a CUT MEASURED (its §2.2) — a row that switches over the ROM's own arrival
     machine (`aes_deskarrive.arrival`: a chain of the hands stopped at the routine's entry), its dialog's wait ended
     by the hand its chain gave there, registered TARGET-ONLY (`aes_desk_w3a.register_target_only_switching`: its
@@ -65,13 +65,17 @@ WAKE_NAMED = {RETURN_TYPED: "Return at the first idle", CANCEL_CLICKED: "the dia
 REPLAYED = ds.REPLAYED
 
 
-def gemdos_replayed(arrived, wake):
-    """The replay's pokes (`aes_desksupp.replay_pokes`) over the script of the ROM's own run in place."""
+def replay_script(arrived, wake):
+    """The replay's script: the ROM's own run in place's answers, and the DTA each search left."""
     ran = cdir.in_place(arrived, wake.receptions(arrived.chain))
     fills = iter(ran.fills)
-    script = tuple((answer, next(fills) if function in fsl.SEARCHES else fsl.NO_DTA)
-                   for function, answer in zip(ran.functions, ran.answers))
-    return ds.replay_pokes(script)
+    return tuple((answer, next(fills) if function in fsl.SEARCHES else fsl.NO_DTA)
+                 for function, answer in zip(ran.functions, ran.answers))
+
+
+def gemdos_replayed(arrived, wake):
+    """The replay's pokes (`aes_desksupp.replay_pokes`) over the script of the ROM's own run in place."""
+    return ds.replay_pokes(replay_script(arrived, wake))
 
 
 # ...and inf_pref's Getrez (the XBIOS's trap staged to answer THE ARRIVAL'S OWN SHIFTER MODE: `aes_deskapp.GETREZ_STAGED`,
@@ -98,11 +102,11 @@ def gemdos_replayed_as_handed(arrived, wake):
 STAGINGS = {REPLAYED: gemdos_replayed, GETREZ_STAGED: getrez_staged, REPLAYED_AS_HANDED: gemdos_replayed_as_handed}
 
 
-# ---- THE DECLARED BACK-EDGE, ITS COST (`aes_desk_w3a.ROWS_THROUGH_THE_TABLE`, Tier 3's general guard): a dialog over a
-# window puts the window's redraw in the desk's pipe, and inf_show's C hands it to hndl_msg — THE ROM'S — by the ROM's
-# own Line-F word. MEASURED, each such row on both blobs: 626 cycles in hndl_msg's body (the ROM's own run's 626, the
-# same instructions over the same machine) and 682 in the Line-F handler's copy (the call and its return, and hndl_msg's
-# one call of desk_clear's thunk). A row over no window queues no redraw for the desk: hndl_msg is not entered.
+# ---- THE DECLARED BACK-EDGE'S COST, AS IT WAS (`aes_desk_w3a.ROWS_THROUGH_THE_TABLE`, Tier 3's general guard): a dialog
+# over a window puts the window's redraw in the desk's pipe, and inf_show's C handed it to hndl_msg — THE ROM'S until
+# stage 3 — by the ROM's own Line-F word. MEASURED at stage 1, each such row on both blobs: 626 cycles in hndl_msg's
+# body and 682 in the Line-F handler's copy. RETIRED AT STAGE 3 (inf_show's C calls hndl_msg's): no row declares it now,
+# and the figure stands only as the crafted declaration the guard's refusals below are made with.
 HNDL_MSG_S_REDRAW = w3a.ThroughTheTable(body=626, handler=682)
 
 # ---- A NAMED ROW'S BUDGET: one constant, every row that declares one (its own runs measured: 444,737 .. 534,646) -------------
@@ -161,15 +165,7 @@ def row_of(each):
                                       budget=each.budget)
 
 
-def registered(each):
-    """The class's row registered target-only — and, over a window, its cost through the table declared first."""
-    row = row_of(each)
-    if each.chain in WINDOWED:
-        w3a.ROWS_THROUGH_THE_TABLE[aes_switching.row_name(row)] = HNDL_MSG_S_REDRAW
-    return w3a.register_target_only_switching(row)
-
-
-ROWS = {aes_switching.row_name(row): row for row in map(registered, CLASSES)}
+ROWS = {aes_switching.row_name(row): row for row in map(w3a.register_target_only_switching, map(row_of, CLASSES))}
 
 
 # ---- THE FLIP ----------------------------------------------------------------------------------------------------------------
@@ -188,14 +184,14 @@ def _function_words(blob, symbol):
     return [case.word_in(data, at) for at in range(0, len(data) - 1, LINE_F_WORD_BYTES)]
 
 
-def test_inf_show_calls_hndl_msg_by_the_rom_s_own_word_once_and_no_other_c_makes_a_line_f_call(blob):
-    """THE DECLARED BACK-EDGE: inf_show's body holds hndl_msg's call word exactly once (`desk/deskinf.h`'s
-    INF_SHOW_HNDL_MSG_CALL_WORD, the ROM's own at its site) — and none of the nine's other bodies holds it."""
-    (call,) = w3a.CALLS_THROUGH_THE_TABLE.values()
-    core = routines.core_symbol(w3a.INF_SHOW)
-    assert _function_words(blob, core).count(call.word) == 1
-    others = [routines.core_symbol(name) for name in STAGE_1 if name != w3a.INF_SHOW]
-    assert not [symbol for symbol in others if call.word in _function_words(blob, symbol)]
+def test_inf_show_calls_hndl_msg_s_c_and_no_body_of_the_cycle_holds_its_call_word(blob):
+    """THE BACK-EDGE RETIRED (stage 3): inf_show's body calls hndl_msg's C (`aes_hndl_msg`) — and no body of the
+    cycle's eighteen holds hndl_msg's Line-F call word, the ROM's own at inf_show's site (`aes_desk_w3a.BACK_EDGES`)."""
+    ((_edge, call),) = w3a.BACK_EDGES.items()
+    holding = [name for name in w3a.W3A if call.word in _function_words(blob, routines.core_symbol(name))]
+    assert not holding, holding
+    callees = transcription.call_graph(blob.elf)[routines.core_symbol(w3a.INF_SHOW)]
+    assert routines.core_symbol(w3a.HNDL_MSG) in callees
 
 
 ALIGNMENT_PAD = "nop"                    # what the linker fills a function's tail to its section's alignment with
@@ -303,16 +299,16 @@ def test_a_named_row_s_budget_is_the_one_constant():
 DECLARING = 12
 
 
-def test_the_rows_through_the_table_are_the_dialogs_over_a_window():
-    """THE DECLARED BACK-EDGE'S ROWS: every row over a window, each at hndl_msg's redraw's measured cost, and no other."""
+def test_no_row_declares_a_call_through_the_table_once_the_back_edge_is_retired():
+    """THE DECLARED BACK-EDGE'S ROWS, GONE (stage 3): the dialogs over a window — the rows that declared hndl_msg's
+    redraw through the table until then — are registered still, and NO ROW declares a call through the table: each one
+    over a window is held by Tier 3's general guard to no cycle in the AES's ROM (below, on both blobs)."""
     over_a_window = {name for name, each in zip(ROWS, CLASSES) if each.chain in WINDOWED}
-    assert {name: cost for name, cost in w3a.ROWS_THROUGH_THE_TABLE.items() if name in ROWS} == dict.fromkeys(over_a_window, HNDL_MSG_S_REDRAW)
-    # (every declaration a registered target-only row's: stage 2's own beside these — `test_desk_w3a_stage2.py` holds the
-    # whole set to the two stages' rows over a window, exactly)
-    assert set(w3a.ROWS_THROUGH_THE_TABLE) <= set(aes_event.TARGET_ONLY_SWITCHING_ROWS) and len(over_a_window) == THROUGH_THE_TABLE
+    assert len(over_a_window) == OVER_A_WINDOW and over_a_window <= set(aes_event.TARGET_ONLY_SWITCHING_ROWS)
+    assert w3a.ROWS_THROUGH_THE_TABLE == {}
 
 
-THROUGH_THE_TABLE = 12
+OVER_A_WINDOW = 12
 
 
 # ---- THE CLASS "A FRAME ADDRESS HANDED TO GEMDOS" (the user's ruling of 2026-10-25), on inf_disk's row ----------------------
@@ -422,12 +418,11 @@ def test_a_row_of_another_kind_has_no_window_of_the_class():
             assert aes_switching.frame_addresses_handed(final) == () and not _handed(held.drops), name
 
 
-# ---- THE DECLARED BACK-EDGE'S GUARD, its refusals crafted by name (review RS1's F3): over real rows, the declaration moved ---
+# ---- THE DECLARED BACK-EDGE'S GUARD, its refusals crafted by name (review RS1's F3): over real rows, a declaration made ---
+# (since stage 3 retired the back-edge no row declares one, so each refusal is of a declaration no run now bears out — and
+# the row over a window, declaring nothing, is held to no cycle in the AES's ROM by the general guard)
 THROUGH_A_WINDOW = next(name for name, each in zip(ROWS, CLASSES) if each.name == w3a.OPN_APPL)
 OVER_NO_WINDOW = next(name for name, each in zip(ROWS, CLASSES) if (each.name, each.chain) == (w3a.INF_SHOW, DESK_INFO))
-# ...the general equality's own words (`bench/tier3.py`): the back-edge's whole cost, body and handler, outside any window
-AES_ROM_SPENT_UNDECLARED = re.escape(f"OUR run spent {HNDL_MSG_S_REDRAW.body + HNDL_MSG_S_REDRAW.handler} cycles at the PCs "
-                                     f"of the AES's own ROM where its windows of the ROM's process hold 0 — ")
 
 
 def test_the_back_edge_s_guard_refuses_a_declared_row_whose_run_never_reaches_hndl_msg(blob, monkeypatch):
@@ -436,14 +431,16 @@ def test_the_back_edge_s_guard_refuses_a_declared_row_whose_run_never_reaches_hn
         aes_switching.measured_on(blob, ROWS[OVER_NO_WINDOW])
 
 
-def test_the_back_edge_s_guard_refuses_an_undeclared_row_whose_run_reaches_hndl_msg(blob, monkeypatch):
-    monkeypatch.delitem(w3a.ROWS_THROUGH_THE_TABLE, THROUGH_A_WINDOW)
-    with pytest.raises(AssertionError, match=AES_ROM_SPENT_UNDECLARED):
-        aes_switching.measured_on(blob, ROWS[THROUGH_A_WINDOW])
+def test_a_row_over_a_window_declares_nothing_and_spends_no_cycle_in_the_aes_rom(blob):
+    """THE BACK-EDGE'S ABSENCE (stage 3; until then its undeclared twin was refused, its 1,308 cycles in hndl_msg's ROM
+    body and the handler): opn_appl's row over a window, declaring nothing, passes Tier 3's general guard — its run
+    spends no cycle at the PCs of the AES's own ROM outside its windows."""
+    assert THROUGH_A_WINDOW not in w3a.ROWS_THROUGH_THE_TABLE
+    aes_switching.measured_on(blob, ROWS[THROUGH_A_WINDOW])
 
 
-def test_the_back_edge_s_guard_refuses_a_body_figure_off_by_one(blob, monkeypatch):
-    off_by_one = HNDL_MSG_S_REDRAW._replace(body=HNDL_MSG_S_REDRAW.body + 1)
-    monkeypatch.setitem(w3a.ROWS_THROUGH_THE_TABLE, THROUGH_A_WINDOW, off_by_one)
-    with pytest.raises(AssertionError, match=rf"OUR run spent {HNDL_MSG_S_REDRAW.body} cycles in the body .* declares {off_by_one.body}"):
+def test_the_back_edge_s_guard_refuses_its_old_declaration_on_the_row_over_a_window(blob, monkeypatch):
+    """...and the stage-1 declaration made on it again — the redraw through the table it no longer makes — refused."""
+    monkeypatch.setitem(w3a.ROWS_THROUGH_THE_TABLE, THROUGH_A_WINDOW, HNDL_MSG_S_REDRAW)
+    with pytest.raises(AssertionError, match=rf"OUR run spent 0 cycles in the body .* declares {HNDL_MSG_S_REDRAW.body}"):
         aes_switching.measured_on(blob, ROWS[THROUGH_A_WINDOW])

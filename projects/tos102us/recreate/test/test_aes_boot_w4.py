@@ -901,7 +901,8 @@ def test_each_declaration_of_the_wave_is_gem_entry_s_own_by_value_store_mapped_w
         (mapped_rom, entry), = part.mapping
         assert mapped_rom == rom and isr.blob_named(blob).base <= entry < isr.blob_named(blob).end
     assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3 and declared in aes_event.STORED_BY_GEM_ENTRY
-    assert declared in aes_event.CODE_RELOCATIONS and not declared.at_entry
+    # (the trampoline AT ENTRY TOO since band 6 W3a stage 3: the text view's rows draw through the arrival's USERBLKs)
+    assert declared in aes_event.CODE_RELOCATIONS and declared.at_entry == (declared is aes_event.USERBLK_TRAMPOLINE_SLOT)
     assert declared in aes_event.THE_DOOR and declared not in aes_event.THE_TRAP_DOOR
     assert aes_event.MAPPING_PROVED_BY[declared.what] == aes_event.STORED_BY_GEM_ENTRY_PROVED_BY
     assert aes_event.THE_MACHINE_S_VECTORS[declared.what][0] == declared.slots[0]

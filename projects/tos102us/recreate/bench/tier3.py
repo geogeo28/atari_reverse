@@ -1837,8 +1837,10 @@ def drops_held_to_our_run(row):
 # THAT STACK: so our run must have stored there (`vet_our_frames_were_laid`), from its own code and not from a
 # window of the ROM's.
 # AND, SINCE BAND 6's BINDING, THE DESK'S STACK on a row whose run enters the desk (`aes_switching.DESK_STACK_WHY`):
-# the ROM's desk over two builds' AES, the same kind.
-EACH_BUILD_S_OWN_FRAMES = frozenset({aes_takeover.STACK_WHY, *aes_switching.FOREIGN_STACK_WHYS})
+# the ROM's desk over two builds' AES, the same kind. AND, SINCE BAND 6 W3a STAGE 3 (the user's ruling of 2026-10-26),
+# THE DESK'S G_USERDEF STACK under ub_trampoline (`aes_switching.USERDEF_STACK_WHY`): the ROM's draw code over two
+# builds' gsx and dr_code, the same kind (the park beside it is held byte by byte: both builds' trampolines store it).
+EACH_BUILD_S_OWN_FRAMES = frozenset({aes_takeover.STACK_WHY, *aes_switching.FOREIGN_STACK_WHYS, aes_switching.USERDEF_STACK_WHY})
 
 
 def _whole_stack_of(kind):
@@ -1846,6 +1848,8 @@ def _whole_stack_of(kind):
     one place on every machine."""
     if kind == aes_takeover.STACK_WHY:
         return aes_takeover.spans_of(BASE_IMAGE).stack
+    if kind == aes_switching.USERDEF_STACK_WHY:         # ...desk_alloc's one block, the top every desk machine holds
+        return aes_switching.userdef_stack_block(BASE_IMAGE)
     (lo, top, _why), = (window for pd, whys in aes_switching.WHYS_OF.items() if kind in whys
                         for window in aes_switching.foreign_windows_of(pd, BASE_IMAGE) if window[2] == kind)
     return lo, top
@@ -2656,8 +2660,8 @@ def stored_by_gem_entry_relocation(elf, what):
     (`aes_event.STORED_BY_GEM_ENTRY`: justretf into `$947a`, the tick glue into `$947e` — and on, by gsx_tick, into the
     VDI's tick vector and the AES's contrl —, ub_trampoline into `$8c32` and the desk's USERBLKs) — empty for a build
     that links no entry for it. FOR EVERY RUN OF SUCH A BUILD, WHERE IT ENDS (band 5 wave 4, slice B: its own
-    gem_entry stores its own three; none is mapped at a run's entry — not after the full flip either, which made
-    `$88` alone an entry mapping and put these three in the DOOR a takeover maps: STATUS AWAITING (23), F-2)."""
+    gem_entry stores its own three; the full flip put them in the DOOR a takeover maps: STATUS AWAITING (23), F-2) —
+    and THE TRAMPOLINE AT A RUN'S ENTRY TOO since band 6 W3a stage 3 (`aes_event.USERBLK_TRAMPOLINE_SLOT`)."""
     declared, = [each for each in aes_event.STORED_BY_GEM_ENTRY if each.what == what]
     return _entries_placed(elf, declared.symbols)
 
@@ -2908,6 +2912,13 @@ class RomBench(rom_bench.RomBench):
         foreign_stacks = {_whole_stack_of(why): None for _lo, _hi, why in self._dropped_now
                           if why in aes_switching.FOREIGN_STACK_WHYS}
         foreign_stacks = {span: bytes(image[slice(*span)]) for span in foreign_stacks}
+        # ...AND THE DESK'S G_USERDEF STACK, WHOLE, for a row that drops a span of it (the user's ruling of 2026-10-26,
+        # `aes_switching.USERDEF_STACK_WHY`): the block under the top THIS machine holds, as our run found it — what
+        # then differs there is what the ROM's run stored, the row's named drop; what our deeper frames alone stored
+        # is the exemption (its standing filler-byte pin: `test_desk_w3a_stage3.py`)
+        if aes_switching.names_the_userdef_stack(self._dropped_now):
+            block = aes_switching.userdef_stack_block(image)
+            foreign_stacks[block] = bytes(image[slice(*block)])
         # THE SCREEN MANAGER MADE OURS (`aes_takeover`: what our build's own run through the machine's history left
         # of its context and its frames, made before this measurement began) — laid over the two spans, which the
         # machine came with holding the ROM's ctlmgr's.
@@ -3429,6 +3440,8 @@ def _turn_of(mine, its, whose):
 #   * THE ROW'S PROCESS'S SAVED CONTEXT, WHOLE (each build's caller's registers, from the first dispatch on);
 #   * on a row whose screen manager is ours, ITS TWO SPANS, WHOLE (`aes_takeover.windows_of`);
 #   * the blob's own span, and the row's own named drops (a QPB's address in an EVB, its `also_dropped`);
+#   * on a row that names a span of THE DESK'S G_USERDEF STACK, its block WHOLE (the user's ruling of 2026-10-26: each
+#     build's draw frames there, ours deeper — put back where our run ends, `RomBench._call`);
 # and with every code address of the registry our shore holds GIVEN THE ROM'S NAME first — mapped, never left out: a
 # queue entry our forker is yet to run; THE RECORDS OF A RECORDING, in flight or just ended (back from the recorder's
 # cursor while each holds a fork function's entry of ours — ap_trecd turns them into numbers only as it returns, and
@@ -3451,8 +3464,10 @@ class _StopImages:
             its_context = switch.uda_context_drop(aes_event.uda_of(self._process, memory))
             the_manager_s = aes_takeover.windows_of(memory) if aes_takeover.named_in(self._dropped) else ()
             the_desk_s = aes_switching.foreign_stacks_named(self._dropped, memory)
-            self._left_out = (*its_context, *switch.DISPATCHER_STACK_DROP, *the_manager_s, *the_desk_s, *self._dropped,
-                              (self._blob.base, self._blob.end, "the blob's own span"))
+            drawn = aes_switching.names_the_userdef_stack(self._dropped)
+            the_userdef_s = ((*aes_switching.userdef_stack_block(memory), aes_switching.USERDEF_STACK_WHY),) if drawn else ()
+            self._left_out = (*its_context, *switch.DISPATCHER_STACK_DROP, *the_manager_s, *the_desk_s, *the_userdef_s,
+                              *self._dropped, (self._blob.base, self._blob.end, "the blob's own span"))
         return self._left_out
 
     def the_rom_s(self, memory):
@@ -3900,10 +3915,11 @@ def _two_shores(blob, who, machine, switches, images_of=None):
 
 
 def _mapped_at_entry(image, relocations):
-    """`image` with every code slot a relocation maps AT ENTRY given our build's address (as `RomBench._call` does)."""
+    """`image` with every code slot a relocation maps AT ENTRY given our build's address (as `RomBench._call` does) —
+    the slots WALKED FROM THE MACHINE too (`slots_of`: the desk's USERBLKs, since the trampoline is mapped at entry)."""
     for relocation in relocations:
         if relocation.at_entry:
-            map_code_slots(image, relocation.slots, relocation.mapping)
+            map_code_slots(image, slots_of(relocation, image), relocation.mapping)
 
 
 def as_our_run_is_entered(image, elf, symbol):

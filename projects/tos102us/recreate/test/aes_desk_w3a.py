@@ -6,7 +6,8 @@ This module is the cycle's one home before its C exists (the prep, `test_desk_w3
     call sites and bodies (the W3a cut's `dis/`), declared TARGET-ONLY (`vdi.TARGET_ONLY`, ruling O1: the C is compiled
     for the target alone, so the host library has no core — one there is refused by name);
   * THE SPLIT, S2 (rulings U3 / O4): three flip stages, leaf-up — and THE ONE BACK-EDGE, inf_show -> hndl_msg, made
-    THROUGH THE TABLE until hndl_msg flips (`CALLS_THROUGH_THE_TABLE`, the desk door's kind, retired at stage 3);
+    THROUGH THE TABLE until hndl_msg flipped (`BACK_EDGES`, the desk door's kind) and RETIRED AT STAGE 3: since then
+    inf_show's C calls hndl_msg's C, and no call is made through the table (`CALLS_THROUGH_THE_TABLE` is empty);
   * THE TARGET-ONLY ROW KIND (ruling U1 / O2): a priced row with NO COMPANION, held by Tier 3's own differential on the
     bound machine — both blobs — and by the our-shore campaign's invariants; its own census (`TARGET_ONLY_ROWS`, by
     name), never ROWS_THAT_SWITCH. A NAMED ROW MAY DECLARE A BUDGET (the user's ruling of 2026-10-24): F4's plain rule,
@@ -81,11 +82,15 @@ STAGES = {
 STAGE_OF = {name: stage for stage, names in STAGES.items() for name in names}
 
 # ---- THE ONE BACK-EDGE, DECLARED: a C -> ROM call through the table, the desk door's kind -------------------------------
-# `{(caller, callee): (the ROM's own call word, its site in the caller's ROM body, the stage that retires it)}` — the C
-# of the caller makes the call by that word (`desk/deskinf.h`'s INF_SHOW_HNDL_MSG_CALL_WORD) while the callee is the
-# ROM's; RED BY NAME once the callee is flipped (`test_desk_w3a.py`): the call is then the C's own, and this goes.
+# `{(caller, callee): (the ROM's own call word, its site in the caller's ROM body, the stage that retires it)}`: THE
+# CYCLE'S BACK-EDGES as the split declared them. While its callee was the ROM's, the caller's C made the call by that
+# word; RETIRED at its stage — the callee flipped, the call is the C's own (stage 3: inf_show's C calls `aes_hndl_msg`).
+# The calls still made through the table are the back-edges whose stage is not yet flipped: none since stage 3. A call
+# declared there whose callee is flipped is RED BY NAME (`test_desk_w3a.py`).
 TableCall = namedtuple("TableCall", "word site retired_at")
-CALLS_THROUGH_THE_TABLE = {(INF_SHOW, HNDL_MSG): TableCall(0xF558, 0xFDE99A, 3)}
+BACK_EDGES = {(INF_SHOW, HNDL_MSG): TableCall(0xF558, 0xFDE99A, 3)}
+FLIPPED_THROUGH_STAGE = 3               # band 6 W3a's stage 3: the cycle whole (stage 1 the F file's nine, stage 2 five)
+CALLS_THROUGH_THE_TABLE = {edge: call for edge, call in BACK_EDGES.items() if call.retired_at > FLIPPED_THROUGH_STAGE}
 OUTLIVED_ITS_STAGE = "a call declared through the table outlived its stage: its callee is flipped — make it the C's own call"
 
 
@@ -93,7 +98,8 @@ OUTLIVED_ITS_STAGE = "a call declared through the table outlived its stage: its 
 # own body — the ROM's instructions over the same machine, THE ROM'S OWN RUN's cycles there to the cycle — and the
 # Line-F handler's RAM copy under the calls and returns that ROM code makes. DECLARED BY ROW, measured and pinned by the
 # battery that registers it: `{registered row: ThroughTheTable(cycles in the callee's body, cycles in the handler's
-# copy)}` (`test_desk_w3a_stage1.py`); a row absent here spends none.
+# copy)}` (stage 1's and stage 2's rows over a window, until stage 3); a row absent here spends none — every row since
+# stage 3, which retired the one call (`test_desk_w3a_stage1.py` holds it empty).
 ThroughTheTable = namedtuple("ThroughTheTable", "body handler")
 ROWS_THROUGH_THE_TABLE = {}
 
@@ -107,9 +113,11 @@ def back_edge_spans():
     return tuple((entry, min(start for start in starts if start > entry)) for entry in entries)
 
 
-def calls_outliving_their_stage(flipped):
-    """The declared calls through the table whose callee is FLIPPED (its ROM address in `flipped`), by name."""
-    return sorted(f"{caller} -> {callee}" for caller, callee in CALLS_THROUGH_THE_TABLE if getattr(addrs, callee) in flipped)
+def calls_outliving_their_stage(flipped, calls=None):
+    """The calls through the table (`calls`: CALLS_THROUGH_THE_TABLE by default) whose callee is FLIPPED (its ROM
+    address in `flipped`), by name."""
+    calls = CALLS_THROUGH_THE_TABLE if calls is None else calls
+    return sorted(f"{caller} -> {callee}" for caller, callee in calls if getattr(addrs, callee) in flipped)
 
 
 # ---- THE TARGET-ONLY ROW KIND (the user's R3; the orchestrator's U1, O1, O2) -----------------------------------------------
@@ -209,14 +217,24 @@ def drops_unvouched(drops, staged, final, writes, windows):
     return unvouched
 
 
-def vouched_for(row, held):
+def vouched_for(row, held, ran=None):
     """THE VOUCH (above), of the row `row` as settled (`held`: its `aes_switching.Registered`): its drops' refusals. Its
-    windows: the settling's (`by_nature_windows`) and A DOOR'S PARK the run stores into (`aes_switching.door_park_windows`:
-    R9's kind, the orchestrator's ruling at W3a stage 2 — the park longword only, read off this run's write ledger)."""
+    windows: the settling's (`by_nature_windows`), A DOOR'S PARK the run stores into (`aes_switching.door_park_windows`:
+    R9's kind, the orchestrator's ruling at W3a stage 2 — the park longword only, read off this run's write ledger) and
+    THE DESK'S G_USERDEF STACK where the run enters ub_trampoline (`aes_switching.userdef_stack_windows`: the user's
+    ruling of 2026-10-26 — the block under the top the arrival machine holds, and the park, by address). `ran`: the ROM
+    run's replay `(final, writes)` where the caller has made it."""
     import aes_switching
-    _reference, _watch, final, writes = aes_switching._replayed(row, held.pokes)
-    windows = by_nature_windows(row, held) + aes_switching.door_park_windows(writes)
-    return drops_unvouched(held.drops, make_image(held.pokes), final, writes, windows)
+    final, writes = ran or aes_switching._replayed(row, held.pokes)[2:]
+    staged = make_image(held.pokes)
+    windows = (by_nature_windows(row, held) + aes_switching.door_park_windows(writes)
+               + aes_switching.userdef_stack_windows(staged, writes))
+    return drops_unvouched(held.drops, staged, final, writes, windows)
+
+
+# THE TARGET-ONLY ROWS THAT SWITCH WHOSE ROM RUN ENTERS ub_trampoline (its write ledger stores the park, read where each
+# is registered): the only rows the G_USERDEF stack's windows can admit a drop on — by name, held by the stage's battery.
+ENTERS_THE_TRAMPOLINE = set()
 
 
 def register_target_only_switching(row):
@@ -230,8 +248,11 @@ def register_target_only_switching(row):
     row_name = aes_switching.row_name(row)
     vet_a_target_only_row(row.name, row_name)
     row, held = aes_switching.held_of(row)
-    unvouched = vouched_for(row, held)
+    final, writes = aes_switching._replayed(row, held.pokes)[2:]
+    unvouched = vouched_for(row, held, (final, writes))
     assert not unvouched, f"{row_name}: {A_DROP_NO_STORE_VOUCHES_FOR}: {unvouched}"
+    if aes_switching.USERDEF_SP_PARK in writes:
+        ENTERS_THE_TRAMPOLINE.add(row_name)
     aes_event.TARGET_ONLY_SWITCHING_ROWS[row_name] = held
     aes.ROWS.register(row_name, getattr(addrs, row.name), held.pokes, dropped=held.drops, delivered=held.switches,
                       answered=row.answered, companion_free=True)

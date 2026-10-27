@@ -608,7 +608,7 @@ stage 2 desksupp.c's three with do_optnmenu and do_deskmenu, stage 3 hndl_msg, h
 (desktop.c spans stages 2 and 3, written by sequential authors) — each stage a DAG of the AES map's callees but
 for THE ONE BACK-EDGE, inf_show -> hndl_msg, which inf_show's C makes THROUGH THE TABLE by the ROM's own call word
 (`$f558`, `desk/deskinf.h`'s INF_SHOW_HNDL_MSG_CALL_WORD; `aes_desk_w3a.CALLS_THROUGH_THE_TABLE`) — a declared C -> ROM
-call of the desk door's kind, red by name once hndl_msg is flipped (it outlived stage 3). hndl_button's store into its
+call of the desk door's kind until stage 3, which flipped hndl_msg and retired it. hndl_button's store into its
 own argument slot 14(a6) (graf_mkstate handed its address) is read back by no caller (deskmain pops the five words):
 do_fopen's and fat_mark's class, pinned. `aes_deskact.register_row` takes a case's wake (`at_idle`: a yielding
 routine's wait, refused by name on a plain row) and registers plain an arrival of a yielding routine whose ROM run
@@ -2697,7 +2697,11 @@ THE DECLARED BACK-EDGE (band 6 W3a stage 1): a row whose run makes a call
 declared through the table (`aes_desk_w3a.CALLS_THROUGH_THE_TABLE`) declares what it spends in the AES's ROM
 (`ROWS_THROUGH_THE_TABLE`: the callee's body, the handler's copy); `bench/tier3.py`'s `vet_the_back_edge` holds the
 body to the declaration AND to the ROM's own run's cycles there, on the switching path and on the (V) path, and the
-ROM's code so run is in both own columns.
+ROM's code so run is in both own columns. RETIRED AT STAGE 3: `aes_desk_w3a.BACK_EDGES` keeps the
+declaration as the split made it; `CALLS_THROUGH_THE_TABLE` is derived from it and `FLIPPED_THROUGH_STAGE` (empty since
+stage 3); `ROWS_THROUGH_THE_TABLE` is empty, `vet_the_back_edge` holds no row, and its crafted refusals stand on a
+declaration no run bears out (`test_desk_w3a_stage1.py`); the row over a window declaring nothing is held to no cycle in the
+AES's ROM by the general guard.
 
 A FRAME ADDRESS HANDED TO GEMDOS (the user's ruling
 of 2026-10-25): where a run hands a `trap #1` the address of a place in its own frame, the run's recording trap keeps it
@@ -2739,6 +2743,41 @@ the cell, a span one byte wider than the longword either side (the vouch's half 
 `test_desk_w3a_stage2.py`, the census's in `test_desk_w3a.py`); a companion row's census never reads the window. Save Desktop's row is staged over app_save's own
 recorder (`aes_deskapp.GEMDOS`): fslib's replay records six bytes whatever the call, a Dgetdrv's the stack beyond it.
 One named budget, `test_desk_w3a_stage2.ROW_INSNS` (3,700,000), on the nine rows past the default margin.
+
+W3a STAGE 3 (2026-10-26; STATUS.md, "BAND 6 W3a's STAGE 3"): THE DESK'S THREE DISPATCHERS AND THE FILE MENU IN C AND
+FLIPPED — `src/desk/desktop.c`'s hndl_msg, hndl_menu, do_filemenu and hndl_button, compiled `#ifndef
+RECREATE_HOST_DIFFERENTIAL`, each table entry its thunk; deskmain (W3b, the ROM's) enters hndl_msg and hndl_button through
+the table and reads the thunk's D0. The cycle whole; its back-edge retired. Their rows: 51 target-only rows that switch
+(`test/test_desk_w3a_stage3.py`), one per arrival class the cut's key measures (re-measured over every chain: 52 classes —
+hndl_msg 10 by message type, WM_TOPPED and WM_MOVED reached by the prep's chains, WM_HSLID and WM_SIZED by later ones;
+hndl_menu 17; do_filemenu 8; hndl_button 17): 51 held, 1 refused by name (Print Screen, stage 2's) — the text view's
+line clicked and dragged under the G_USERDEF stack's window (below). New hand: THE CHAIN'S OWN HANDS after the arrival's step
+(`the_chain_s_hands`: after the press, after the item), and a rubber box's at its door calls. Stagings stage 1's and 2's,
+and THE FRAME-TELLING REPLAY (below). Budgets: stage 2's `ROW_INSNS` and stage 1's `DIALOG_ROW_INSNS`, 17 rows.
+
+A RECORDER'S BYTES PAST A FRAME ARE A HARNESS ARTIFACT, NOT A DROP (W3a stage 3's finish, the orchestrator's call): fslib's
+replay records six bytes of every GEMDOS call it does not tell, and past a shorter frame those are the CALLER'S STACK —
+the ROM's glue's return on one shore, ours on the other — which no build reproduces and GEMDOS never reads. The fix is a
+precise recorder, never a window: `test_desk_w3a_stage3.FRAMED`, desksupp's replay with Dcreate and Fclose told their own
+frames by `aes_shell.FRAME_BYTES` (one source; a test pins the sizes equal), its handler fslib's tables laid in a span of
+its own and registered in `aes_shell.GEMDOS_LEDGERS` (so a frame address it records is read as every recorder's is). The
+shared handler is left as it is: telling it two more functions would move every row priced over it (fslib's
+`SESSION_ARGUMENT_BYTES` precedent: a handler of its own). Each row over it is pinned to record no call past its own frame.
+
+THE DESK'S G_USERDEF STACK (W3a stage 3; the user's ruling
+of 2026-10-26, quoted in STATUS): a window BY ADDRESS for a target-only row whose ROM run enters ub_trampoline (its own
+write ledger stores the park `$8c36`) — the 1 KB block under the top the ARRIVAL machine holds at `$8c3a`, and the park;
+never the top pointer itself (`aes_switching.userdef_stack_windows`; constants read off the ROM's `$fe3f42` / `$fe3f48`
+/ `$fe3f56` and desk_alloc's `$fee864`, pinned). Vouched, and counted on its own census line (`THE_USERDEF_STACK`); Tier 3
+puts the WHOLE block back in our image and leaves it out of the stop images — the first exemption of bytes the ROM never
+wrote: a drop still names only the ROM's stores (the kit's rule). Its pin is a standing filler-byte test (block `$A5` /
+park `$5A`, then the complement: every byte outside unchanged on both shores, both blobs); its crafted refusals: a run
+that never enters the trampoline, the block or the park a byte wider at either edge (below the park is `$8c35`, the
+trampoline slot's low byte), any span on `$8c3a..$8c3d`, a moved top. Exactly the text view's two rows enter it.
+ITS COMPANION: the trampoline's code slots are mapped AT A RUN'S ENTRY (`aes_event.USERBLK_TRAMPOLINE_SLOT.at_entry`, the
+orchestrator's call): the ROM-booted arrival's USERBLKs name the ROM's ub_trampoline, which our run would otherwise
+execute with the ROM's `$fde844` — a translation gap (the shipped system's USERBLKs name ours), not behaviour.
+`tier3._mapped_at_entry` now maps a walked relocation's slots (`slots_of`); no committed row moved by it.
 
 A NAMED REGISTERED ROW MAY DECLARE ITS OWN BUDGET (since band 6 slice F3's stage 2, THE USER'S RULING of 2026-10-21,
 "rows may declare budget"). A registered row that switches and whose run is past the default derivation margin (a desk

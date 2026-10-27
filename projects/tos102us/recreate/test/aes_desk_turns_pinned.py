@@ -1,6 +1,12 @@
 """THE TURNS OF A PROCESS WHOSE TEXT IS THE ROM'S, OVER OUR AES, PINNED (band 6 slice B0, THE BINDING; ruling W6-R7) —
 DATA, WRITTEN BY `tools/repin.py` FROM A RECORDED RUN (`tools/pin_recorder.py`; recreate/README.md, "Re-pinning the rows
-that switch"), never by hand.
+that switch"), never by hand — BUT ONCE: band 6 W3a's stage 3 re-pinned by hand the ten triples of the five rows whose
+desk's turn reads a message (ap_rdwr's, sendmsg's, ev_block's, ctlmgr's two; both blobs), because `repin.py` refuses a
+moved ROM-side member and stage 3 moved exactly that one: the ROM's run is unchanged (each row's own total the same),
+but the turn's ROM member is the ROM's AES-span cycles LESS our shore's there, and our shore no longer runs the ROM's
+hndl_msg nor the handler copy — so it rose by exactly what the row's "OS both run" fell (+668/−668 for ap_rdwr,
+sendmsg and ev_block, +2662/−2662 for both ctlmgr rows; the review RS3 verified each pair, and `vet_its_turns` holds
+every triple exact).
 
 Since the Line-F table is ours at every Tier 3 run's entry, THE DESK'S TURN inside a row (`aes_switching.THE_DESK_S`)
 — and another process's resumed in the ROM's AES text on a machine with no door (`ANOTHER_PROCESS_S`) — runs the ROM's
@@ -15,20 +21,20 @@ order — and that a row with no line here makes none.
 """
 PINNED = {
     "aes_ap_rdwr, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((245300, 337824, 0),),
-        "bench_shipped": ((233428, 337824, 11740),),
+        "bench": ((245632, 338492, 0),),
+        "bench_shipped": ((233762, 338492, 11740),),
     },
     "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read": {
-        "bench": ((245990, 338628, 0),),
-        "bench_shipped": ((234118, 338628, 11740),),
+        "bench": ((246322, 339296, 0),),
+        "bench_shipped": ((234452, 339296, 11740),),
     },
     "aes_ct_msgup, AC_OPEN, the button still down: sent, the accessory's turn inside the wait for the rise": {
         "bench": ((4570, 5808, 0),),
         "bench_shipped": ((4414, 5808, 276),),
     },
     "aes_ev_block, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": {
-        "bench": ((245300, 337824, 0),),
-        "bench_shipped": ((233428, 337824, 11740),),
+        "bench": ((245632, 338492, 0),),
+        "bench_shipped": ((233762, 338492, 11740),),
     },
     "aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the next wait; the menu left, a click off it": {
         "bench": ((41786, 55990, 0), (41004, 55008, 0),),
@@ -39,11 +45,11 @@ PINNED = {
         "bench_shipped": ((38790, 55990, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
-        "bench": ((274618, 388404, 0),),
-        "bench_shipped": ((264524, 388404, 13368),),
+        "bench": ((275058, 391066, 0),),
+        "bench_shipped": ((264970, 391066, 13368),),
     },
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": {
-        "bench": ((274960, 389196, 0),),
-        "bench_shipped": ((264866, 389196, 13368),),
+        "bench": ((275400, 391858, 0),),
+        "bench_shipped": ((265312, 391858, 13368),),
     },
 }

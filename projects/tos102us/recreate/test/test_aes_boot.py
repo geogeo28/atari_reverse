@@ -2990,11 +2990,13 @@ def test_each_declaration_of_the_door_is_the_rom_s_own_by_value_store(declared):
     assert spans[0][0] == rom and symbol.startswith("aes_rom_")
     for (lo, hi), last in zip(spans, THE_DOOR_S_LAST_WORDS[declared.what], strict=True):
         assert aes.AES_TEXT[0] <= lo < hi <= aes.AES_TEXT[1] and rom_word(hi - WORD_BYTES) == last
-    # ALL FOUR ARE MAPPED WHERE A RUN ENDS — AND ONE AT A RUN'S ENTRY TOO: THE GEM TRAP'S VECTOR, SINCE THE FULL FLIP
+    # ALL FOUR ARE MAPPED WHERE A RUN ENDS — AND TWO AT A RUN'S ENTRY TOO: THE GEM TRAP'S VECTOR, SINCE THE FULL FLIP
     # (band 5 wave 4, slice F; ruling W3-R1's other half: every run of ours is entered behind the build's own `trap #2`
-    # handler). The other three hold what the machine came with until a run of ours stores them. EACH IS A PART OF THE
+    # handler) — AND THE DESK'S TRAMPOLINE SINCE band 6 W3a stage 3 (the text view's rows draw through the arrival's
+    # USERBLKs). The other two hold what the machine came with until a run of ours stores them. EACH IS A PART OF THE
     # DOOR a takeover maps — the desk's trampoline too, since that flip.
-    assert declared in aes_event.CODE_RELOCATIONS and declared.at_entry == (declared is aes_event.GEM_TRAP_VECTOR)
+    assert declared in aes_event.CODE_RELOCATIONS and declared.at_entry == (
+        declared in (aes_event.GEM_TRAP_VECTOR, aes_event.USERBLK_TRAMPOLINE_SLOT))
     assert declared.what not in aes_event.DECLARED_NOT_YET_MAPPED_AT_TIER3
     assert declared in aes_event.THE_DOOR and (declared in aes_event.THE_TRAP_DOOR) != (declared is aes_event.USERBLK_TRAMPOLINE_SLOT)
 

@@ -7,11 +7,14 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "aes/aes.h"
+#include "aes/gemctrl.h"
 #include "aes/gemstart.h"
 #include "aes/obedit.h"
+#include "aes/rect.h"
 #include "aes/gsxif.h"
 #include "aes/strings.h"
 #include "aes/wmlib.h"
+#include "aes/wmupdate.h"
 #include "desk/deskact.h"
 #include "desk/deskapp.h"
 #include "desk/deskbind.h"
@@ -335,5 +338,232 @@ int16_t aes_do_deskmenu(uint8_t *image, int16_t item)
         set_object_word(image, tree, ABOUT_OK, OB_STATE, 0);
     }
     return MENU_NOTHING_DONE;
+}
+
+/* ==== BAND 6 W3a, STAGE 3: THE DESK'S THREE DISPATCHERS AND THE FILE MENU ===============================================
+ * COMPILED FOR THE TARGET ALONE (the user's R3, ruling O1): no host twin, no Tier 1 — each held by its target-only rows
+ * at the hands' arrivals (`test/test_desk_w3a_stage3.py`). hndl_msg is THE CYCLE'S BACK-EDGE's callee: inf_show calls it
+ * as the C it is (`desk/deskinf.h`), no call through the table left. */
+
+/* $fe1e80 — do_filemenu (`desk/desktop.h`). The window on top and the first icon selected read first, whatever the
+ * item. */
+int16_t aes_do_filemenu(uint8_t *image, int16_t item)
+{
+    uint32_t desk = desk_globals(image), top = aes_win_ontop(image);
+    int16_t selected = aes_win_isel(image, screen_objects(image), desk_word(image, desk, DESK_SELECTION_ROOT), 0);
+
+    switch (item) {
+    case FILE_ITEM_OPEN:
+        return selected ? aes_do_open(image, selected) : FILEMENU_NOTHING_DONE;
+    case FILE_ITEM_SHOW_INFO:
+        return selected ? aes_do_info(image, selected) : FILEMENU_NOTHING_DONE;
+    case FILE_ITEM_NEW_FOLDER:
+        if (top) {
+            (void)aes_desk_fun_mkdir(image, top);
+            aes_desk_clear(image, DESKTOP_WINDOW);
+        }
+        break;
+    case FILE_ITEM_CLOSE:
+    case FILE_ITEM_CLOSE_WINDOW:
+        if (top) {
+            aes_desk_clear(image, desk_word(image, desk, DESK_SELECTION_WINDOW));
+            (void)aes_fun_close(image, top, item == FILE_ITEM_CLOSE ? FUN_CLOSE_A_FOLDER : FUN_CLOSE_THE_WINDOW);
+        }
+        break;
+    case FILE_ITEM_FORMAT:
+        return selected ? aes_desk_do_format(image, selected) : FILEMENU_NOTHING_DONE;
+    }
+    return FILEMENU_NOTHING_DONE;
+}
+
+/* $fe22ce — hndl_menu (`desk/desktop.h`). */
+int16_t aes_hndl_menu(uint8_t *image, int16_t title, int16_t item)
+{
+    int16_t done = MENU_NOTHING_DONE;
+
+    switch (title) {
+    case MENU_TITLE_DESK:
+        done = aes_do_deskmenu(image, item);
+        break;
+    case MENU_TITLE_FILE:
+        done = aes_do_filemenu(image, item);
+        break;
+    case MENU_TITLE_VIEW:
+        done = aes_do_viewmenu(image, item);
+        aes_desk_wait(image, DESK_WAIT_BUSY);
+        aes_win_srtall(image);
+        aes_win_bdall(image);
+        aes_win_shwall(image);
+        aes_desk_wait(image, DESK_WAIT_DONE);
+        break;
+    case MENU_TITLE_OPTIONS:
+        done = aes_do_optnmenu(image, item);
+        break;
+    }
+    (void)aes_desk_menu_tnormal(image, bus_long(image, desk_globals(image) + DESK_MENU_TREE), title, MENU_TITLE_NORMAL);
+    return done;
+}
+
+static inline int16_t message_word(const uint8_t *image, uint32_t desk, uint32_t field)
+{
+    return desk_word(image, desk, DESK_G_RMSG + field);
+}
+
+/* WM_TOPPED: the window put on top (wind_set WF_TOP), its work area asked (into this frame, read by no one), its WNODE
+ * made the top one (win_top), verified and kept as the last window. A ROUTINE OF ITS OWN (`noinline`, PD0): the box is
+ * no frame of hndl_msg's under MN_SELECTED's menus. */
+__attribute__((noinline)) static void window_topped(uint8_t *image, uint32_t desk, int16_t handle)
+{
+    uint16_t box_local[FRAME_LOCAL_WORDS(GRECT_BYTES)];
+    uint32_t box = desk_local_address(box_local), window;
+
+    (void)aes_desk_wind_set(image, handle, WF_TOP, TOPPED_ZERO, TOPPED_ZERO, TOPPED_ZERO, TOPPED_ZERO);
+    (void)aes_desk_wind_get(image, handle, WF_WORKXYWH, box + GRECT_X, box + GRECT_Y, box + GRECT_W, box + GRECT_H);
+    window = aes_win_find(image, handle);
+    aes_win_top(image, window);
+    aes_desk_verify(image, (int16_t)bus_word(image, window + WNODE_ID), DESK_VERIFY_UNCHANGED);
+    set_bus_word(image, desk + DESK_G_WLASTSEL, bus_word(image, window + WNODE_ID));
+}
+
+/* WM_SIZED / WM_MOVED: the message's rectangle, its corner on do_xyfix's column, made the window's (wind_set
+ * WF_CURRXYWH); sized, the window verified as changed; moved, its root object put on its new work area (wind_get into
+ * the same box, r_set). A ROUTINE OF ITS OWN (`noinline`) for `window_topped`'s reason. */
+__attribute__((noinline)) static void window_placed(uint8_t *image, uint32_t desk, int16_t type)
+{
+    uint16_t box_local[FRAME_LOCAL_WORDS(GRECT_BYTES)];
+    uint32_t box = desk_local_address(box_local), window;
+    int16_t handle = message_word(image, desk, RMSG_HANDLE);
+
+    lay_rect(image, box, message_word(image, desk, RMSG_X), message_word(image, desk, RMSG_Y), message_word(image, desk, RMSG_W),
+             message_word(image, desk, RMSG_H));
+    aes_do_xyfix(image, box + GRECT_X, box + GRECT_Y);
+    (void)aes_desk_wind_set(image, handle, WF_CURRXYWH, rect_word(image, box, GRECT_X), rect_word(image, box, GRECT_Y),
+                            rect_word(image, box, GRECT_W), rect_word(image, box, GRECT_H));
+    if (type == WM_SIZED) {
+        aes_desk_verify(image, handle, DESK_VERIFY_CHANGED);
+        return;
+    }
+    (void)aes_desk_wind_get(image, handle, WF_WORKXYWH, box + GRECT_X, box + GRECT_Y, box + GRECT_W, box + GRECT_H);
+    window = aes_win_find(image, handle);
+    aes_r_set(image, object_address(screen_objects(image), (int16_t)bus_word(image, window + WNODE_ROOT), OB_X),
+              rect_word(image, box, GRECT_X), rect_word(image, box, GRECT_Y), rect_word(image, box, GRECT_W),
+              rect_word(image, box, GRECT_H));
+}
+
+/* A window's message (WM_REDRAW .. WM_MOVED) handled: whether the INF's windows are to be kept after it (cnx_put). */
+static int window_message_handled(uint8_t *image, uint32_t desk, int16_t type)
+{
+    int16_t handle = message_word(image, desk, RMSG_HANDLE), value = message_word(image, desk, RMSG_X);
+
+    switch (type) {
+    case WM_REDRAW:
+        if (handle != REDRAW_NO_WINDOW)
+            aes_do_wredraw(image, handle, value, message_word(image, desk, RMSG_Y), message_word(image, desk, RMSG_W),
+                           message_word(image, desk, RMSG_H));
+        return 0;
+    case WM_TOPPED:
+        window_topped(image, desk, handle);
+        return 0;
+    case WM_CLOSED:
+        (void)aes_do_filemenu(image, FILE_ITEM_CLOSE);
+        return 1;
+    case WM_FULLED:
+        aes_do_wfull(image, handle);
+        aes_desk_verify(image, handle, DESK_VERIFY_CHANGED);
+        return 1;
+    case WM_ARROWED:
+        aes_win_arrow(image, handle, value);
+        return 0;
+    case WM_HSLID:
+        aes_win_slide(image, handle, value, SLIDE_HORIZONTAL);
+        return 0;
+    case WM_VSLID:
+        aes_win_slide(image, handle, value, SLIDE_VERTICAL);
+        return 0;
+    case WM_SIZED:
+    case WM_MOVED:
+        window_placed(image, desk, type);
+        return 1;
+    }
+    return 0;
+}
+
+/* $fe2344 — hndl_msg (`desk/desktop.h`). The message's type read once, as the ROM's two switches read the same word. */
+int16_t aes_hndl_msg(uint8_t *image)
+{
+    uint32_t desk = desk_globals(image);
+    int16_t type = message_word(image, desk, RMSG_TYPE), done = HNDL_MSG_NOTHING_DONE;
+
+    if (type >= WM_REDRAW && type <= WM_MOVED) {
+        aes_desk_clear(image, desk_word(image, desk, DESK_SELECTION_WINDOW));
+        if (window_message_handled(image, desk, type))
+            aes_cnx_put(image);
+    } else if (type == MN_SELECTED_MESSAGE) {
+        aes_desk_verify(image, desk_word(image, desk, DESK_G_WLASTSEL), DESK_VERIFY_UNCHANGED);
+        done = aes_hndl_menu(image, message_word(image, desk, RMSG_TITLE), message_word(image, desk, RMSG_ITEM));
+    }
+    set_bus_word(image, desk + DESK_G_RMSG + RMSG_TYPE, 0);
+    aes_men_update(image, bus_long(image, desk + DESK_MENU_TREE));
+    return done;
+}
+
+/* hndl_button's one click: the click handed act_bsclick (the selection's window, the screen, its root) over the work
+ * area of `window`; then the button read again (graf_mkstate, its mouse and keys into one discarded word) INTO `button`
+ * — the ROM's `14(a6)`, its own argument slot, here this routine's copy of it — and, still down, the drag act_bdown
+ * makes (the object dragged into `object`). Where it was let go — a window's handle, 0 the desktop —, or
+ * BDOWN_NOTHING_DRAGGED. A ROUTINE OF ITS OWN (`noinline`, PD0): its box and words are no frame under the drag's act
+ * (fun_drag, its copy) or under two clicks' opener. */
+__attribute__((noinline)) static int16_t one_click(uint8_t *image, uint32_t desk, int16_t window, int16_t x, int16_t y,
+                                                  int16_t button, int16_t keys, uint32_t object)
+{
+    uint16_t box_local[FRAME_LOCAL_WORDS(GRECT_BYTES)], discard_local;
+    uint32_t box = desk_local_address(box_local), discard = desk_local_address(&discard_local);
+
+    (void)aes_desk_wind_get(image, window, WF_WORKXYWH, box + GRECT_X, box + GRECT_Y, box + GRECT_W, box + GRECT_H);
+    aes_act_bsclick(image, desk_word(image, desk, DESK_SELECTION_WINDOW), bus_long(image, desk + DESK_G_SCREEN),
+                    desk_word(image, desk, DESK_SELECTION_ROOT), x, y, keys, box, BSCLICK_ONE);
+    aes_desk_graf_mkstate(image, discard, discard, desk_local_address(&button), discard);
+    if (!(button & BUTTON_LEFT_DOWN))
+        return BDOWN_NOTHING_DRAGGED;
+    return aes_act_bdown(image, desk_word(image, desk, DESK_SELECTION_WINDOW), bus_long(image, desk + DESK_G_SCREEN),
+                         desk_word(image, desk, DESK_SELECTION_ROOT), x, y, keys, box, object);
+}
+
+/* hndl_button's two clicks: the click handed act_bsclick as a double one, over the work area of `window`. A ROUTINE OF
+ * ITS OWN (`noinline`) for `one_click`'s reason: the box is no frame under the opener that follows. */
+__attribute__((noinline)) static void two_clicks(uint8_t *image, uint32_t desk, int16_t window, int16_t x, int16_t y,
+                                                 int16_t keys)
+{
+    uint16_t box_local[FRAME_LOCAL_WORDS(GRECT_BYTES)];
+    uint32_t box = desk_local_address(box_local);
+
+    (void)aes_desk_wind_get(image, window, WF_WORKXYWH, box + GRECT_X, box + GRECT_Y, box + GRECT_W, box + GRECT_H);
+    aes_act_bsclick(image, desk_word(image, desk, DESK_SELECTION_WINDOW), bus_long(image, desk + DESK_G_SCREEN),
+                    desk_word(image, desk, DESK_SELECTION_ROOT), x, y, keys, box, BSCLICK_TWO);
+}
+
+/* $fe2172 — hndl_button (`desk/desktop.h`). */
+int16_t aes_hndl_button(uint8_t *image, int16_t clicks, int16_t x, int16_t y, int16_t button, int16_t keys)
+{
+    uint16_t object_local;
+    uint32_t desk = desk_globals(image), object = desk_local_address(&object_local);
+    int16_t window = aes_desk_wind_find(image, x, y), done = BUTTON_NOTHING_DONE, onto;
+
+    if (window != desk_word(image, desk, DESK_SELECTION_WINDOW))
+        aes_desk_clear(image, desk_word(image, desk, DESK_SELECTION_WINDOW));
+    aes_desk_verify(image, window, DESK_VERIFY_UNCHANGED);
+    set_bus_word(image, desk + DESK_G_WLASTSEL, (uint16_t)window);
+    if (clicks == BUTTON_ONE_CLICK) {
+        onto = one_click(image, desk, window, x, y, button, keys, object);
+        if (onto != BDOWN_NOTHING_DRAGGED)
+            done = aes_desk_fun_drag(image, window, onto,
+                                     onto ? (int16_t)bus_word(image, aes_win_find(image, onto) + WNODE_ROOT) : DESKTOP_ROOT,
+                                     (int16_t)bus_word(image, object));
+    } else {
+        two_clicks(image, desk, window, x, y, keys);
+        done = aes_do_filemenu(image, FILE_ITEM_OPEN);
+    }
+    aes_men_update(image, bus_long(image, desk + DESK_MENU_TREE));
+    return done;
 }
 #endif
