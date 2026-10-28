@@ -69,6 +69,19 @@ for _name, (_restype, _frame) in SIGNATURES.items():
 W3A = tuple(SIGNATURES)
 FILE_OF = {name: file for file, signatures in SIGNATURES_BY_FILE.items() for name in signatures}
 
+# ---- BAND 6 W3b: deskmain `$fe272e`, the cycle's one ROM caller (the W3b cut; its prep) ----------------------------------
+# DECLARED HERE, beside the routines it calls, TARGET-ONLY as they are (the orchestrator's O1, reading the user's R3 to
+# cover W3b): `() -> word` — no argument (sh_main's bare call `$feb1dc`), its word read by sh_main (`$feb1de move.w
+# d0,-6(a6)`). The kind's rows (`register_target_only`, `register_target_only_switching`) take it as a W3a routine's.
+# Its entry stays THE ROM'S BY DECLARATION until its flip (`bench/linef_table.py`'s DECLARED_NOT_LINKED); its arrivals,
+# return sites and the harness's reading of it are `aes_desk_w3b.py`'s.
+DESKMAIN = "AES_ROM_DESKMAIN"
+W3B_SIGNATURES = {DESKMAIN: (aes.WORD_ANSWER, ())}
+for _name, (_restype, _frame) in W3B_SIGNATURES.items():
+    aes.declare_alcyon(_name, _restype, (IMAGE, *_frame), target_only=True)
+W3B = tuple(W3B_SIGNATURES)
+TARGET_ONLY_ROUTINES = W3A + W3B        # the kind's routines: the cycle and hndl_button, and deskmain
+
 # ---- THE SPLIT, S2: three flip stages, leaf-up (rulings U3 / O4) -------------------------------------------------------
 # A routine flips once every C callee of it is flipped (F3's rule) — so the cycle flips leaf-up, each stage a DAG once
 # its one back-edge is made through the table. THE STAGES ARE BY ROUTINE, NOT BY FILE (the orchestrator's B3): stage 1
@@ -124,7 +137,7 @@ def calls_outliving_their_stage(flipped, calls=None):
 # `{registered name: TargetOnlyRow}`: THE KIND'S OWN CENSUS (not ROWS_THAT_SWITCH, not the named budgets' census).
 TargetOnlyRow = namedtuple("TargetOnlyRow", "label name arguments machine answered budget")
 TARGET_ONLY_ROWS = {}
-OUTSIDE_W3A = "a target-only row of a routine outside W3a's declared set"
+OUTSIDE_W3A = "a target-only row of a routine outside W3a's and W3b's declared set"
 A_TIER_1_OF_W3A = "a W3a routine with a Tier 1 of its own — a host core, or a row registered with a companion"
 A_TARGET_ONLY_ROW_IN_SWITCHING_ROWS = "a target-only row in SWITCHING_ROWS, the register of the rows with a companion"
 NOT_REGISTERED_COMPANION_FREE = "a target-only row registered with a companion, or not at all"
@@ -150,9 +163,9 @@ def tier_1_of(name, registered, companion_free):
 
 
 def vet_a_target_only_row(name, row_name):
-    """THE KIND'S REFUSALS, each by the row's name, BEFORE anything is registered: a routine outside W3a, a W3a routine
-    with a Tier 1 of its own."""
-    assert name in W3A, f"{row_name}: {OUTSIDE_W3A} ({name})"
+    """THE KIND'S REFUSALS, each by the row's name, BEFORE anything is registered: a routine outside W3a and W3b, one
+    of theirs with a Tier 1 of its own."""
+    assert name in TARGET_ONLY_ROUTINES, f"{row_name}: {OUTSIDE_W3A} ({name})"
     found = tier_1_of(name, registered_rows(), case.tier3_companion_free())
     assert not found, f"{row_name}: {A_TIER_1_OF_W3A}: {found}"
 
@@ -293,7 +306,7 @@ def census_refusals(registries):
     rows = {**{name: row.name for name, row in r.target_only.items()},
             **{name: held.row.name for name, held in r.switching_target_only.items()}}
     for name, routine in sorted(rows.items()):
-        if routine not in W3A:
+        if routine not in TARGET_ONLY_ROUTINES:
             refused.append(f"{name}: {OUTSIDE_W3A} ({routine})")
         if name not in r.companion_free:
             refused.append(f"{name}: {NOT_REGISTERED_COMPANION_FREE}")
@@ -306,7 +319,7 @@ def census_refusals(registries):
         if tuple(r.dropped.get(name, ())) != tuple(held.drops):
             refused.append(f"{name}: {NOT_ITS_VOUCHED_DROPS}")
     refused += [f"{name}: {NOT_THE_KIND_S}" for name in sorted(r.companion_free) if name not in rows]
-    for routine in W3A:
+    for routine in TARGET_ONLY_ROUTINES:
         found = tier_1_of(routine, r.registered, r.companion_free)
         if found:
             refused.append(f"{routine}: {A_TIER_1_OF_W3A}: {found}")

@@ -3188,9 +3188,18 @@ TALLY_WHOLE, TALLY_AES, TALLY_BLOB, TALLY_GLUE = range(4)   # a window's tally: 
 # on the ROM's, whose tally is (whole, the AES's spans, the handler's copy, the desk's text)). SINCE BAND 6 SLICE F1 THE
 # DESK'S TEXT IS WHAT OF IT IS STILL THE ROM'S (`aes_desk.less_the_flipped`): a flipped routine runs in our blob on our
 # shore and in the ROM's AES spans on the ROM's — inside the turn's price on both, out of the text both run alike.
-TALLY_OUR_LINE_F, TALLY_OUR_DESK = 4, 5
-OUR_TALLY_LENGTH = 6                    # (a test that counts more appends its own after these)
+# ...AND, SINCE BAND 6 W3b's PREP (the user's U1 (a)), the cycles in DESKMAIN'S OWN ROM SPAN on both shores
+# (`TALLY_OUR_DESKMAIN`, `THE_ROM_S_TALLY_DESKMAIN`): on a machine THE ROM BOOTED the desk is parked inside the ROM's
+# deskmain frame, so its turn runs the ROM's deskmain loop on both shores — flipped or not, no harness maps a ROM frame
+# onto GCC's. That loop's cycles in each desk turn are held alike on the two shores and PINNED BY ROW
+# (`aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_DESKMAIN`): the turn LABELLED "the desk parked in the ROM's own deskmain
+# frame" once deskmain is flipped, and a turn that runs them on a row not pinned so reds — nothing passes silently.
+TALLY_OUR_LINE_F, TALLY_OUR_DESK, TALLY_OUR_DESKMAIN = 4, 5, 6
+OUR_TALLY_LENGTH = 7                    # (a test that counts more appends its own after these)
 DESK_TEXT_SPANS = aes_desk.less_the_flipped((aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT))
+DESKMAIN_ROM_SPAN = (addrs.AES_ROM_DESKMAIN, min(start for start in aes_desk.inventoried() if start > addrs.AES_ROM_DESKMAIN))
+DESKMAIN_IS_FLIPPED = not any(lo <= addrs.AES_ROM_DESKMAIN < hi for lo, hi in DESK_TEXT_SPANS)
+PARKED_IN_THE_ROM_S_DESKMAIN = "the desk parked in the ROM's own deskmain frame (a ROM-booted machine; the user's U1)"
 # What a measurement keeps of its windows AS THE ROM'S RUN MADE THEM: how many, their whole cycles, their cycles in
 # the AES's own spans — of BOTH kinds (a turn of our screen manager is the ROM's ctlmgr's turn on that shore).
 Foreign = namedtuple("Foreign", "windows whole in_the_aes")
@@ -3206,9 +3215,10 @@ NO_FOREIGN_WINDOW = Foreign(0, 0, 0)
 # too, so its turn is priced on what the two shores do NOT both run: `the_rom_s` the ROM's AES-span cycles less those
 # our shore spent there (the desk's text, the ROM's leaves it calls, the handler copy its own Line-F calls run), and
 # `shared` everything of ours that is not the blob — held: the OS both run equal, and the desk's text alike.
-Turn = namedtuple("Turn", "ours the_rom_s glue shared line_f whose", defaults=(0, aes_switching.THE_MANAGER_S))
+# `in_deskmain`: a desk turn's cycles in deskmain's own ROM span on our shore (the ROM's equal: held).
+Turn = namedtuple("Turn", "ours the_rom_s glue shared line_f whose in_deskmain", defaults=(0, aes_switching.THE_MANAGER_S, 0))
 THE_ROM_S_TALLY_LINE_F = 2              # the ROM shore's tally alone: after its whole and its AES spans' cycles
-THE_ROM_S_TALLY_DESK = 3
+THE_ROM_S_TALLY_DESK, THE_ROM_S_TALLY_DESKMAIN = 3, 4
 SCREEN_MANAGER_S_TURN = "the screen manager's turn"
 TURN_OF = {aes_switching.THE_MANAGER_S: "screen manager's turn", aes_switching.AN_ACCESSORY_S: "an accessory's turn",
            aes_switching.THE_DESK_S: "the desk's turn", aes_switching.ANOTHER_PROCESS_S: "another process's turn"}
@@ -3264,12 +3274,12 @@ def _the_rom_s_foreign_tally():
     the Line-F handler's RAM copy (`THE_ROM_S_TALLY_LINE_F`: printed beside a turn, part of no rule) and in the desk's
     own text (`THE_ROM_S_TALLY_DESK`)."""
     return (aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS), _cycles_in((LINE_F_HANDLER_COPY,)),
-            _cycles_in(DESK_TEXT_SPANS))
+            _cycles_in(DESK_TEXT_SPANS), _cycles_in((DESKMAIN_ROM_SPAN,)))
 
 
 def _our_foreign_tally(blob, glue):
     return lambda: (aes_event.run_cost()["cycles"], _cycles_in(AES_OWN_SPANS), our_cycles(blob), _cycles_in(glue),
-                    _cycles_in((LINE_F_HANDLER_COPY,)), _cycles_in(DESK_TEXT_SPANS))
+                    _cycles_in((LINE_F_HANDLER_COPY,)), _cycles_in(DESK_TEXT_SPANS), _cycles_in((DESKMAIN_ROM_SPAN,)))
 
 
 def _our_ledger():
@@ -3358,6 +3368,9 @@ def _vet_the_desk_s_turn_alike(who, nth, mine, its):
         f"{who}: window {nth}, the desk's turn: our shore spent {mine[TALLY_AES]} cycles in the AES's own spans "
         f"({mine[TALLY_OUR_LINE_F]} in the handler's copy), more than the ROM's whole AES did ({its[TALLY_AES]}, "
         f"{its[THE_ROM_S_TALLY_LINE_F]})")
+    assert mine[TALLY_OUR_DESKMAIN] == its[THE_ROM_S_TALLY_DESKMAIN], (
+        f"{who}: window {nth}, THE DESK'S TURN, ran {mine[TALLY_OUR_DESKMAIN]} cycles of the ROM's deskmain on ours and "
+        f"{its[THE_ROM_S_TALLY_DESKMAIN]} on the ROM's — the desk parked in the ROM's deskmain frame ran its loop another way")
 
 
 AS_IT_BEGAN, ELSEWHERE = "parked as it began", "parked elsewhere"
@@ -3422,10 +3435,12 @@ def turns_made(ours, the_rom_s):
 def _turn_of(mine, its, whose):
     """One window of ours as a `Turn` (above) — the desk's net of what both shores ran of the ROM's AES spans."""
     line_f = its[THE_ROM_S_TALLY_LINE_F] if len(its) > THE_ROM_S_TALLY_LINE_F else 0
-    the_rom_s = its[TALLY_AES]
+    the_rom_s, in_deskmain = its[TALLY_AES], 0
     if whose in aes_switching.TEXT_OVER_OUR_AES:
         the_rom_s, line_f = the_rom_s - mine[TALLY_AES], line_f - mine[TALLY_OUR_LINE_F]
-    return Turn(mine[TALLY_BLOB] - mine[TALLY_GLUE], the_rom_s, mine[TALLY_GLUE], mine[TALLY_WHOLE] - mine[TALLY_BLOB], line_f, whose)
+        in_deskmain = mine[TALLY_OUR_DESKMAIN]
+    return Turn(mine[TALLY_BLOB] - mine[TALLY_GLUE], the_rom_s, mine[TALLY_GLUE], mine[TALLY_WHOLE] - mine[TALLY_BLOB], line_f, whose,
+                in_deskmain)
 
 
 # ---- THE IMAGE AT EVERY STOP OF THE DISPATCHER'S WATCH, BOTH SHORES (the blob-side hold; FLIP 4) ----------------------------
@@ -5333,7 +5348,15 @@ def _first_dispatch_lines(measured, indent):
 TURN_LINE = ("{indent}  {whose}: ours {ours} / ROM {the_rom_s} = {ratio:.2f} — the turn's whole AES subtree on "
              "each shore (the table's convention: the ROM's in the AES's text and its Line-F handler), the dispatch that "
              "hands the machine back in both; the OS both run inside it {shared}; in neither of the caller's "
-             "columns{with_glue}{line_f}{over}")
+             "columns{with_glue}{line_f}{parked}{over}")
+
+
+def _parked_of(turn):
+    """THE LABEL OF A DESK TURN THAT RUNS THE ROM'S deskmain LOOP ONCE deskmain IS FLIPPED (the user's U1 (a)) — said
+    with its pinned cycles; nothing before the flip, when the loop is the ROM's text on both shores like the rest."""
+    if not (DESKMAIN_IS_FLIPPED and turn.in_deskmain):
+        return ""
+    return f"; LABELLED: {PARKED_IN_THE_ROM_S_DESKMAIN}, its loop {turn.in_deskmain} of the turn on both shores"
 
 
 def _line_f_of(turn):
@@ -5348,7 +5371,7 @@ def _turn_lines(measured, indent):
     return [TURN_LINE.format(indent=" " * indent, whose=TURN_OF[turn.whose], ours=turn.ours, the_rom_s=turn.the_rom_s,
                              ratio=turn_ratio(turn), shared=turn.shared,
                              with_glue=f", and {turn.glue} in thunks: {turn_ratio_with_glue(turn):.2f} with them" if turn.glue else "",
-                             line_f=_line_f_of(turn),
+                             line_f=_line_f_of(turn), parked=_parked_of(turn),
                              over="  OVER THE BAR BY ITSELF" if turn_ratio_with_glue(turn) > TIER3_FUNCTION_BAR else "")
             for turn in turns_of(measured)]
 

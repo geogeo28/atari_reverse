@@ -7,8 +7,8 @@ says THAT MACHINE IS THE ROM'S, how far, and at what price:
   * A RUN WATCHED ON BOTH SHORES AT THE SAME CHECKPOINTS (`both_shores`): the ROM's own run from a machine and OUR
     build's from the same machine, each stopped at its first arrival at each `Checkpoint` — a ROM address on the
     ROM's shore; on ours the build's own entry for it (a symbol of the blob), the same offset inside gem_entry (the
-    `.S` is byte-pinned: an instruction of ours lies where the ROM's does, from each one's entry), or the same ROM
-    address (deskmain, a built-in of the desk's: the ROM's on both shores until band 6).
+    `.S` is byte-pinned: an instruction of ours lies where the ROM's does, from each one's entry), or where the desk
+    door enters it (deskmain, a built-in of the desk's: the ROM's address while it is the ROM's, its thunk once flipped).
   * WHAT IS HELD AT EACH (`compared`, `vet_alike`): the megabyte, byte for byte — every code address of the relocation
     registry our run stored given the ROM's name first (never dropped) — outside THE CLASSES the two machines differ
     in by nature (`classes_at`: each located through the two machines' own pointers and stack pointers): THE LIVE
@@ -67,14 +67,15 @@ class Refused(AssertionError):
 
 
 # ---- THE CHECKPOINTS ---------------------------------------------------------------------------------------------------------
-IN_GEM_ENTRY, THE_ROM_S_OWN = "at the ROM's own offset inside the build's gem_entry", "the ROM's own address on both shores"
-# ...and a built-in of the desk's on our shore (band 6 slice F4's prep): what the desk door `jsr`s it by, read off the
-# blob (`transcription.desk_door_bindings`) — the ROM's address while it is the ROM's, its thunk once it is flipped.
+IN_GEM_ENTRY = "at the ROM's own offset inside the build's gem_entry"
+# ...and a built-in of the desk's on our shore (band 6 slice F4's prep) — and deskmain (band 6 W3b's prep; until then
+# "the ROM's own address on both shores"): what the desk door `jsr`s it by, read off the blob
+# (`transcription.desk_door_bindings`) — the ROM's address while it is the ROM's, its thunk once it is flipped.
 AT_THE_DESK_DOOR = "where the desk door enters it on our shore"
 Checkpoint = namedtuple("Checkpoint", "what rom ours")
 Checkpoint.__doc__ = """One place both shores' runs are stopped at: `what` it is (its name in every table), the ROM's
-address, and where OUR run stands for it — a symbol of the blob (the build's own entry), IN_GEM_ENTRY, THE_ROM_S_OWN
-or AT_THE_DESK_DOOR."""
+address, and where OUR run stands for it — a symbol of the blob (the build's own entry), IN_GEM_ENTRY or
+AT_THE_DESK_DOOR."""
 BRA_S = 0x60
 
 
@@ -116,7 +117,7 @@ BROUGHT_UP = (
     _entered("AES_ROM_SH_TOGRAPHIC"), _entered("AES_ROM_GSX_TICK"), _entered("AES_ROM_EV_DCLICK"), _entered("AES_ROM_RS_FIXIT"),
     _entered("AES_ROM_WM_START"), _entered("AES_ROM_FS_START"), _entered("AES_ROM_DSPTCH"),
     Checkpoint(SH_MAIN, addrs.AES_ROM_SH_MAIN, "aes_sh_main"), _entered("AES_ROM_DESK_ALLOC"),
-    Checkpoint(DESKMAIN_ENTERED, DESKMAIN, THE_ROM_S_OWN))
+    Checkpoint(DESKMAIN_ENTERED, DESKMAIN, AT_THE_DESK_DOOR))
 # THE BOOT'S FIRST PASS, from the pre-init stop to deskmain's entry: gem_entry's arms, then gem_main's callees in the
 # ROM's order and the shell's first pass.
 THE_FIRST_PASS = (Checkpoint(THE_COPY_MADE, RSC_INIT_CALLED_AT, IN_GEM_ENTRY), *IN_ITS_LOOP, *BROUGHT_UP)
@@ -134,7 +135,7 @@ THE_TEARDOWN_AND_THE_SECOND_PASS = (*TAKEN_DOWN, *IN_ITS_LOOP, *BROUGHT_UP)
 # launch loads over the blob).
 THE_NEXT_PASS_BEGINS = (_entered("AES_ROM_DESK_FREE"), _entered("AES_ROM_WM_START"), _entered("AES_ROM_RATINIT"),
                         Checkpoint(SH_CMD, addrs.AES_ROM_SH_CMD, "aes_sh_cmd"))
-A_BUILT_IN_PASS = (*THE_NEXT_PASS_BEGINS, _entered("AES_ROM_DESK_ALLOC"), Checkpoint(DESKMAIN_ENTERED, DESKMAIN, THE_ROM_S_OWN))
+A_BUILT_IN_PASS = (*THE_NEXT_PASS_BEGINS, _entered("AES_ROM_DESK_ALLOC"), Checkpoint(DESKMAIN_ENTERED, DESKMAIN, AT_THE_DESK_DOOR))
 THE_LAUNCH_PASS = (*THE_NEXT_PASS_BEGINS, _entered("AES_ROM_SH_FIND"), _entered("AES_ROM_PD_NAMEIT"),
                    Checkpoint(DOS_EXEC_ENTERED, addrs.AES_ROM_DOS_EXEC, "aes_rom_dos_exec"))
 # A ROUTINE WHOSE RETURN IS A CHECKPOINT TOO (a stretch priced from its entry to its return): the stop is made where
@@ -147,8 +148,6 @@ BEGAN = "where the run began"           # a run's first `Stop`: the machine it w
 
 def our_address(checkpoint, blob):
     """Where OUR run stands for `checkpoint` on `blob` (a `RomBench`)."""
-    if checkpoint.ours == THE_ROM_S_OWN:
-        return checkpoint.rom
     if checkpoint.ours == AT_THE_DESK_DOOR:
         return transcription.desk_door_bindings(blob.elf)[checkpoint.rom]
     if checkpoint.ours == IN_GEM_ENTRY:
@@ -369,7 +368,7 @@ def began_at(a_pass, blob):
         aes_boot.vet_an_our_boot_is_asked_right(machine, disk, ours)
         return memory, aes_boot.BootingOurs(memory, ours).entered(machine.registers), disk, machine.io, ours
     laid = dict(ours=ours, laid=aes_boot.AT_GEM_ENTRY) if ours is not None else {}
-    at_the_desk = aes_boot.booted(machine, disk, until=DESKMAIN, **laid)
+    at_the_desk = aes_boot.booted(machine, disk, until=aes_boot.deskmain_entry(ours), **laid)
     bench_tier3()                       # ...the registry: a routine called over the machine is framed by its own battery
     _name, _at, memory, _called, registers = aes_boot.answered_at_its_entry(at_the_desk, a_pass.answer, a_pass.calls)
     return memory, registers, at_the_desk.disk, at_the_desk.io, ours

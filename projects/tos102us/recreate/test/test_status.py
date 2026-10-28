@@ -166,6 +166,20 @@ def test_the_components_table_agrees_with_the_sections():
             f"`## Verified — {name}` section carries {stated.get(name, 0)}")
 
 
+_FLIPPED_RE = re.compile(r"(\d+) of band 6's (\d+) FLIPPED")
+
+
+def test_the_desk_s_flipped_count_is_the_blob_s():
+    """THE DESK ROW'S "N of band 6's M FLIPPED" (band 6 W3b's prep: it read F4's 223 three slices after) is DERIVED:
+    N the routines the shipped blob binds as ours (`aes_desk.flipped`), M band 6's routines (`aes_desk.routines`)."""
+    import aes_desk
+    desk_row, = [line for line in _status().splitlines() if line.startswith("| desk |")]
+    (flipped, of), = _FLIPPED_RE.findall(desk_row)
+    assert (int(flipped), int(of)) == (len(aes_desk.flipped()), len(aes_desk.routines())), (
+        f"STATUS.md's desk row says {flipped} of {of} flipped; the blob binds {len(aes_desk.flipped())} of "
+        f"{len(aes_desk.routines())}")
+
+
 # ---- the Tier 3 column, against the measurement it quotes -----------------------------------------
 
 def _measured_ratios():

@@ -432,6 +432,9 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   STAGE 3 (2026-10-26): desktop.c's hndl_msg `FE2344`, hndl_menu `FE22CE`, do_filemenu `FE1E80` and hndl_button `FE2172`
   written in C and flipped (target-only); the back-edge retired (inf_show's C calls hndl_msg's C). The cycle whole:
   band 6's ROM's still are deskmain (W3b) and the cartridge pair.
+  W3b PREP (2026-10-27): deskmain `FE272E` declared `() -> word` target-only and held the ROM's (DECLARED_NOT_LINKED);
+  sh_main's call bound through the desk door (`DESK_DOOR_BOUND_AES_ROM_DESKMAIN`); return sites named `FE28EC` / `FE2946`
+  (Blitmode asked / set) and `FE2A52` (dos_gdrv); desk-block a_fcb1 +8004 / a_fcb2 +8044 named.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 

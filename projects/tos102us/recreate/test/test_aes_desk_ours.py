@@ -34,7 +34,7 @@ import importlib.util
 import inspect
 import re
 import sys
-from collections import namedtuple
+from collections import Counter, namedtuple
 
 import pytest
 
@@ -536,7 +536,7 @@ def test_every_flipped_routine_s_rom_span_ran_no_cycle_and_its_entry_of_ours_ran
     `LINKED_AND_NOT_FLIPPED`) — and the engine's parts exactly where their built-ins are (`aes_desk.parts_flipped`)."""
     generator = _the_generator()
     ours = {entry.target for entry in generator.entries() if entry.verdict != generator.THE_ROM_S}
-    held = {getattr(addrs, name) for name in (*generator.LINKED_HELD_NO_TABLE_ENTRY, *generator.LINKED_AND_NOT_FLIPPED)}
+    held = {getattr(addrs, name) for name in (*generator.LINKED_HELD_NO_TABLE_ENTRY, *generator.held_back())}   # (deskmain: W3b's)
     bound_ours = frozenset(ours | (set(desk.bound_by_value(desk.our_blob())) - held)) & frozenset(desk.routines())
     assert desk.flipped() == bound_ours | desk.parts_flipped(bound_ours), "the blob's binding and the generator's verdicts disagree"
     entered, its_span_ran = _entered_on_our_shore()
@@ -544,6 +544,42 @@ def test_every_flipped_routine_s_rom_span_ran_no_cycle_and_its_entry_of_ours_ran
     names = {getattr(addrs, name): name for name in dir(addrs) if name.startswith("AES_ROM_")}
     never = {names[routine] for routine in desk.flipped() if routine not in entered}
     assert never == set(NOT_ENTERED_ON_OUR_SHORE), f"flipped, and entered on no walked chain of our shore: {sorted(never)}"
+
+
+# ---- WHAT OF THE ROM'S GEM TEXT STILL RUNS ON OUR WALKS (band 6 W3b's prep, the orchestrator's O4) ------------------------------
+# THE INVARIANT W3b BUYS: once deskmain is ours, NO ROUTINE OF THE ROM'S GEM TEXT RUNS A CYCLE AND THE LINE-F HANDLER'S RAM
+# COPY RUNS NONE on any walked chain of our shore (its machines are our-boot machines: nothing parks the desk in a ROM
+# frame there). PREPARED AS A MEASURED LIST THE FLIP EMPTIES, never a skipped test: today the one routine is deskmain —
+# the desk's loop, the ROM's text over our AES — whose Line-F calls are the copy's every cycle; the flip deletes the line
+# and the figure, and the test then holds both at 0. `{routine: its ROM span's cycles summed over every walked chain}`
+# and the copy's sum, MEASURED (the W3b cut's `romtext.json`, re-read here).
+ROM_GEM_TEXT_ON_OUR_WALKS = {"AES_ROM_DESKMAIN": 225914}
+LINE_F_COPY_ON_OUR_WALKS = 174398
+
+
+@functools.cache
+def _rom_gem_text_on_our_walks():
+    """`({a ROM GEM routine's start: its cycles over every walked chain of our shore}, the Line-F copy's cycles there)`."""
+    ran, line_f = Counter(), 0
+    for name in WALKED_ON_OUR_SHORE:
+        for stepped in desk.walked_ours(name).steps:
+            ran.update({routine: cycles for routine, cycles in desk.charged(stepped.profile.text).items() if cycles})
+            line_f += stepped.profile.line_f
+    return dict(ran), line_f
+
+
+def test_no_rom_gem_text_runs_on_our_walks_but_the_declared_list_and_the_handler_copy_only_under_it():
+    """O4: the ROM GEM routines that run on our walks ARE `ROM_GEM_TEXT_ON_OUR_WALKS`, each to the cycle, and the Line-F
+    handler's copy runs `LINE_F_COPY_ON_OUR_WALKS` — nothing calls through it but the ROM's text listed — so at W3b's
+    flip, the list emptied, both are held at 0 on every walked chain. Both are non-empty EXACTLY while the blob binds
+    deskmain the ROM's (`aes_desk.flipped`): the flip cannot re-measure them, nor an edit empty them before it."""
+    ran, line_f = _rom_gem_text_on_our_walks()
+    assert ran == {getattr(addrs, name): cycles for name, cycles in ROM_GEM_TEXT_ON_OUR_WALKS.items()}
+    assert line_f == LINE_F_COPY_ON_OUR_WALKS
+    assert set(ROM_GEM_TEXT_ON_OUR_WALKS) <= {"AES_ROM_DESKMAIN"}, "only deskmain may be listed: W3b's flip empties the list"
+    deskmain_held = addrs.AES_ROM_DESKMAIN not in desk.flipped()
+    assert bool(ROM_GEM_TEXT_ON_OUR_WALKS) == bool(LINE_F_COPY_ON_OUR_WALKS) == deskmain_held, (
+        "the list and the copy's figure are held exactly while deskmain is the ROM's: W3b's flip empties both")
 
 
 # ---- THE CONVERSE INVARIANT'S ONE CLASS: band 6's text a routine of bands 0-5 runs on the ROM's shore ----------------------------------
@@ -598,7 +634,7 @@ DEEPEST_PD0 = ("A: opened", 1500)     # (File > Open 1,534 before band 6 W3a's s
 
 def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_gate():
     """MEASURED BY THE WRITE LEDGERS: the ROM's own desk on the ROM's AES beside the ROM's desk over OURS (`DEPTHS`) —
-    File > Open on drive A: the deepest of ours, 1,532 of W6-R4's 1,548 since units O and D flipped (1,504 before)."""
+    the deepest of ours `DEEPEST_PD0` (its chain and its bytes, held here to DEPTHS' maximum), under W6-R4's gate."""
     assert {name: desk.depths(name)[desk.PD0_STACK] for name in THE_ROM_S_PD0} == THE_ROM_S_PD0
     assert max(((name, depths[0]) for name, depths in DEPTHS.items()), key=lambda found: found[1]) == DEEPEST_PD0
     assert DEEPEST_PD0[1] <= pd0_gate()
@@ -648,11 +684,14 @@ def test_the_tool_s_flip_is_the_generator_s_and_moves_sh_cmd_s_door_with_the_tab
     assert transcription.desk_door_bindings(blob.elf) == {getattr(addrs, name): blob.entry(thunk) if name in thunked else getattr(addrs, name)
                                                       for thunk, name in door.items()}
     monkeypatch.setattr(generator, "LINKED_AND_NOT_FLIPPED", {})
+    # (a door routine declared and not yet linked — deskmain, band 6 W3b's prep — stays the ROM's on the tool's flip)
+    flips = {thunk: name for thunk, name in door.items() if name not in generator.DECLARED_NOT_LINKED}
     globls = set(transcription.GLOBL.findall(generator.text()))
-    assert globls == {BOUND_TABLE, *door}
+    assert globls == {BOUND_TABLE, *flips}
     transcription.vet_the_table_s_globls(globls)
     flipped_door = generator.door_text()
-    assert all(f"{generator.DOOR_BOUND_PREFIX}{name} {thunk} " in flipped_door for thunk, name in door.items())
+    assert all(f"{generator.DOOR_BOUND_PREFIX}{name} {thunk} " in flipped_door for thunk, name in flips.items())
+    assert all(f"{generator.DOOR_BOUND_PREFIX}{name} {name} " in flipped_door for name in set(door.values()) - set(flips.values()))
 
 
 def test_the_table_s_globls_are_the_table_and_the_door_s_thunks_alone():

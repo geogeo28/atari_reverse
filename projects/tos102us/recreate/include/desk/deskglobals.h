@@ -194,6 +194,15 @@
 /* ---- ...and stage 3's (`desk/desktop.h`): the message the desk's loop read, which hndl_msg handles ---- */
 #define DESK_G_RMSG           7668       /* words[8]: the message itself, a_rmsg's buffer ($fe2356 move.w 7668(a4),d0) */
 /* ---- end of band 6 W3a's ---- */
+/* ---- BAND 6 W3b's prep (`desk/desktop.h`): the pointer pair deskmain stores beside a_cmd / a_tail, each to the
+ * 36-byte buffer below it — GEM's own deskmain names them a_fcb1 / a_fcb2 (an FCB's 36 bytes; the names inferred from
+ * GEM's source, the size and the order). READ BY NOTHING: the four instructions below are the only ones of the AES's
+ * ROM text that name either offset (read off its whole disassembly) ---- */
+#define DESK_G_FCB1           7968       /* bytes[36]: g_fcb1                   ($fe27ba lea 7968(a5),a0)       */
+#define DESK_A_FCB1           8004       /* long: a_fcb1, := g_fcb1             ($fe27be move.l a0,8004(a5))    */
+#define DESK_G_FCB2           8008       /* bytes[36]: g_fcb2                   ($fe27c2 lea 8008(a5),a0)       */
+#define DESK_A_FCB2           8044       /* long: a_fcb2, := g_fcb2             ($fe27c6 move.l a0,8044(a5))    */
+/* ---- end of band 6 W3b's prep ---- */
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

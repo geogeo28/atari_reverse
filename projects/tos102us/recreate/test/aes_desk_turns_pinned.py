@@ -53,3 +53,24 @@ PINNED = {
         "bench_shipped": ((265312, 391858, 13368),),
     },
 }
+
+# ...AND THE ROM'S deskmain LOOP INSIDE THOSE TURNS (band 6 W3b's prep; the user's U1 (a), 2026-10-27: "the eight
+# ROM-booted desk-turn rows are LABELLED 'the desk parked in the ROM's own deskmain frame', pinned by its cycles"). These
+# rows run on machines THE ROM BOOTED: the desk is parked inside the ROM's deskmain frame, and its turn resumes there on
+# both shores — so the ROM's deskmain loop runs in it on our shore too, flipped or not (no harness maps a ROM frame onto
+# GCC's). Its cycles in each desk turn, in order, MEASURED (`bench/tier3.py`'s TALLY_OUR_DESKMAIN, held equal to the
+# ROM's run in the same window) and the same on both blobs — the ROM's own text. `aes_switching.vet_its_turns` holds
+# every row it vets to these, and a row not here to none: nothing runs that loop silently. Once deskmain is flipped the
+# table says the label beside each such turn (`tier3._parked_of`). `{the row's registered name: (cycles, ...)}`.
+# SEVEN ROWS: U1's "eight" are seven desk-turn rows and ct_msgup's, whose pinned turn is ANOTHER PROCESS'S (the
+# accessory's, inside its wait for the rise), not the desk's [measured: the turn's owner, both blobs] — the label's
+# class is the seven; ct_msgup is held to none (absent here).
+PARKED_IN_THE_ROM_S_DESKMAIN = {
+    "aes_ap_rdwr, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": (784,),
+    "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read": (784,),
+    "aes_ev_block, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": (784,),
+    "aes_mn_do, on the bar past the titles; the desk's turn (Return); a title; the desk's turn again, in the next wait; the menu left, a click off it": (726, 726),
+    "aes_mn_do, on the bar past the titles; the desk's turn (Return); then a title, the menu left, a click off it": (726,),
+    "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": (710,),
+    "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": (710,),
+}

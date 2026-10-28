@@ -56,8 +56,8 @@ CARTRIDGE_PAIR = (0xFED554, 0xFED5C2)   # the table's two entries of the cartrid
 
 
 def _unflipped():
-    """W3a's routines of the stages not yet flipped: the ROM's still."""
-    return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE]
+    """W3a's routines of the stages not yet flipped — and deskmain, W3b's, held until its flip: the ROM's still."""
+    return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE] + list(w3a.W3B)
 
 
 FLIPPED_THROUGH_STAGE = w3a.FLIPPED_THROUGH_STAGE    # its one home: the cycle's module (stage 3: the cycle whole)
@@ -122,7 +122,7 @@ def test_a_target_only_declaration_of_a_core_the_host_library_has_is_refused_by_
 
 # ---- THE GENERATOR: each entry the ROM's, by declaration, until the C links ---------------------------------------------------
 def test_the_generator_holds_the_unflipped_stages_declared_and_not_linked_and_leaves_their_entries_the_rom_s(blob):
-    """DECLARED_NOT_LINKED is W3a's routines of the stages not yet flipped; NO CORE OF ONE IS LINKED in either blob (a
+    """DECLARED_NOT_LINKED is W3a's routines of the stages not yet flipped (and W3b's deskmain); NO CORE OF ONE IS LINKED in either blob (a
     core linked while listed reds by name: it moves to LINKED_AND_NOT_FLIPPED) — and every flipped stage's core IS;
     none is a native entry, in another held list or ENTERED_BY_OURS_ALONE; every entry of the table naming one is THE
     ROM'S."""
@@ -137,7 +137,7 @@ def test_the_generator_holds_the_unflipped_stages_declared_and_not_linked_and_le
     addresses = {getattr(addrs, name) for name in held}
     assert not addresses & set(generator.native_entries())
     verdicts = {entry.verdict for entry in generator.entries() if entry.target in addresses}
-    assert verdicts == ({generator.THE_ROM_S} if addresses else set())     # (none held since stage 3: the cycle whole)
+    assert verdicts == ({generator.THE_ROM_S} if addresses else set())     # (since stage 3: deskmain alone, W3b's)
 
 
 def test_the_list_is_what_keeps_them_the_rom_s(monkeypatch):

@@ -675,7 +675,11 @@ def lineftable_sources():
 # `{the thunk: the built-in's addrs.h name}`.
 DESK_DOOR_CALLER = "aes_sh_cmd"
 DESK_DOOR_BUILT_INS = ("AES_ROM_DESK_SHOW_FILE", "AES_ROM_DESK_PRINT_FILE", "AES_ROM_DESK_FORMAT", "AES_ROM_DESK_COPY_DISK")
-DESK_DOOR_THUNKS = {LINEF_THUNK_PREFIX + routines.core_symbol(name): name for name in DESK_DOOR_BUILT_INS}
+# ...AND deskmain (band 6 W3b's prep, the orchestrator's O2): sh_main's bare call, bound the same way — the ROM's routine
+# while held, the table's own thunk once flipped. `{routine: the C function whose door `jsr`s it}`.
+DESK_DOOR_DESKMAIN = "AES_ROM_DESKMAIN"
+DESK_DOOR_CALLERS = {**dict.fromkeys(DESK_DOOR_BUILT_INS, DESK_DOOR_CALLER), DESK_DOOR_DESKMAIN: "aes_sh_main"}
+DESK_DOOR_THUNKS = {LINEF_THUNK_PREFIX + routines.core_symbol(name): name for name in DESK_DOOR_CALLERS}
 
 
 def vet_the_table_s_globls(globls):
@@ -692,19 +696,21 @@ LISTED_JSR_ABSOLUTE = re.compile(r"^\s+([0-9a-f]+):\s+4eb9 ([0-9a-f]{4}) ([0-9a-
 
 
 def desk_door_bindings(elf):
-    """`{a built-in's ROM address: the longword sh_cmd's desk door `jsr`s it by in the blob at `elf`}` — the ROM's own
-    address while the built-in is the ROM's, its thunk (the table's own, global) once it is flipped — read off the
-    blob's listing, each named by exactly one `jsr` of sh_cmd's body."""
+    """`{a door routine's ROM address: the longword its caller's desk door `jsr`s it by in the blob at `elf`}` — the
+    ROM's own address while the routine is the ROM's, its thunk (the table's own, global) once it is flipped — read off
+    the blob's listing, each named by exactly one `jsr` of its caller's body (`DESK_DOOR_CALLERS`: sh_cmd's four
+    built-ins, sh_main's deskmain)."""
     symbols = {symbol.name: symbol for symbol in symbol_table(elf)}
-    caller = symbols[DESK_DOOR_CALLER]
-    called = [int(high + low, 16) for site, high, low in LISTED_JSR_ABSOLUTE.findall(listing(elf))
-              if caller.start <= int(site, 16) < caller.start + caller.size]
+    jsrs = [(int(site, 16), int(high + low, 16)) for site, high, low in LISTED_JSR_ABSOLUTE.findall(listing(elf))]
     bound = {}
     for thunk, name in DESK_DOOR_THUNKS.items():
+        holder = DESK_DOOR_CALLERS[name]
+        caller = symbols[holder]
+        called = [longword for site, longword in jsrs if caller.start <= site < caller.start + caller.size]
         rom = getattr(addrs, name)
         either = {rom} | ({symbols[thunk].start} if thunk in symbols else set())
         named = [longword for longword in called if longword in either]
-        assert len(named) == 1, f"{DESK_DOOR_CALLER}'s door names {name} by {len(named)} `jsr`s, not one: {named}"
+        assert len(named) == 1, f"{holder}'s door names {name} by {len(named)} `jsr`s, not one: {named}"
         bound[rom] = named[0]
     return bound
 

@@ -811,7 +811,7 @@ def test_labelled_staging_the_our_boot_machine_s_premises_hold_and_its_lay_boots
     assert window[aes_boot.THE_BLOB] == (ours.base, ours.end) and window[aes_boot.STACK_BAND] == (emu.STACK_GUARD_LO, emu.STACK_BAND_HI)
     spans = sorted(window.values())
     assert all(hi <= lo_after for (_lo, hi), (lo_after, _hi) in zip(spans, spans[1:])), "three spans apart"
-    ours_booted = aes_boot.booted(capture, disk, until=DESKMAIN, ours=ours, laid=aes_boot.AT_GEM_ENTRY)
+    ours_booted = aes_boot.booted(capture, disk, until=aes_boot.deskmain_entry(ours), ours=ours, laid=aes_boot.AT_GEM_ENTRY)
     assert ours_booted.our_boot.ours == ours and ours_booted.our_boot.ran[0] > 0 and ours_booted.our_boot.ran[1:] == (0, 0)
 
 

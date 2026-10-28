@@ -1451,6 +1451,26 @@ def desk_turns_pinned(who, directory):
     return tuple(tuple(turn) for turn in aes_desk_turns_pinned.PINNED.get(who, {}).get(directory, ()))
 
 
+def desk_turns_in_deskmain(measured):
+    """THE ROM'S deskmain LOOP IN EACH DESK TURN (`tier3.Turn.in_deskmain`, the user's U1 (a)): its cycles there, in
+    order."""
+    return tuple(turn.in_deskmain for turn in getattr(measured, "turns", ()) if turn.whose in TEXT_OVER_OUR_AES)
+
+
+A_TURN_IN_THE_ROM_S_DESKMAIN_UNPINNED = ("a desk turn runs the ROM's deskmain loop (the desk parked in the ROM's own deskmain "
+                                         "frame: the user's U1) other than `aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_DESKMAIN` says")
+
+
+def vet_the_desk_parked_in_the_rom_s_deskmain(who, measured):
+    """U1 (a)'s LABELLED CLASS, held where a row's turns are: the ROM's deskmain loop's cycles in each desk turn of the
+    row are the pinned ones (`aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_DESKMAIN`, the same on both blobs: it is the
+    ROM's text) — and a row not pinned there runs none in any turn. Refused by the row's name."""
+    pinned = aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_DESKMAIN.get(who)
+    measures = desk_turns_in_deskmain(measured)
+    expected = pinned if pinned is not None else (0,) * len(measures)
+    assert measures == expected, f"{who}: {A_TURN_IN_THE_ROM_S_DESKMAIN_UNPINNED}: {measures}, pinned {pinned}"
+
+
 def vet_its_turns(who, blob, measured):
     """THE TURNS OF OURS INSIDE THE RUN ARE THE PINNED ONES — the screen manager's (`aes_turns_pinned`), behind our
     door the accessories' (`aes_accessory_turns_pinned`), and since band 6's binding the desk's — the ROM's text over
@@ -1468,6 +1488,7 @@ def vet_its_turns(who, blob, measured):
             f"{held} is pinned: say why they moved")
         assert all(tier3.turn_ratio_with_glue(tier3.Turn(*turn, 0)) <= tier3.TIER3_FUNCTION_BAR for turn in held), (
             f"{who}: a turn of ours ({whose}) is over the bar by itself on {directory}")
+    vet_the_desk_parked_in_the_rom_s_deskmain(who, measured)
 
 
 def priced_by_the_table(row):

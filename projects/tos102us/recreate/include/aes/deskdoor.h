@@ -1,7 +1,8 @@
 /* aes/deskdoor.h — THE DESK DOOR: how the shell (`src/aes/shell.c`: sh_main, sh_cmd) calls what is still the ROM's, and
  * where PD0's stack stands when it does.
  *
- * FIVE ROM ROUTINES ARE OWED TO BAND 6 — the desk's range, none of them reconstructed:
+ * FIVE ROUTINES OF BAND 6'S, the desk's range — the four built-ins OURS since band 6 slice F4, deskmain still the
+ * ROM's until W3b's flip:
  *
  *   $fe272e deskmain()                  the desktop, until it returns: 0 to end the shell, anything else for a launch
  *   $fed61e show a file (name)          sh_cmd's `$fe`
@@ -9,9 +10,11 @@
  *   $fed912 format a disk (tail, cmd)   sh_cmd's `$fc`
  *   $fedde4 copy a disk (tail, cmd)     sh_cmd's `$fb`
  *
- * ON TARGET each is ONE `jsr` to the ROM's own address, over the frame the ROM's sh_main / sh_cmd lays for it — the
- * one kind of call into the AES's ROM text a build may make (`bench/tier3.py`: ROM_CALLS_OWED_TO_A_LATER_BAND, each
- * held to one site in the function named). OFF TARGET the routine cannot run (it is 68000 code in the image), so the
+ * ON TARGET each is ONE `jsr` to what the Line-F table's generator binds it to (`aes/lineftable.h`: the ROM's own
+ * address while the table leaves it the ROM's, the table's thunk once it is flipped), over the frame the ROM's
+ * sh_main / sh_cmd lays for it — a `jsr` to the ROM's address is the one kind of call into the AES's ROM text a build
+ * may make (`bench/tier3.py`: ROM_CALLS_OWED_TO_A_LATER_BAND, each held to one site in the function named). OFF
+ * TARGET the routine cannot run (it is 68000 code in the image), so the
  * call leaves through `recreate_call_desk_door`, a hook the case binds: keyed by the routine's ROM address, handed the
  * frame's longwords, answering D0.
  *
@@ -144,16 +147,18 @@ static inline void desk_door_dos_exec(uint8_t *image, uint32_t name, int16_t mod
 #define DESK_DOOR_BEFORE_IT   , [before_it] "+a"(before_it_)
 #define DESK_DOOR_WORD        , [word] "+d"(word_)
 
-/* The bare call ($feb1dc): deskmain. */
-#define desk_door_deskmain(image)                                                                                       \
+/* The bare call ($feb1dc): deskmain — bound as a built-in is (band 6 W3b's prep, the orchestrator's O2), its shape
+ * taking the routine's name as the built-ins' do. */
+#define desk_door_bare(image, routine)                                                                                  \
     ({                                                                                                                  \
         DESK_DOOR_ANSWER;                                                                                               \
                                                                                                                         \
         (void)(image);                                                                                                  \
-        DESK_DOOR_CALL(DESK_DOOR_SP_IN_SH_MAIN, DESK_DOOR_NO_SLOT, "jsr " DESK_DOOR_TEXT(AES_ROM_DESKMAIN), ,           \
-                       "d1", "a0", "a1");                                                                               \
+        DESK_DOOR_CALL(DESK_DOOR_SP_IN_SH_MAIN, DESK_DOOR_NO_SLOT,                                                      \
+                       "jsr " DESK_DOOR_TEXT(DESK_DOOR_BOUND_##routine), , "d1", "a0", "a1");                           \
         (int16_t)answer_;                                                                                               \
     })
+#define desk_door_deskmain(image) desk_door_bare(image, AES_ROM_DESKMAIN)
 
 /* `move.l <name>,(sp)` and the call ($feb320, $feb354): the two file routines. */
 #define desk_door_file(image, routine, name)                                                                            \

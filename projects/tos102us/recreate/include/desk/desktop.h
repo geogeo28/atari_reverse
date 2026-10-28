@@ -197,6 +197,14 @@
 #define BDOWN_NOTHING_DRAGGED (-1)       /* act_bdown's answer                  ($fe223c cmpw #-1,d4)           */
 #define BUTTON_NOTHING_DONE   0          /* ($fe2184 clr.w -2(a6))                                              */
 
+/* ==== BAND 6 W3b's PREP: deskmain `$fe272e` (`src/desk/desktop.c` at the flip, TARGET-ONLY: the user's R3, the
+ * orchestrator's O1) — the RETURN SITES its Line-F calls park, read off the ROM (`test_desk_w3b.py` holds each to the
+ * word after its call word): trp14's twice — Blitmode(-1), then Blitmode(the preference) on the blitter-present arm —
+ * and dos_gdrv's, a host argument, on the resolution-change arm alone ==================================================== */
+#define AES_DESKMAIN_BLITMODE_ASKED_RETURN 0xfe28ec /* trp14's parked return: Blitmode(-1) ($fe28ea LF_CALL trp14)   */
+#define AES_DESKMAIN_BLITMODE_SET_RETURN   0xfe2946 /* ...Blitmode(the Blitter preference) ($fe2944 LF_CALL trp14)   */
+#define AES_DESKMAIN_GDRV_RETURN           0xfe2a52 /* dos_gdrv's host return site ($fe2a50 LF_CALL dos_gdrv)        */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 

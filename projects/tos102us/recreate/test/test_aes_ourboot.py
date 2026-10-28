@@ -124,14 +124,15 @@ def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_who_ran_is_cut_t
     ROM's GEM text, NOT ONE in the Line-F handler's RAM copy. Stopped there or run on to its first idle, the cut is
     the same figures. It is no takeover: nothing was mapped — and the machine says what it is."""
     ours_boots, _the_rom_s = THE_MACHINES[disk]
-    booted, at_the_desk = ours_boots(the_blob(blob)), ours_boots(the_blob(blob), until=DESKMAIN)
+    desk = aes_boot.deskmain_entry(aes_boot.ours_of(the_blob(blob)))       # ...where our door enters deskmain
+    booted, at_the_desk = ours_boots(the_blob(blob)), ours_boots(the_blob(blob), until=desk)
     made = booted.our_boot
     assert made is not None and booted.takeover is None and booted.door is None and booted.ours == aes_boot.ours_of(the_blob(blob))
     instructions, cycles, sp = made.at_the_desk
     assert sp == THE_ROM_ENTERS_DESKMAIN_AT == 0xa364 and 0 < instructions < booted.boot.instructions and cycles > 0
     in_ours, in_the_rom_s_text, in_the_copy = made.ran
     assert in_ours > 0 and (in_the_rom_s_text, in_the_copy) == (0, 0)
-    assert at_the_desk.our_boot == made and at_the_desk.idle is None and at_the_desk.registers["pc"] == DESKMAIN
+    assert at_the_desk.our_boot == made and at_the_desk.idle is None and at_the_desk.registers["pc"] == desk
     assert (at_the_desk.boot.instructions, at_the_desk.registers["isp"]) == (instructions, sp)
     assert booted.idle == aes_boot.OURS, "the desk — the ROM's text, over our AES since the binding — parks last, through OUR dispatcher"
     assert bytes(booted.ram[made.ours.base:made.ours.base + len(made.ours.image)]) == made.ours.image
@@ -168,11 +169,12 @@ def test_labelled_staging_who_ran_is_one_number_whatever_ran_before_it():
     times round two other profiled runs gives the same three figures, and so do a pass's two shores made twice."""
     blob, capture, disk = the_blob(SHIPPED), aes_boot.preinit(), aes_boot.blank_disk()
     ours = aes_boot.ours_of(blob)
+    desk = aes_boot.deskmain_entry(ours)
 
     def made():
-        return aes_boot.booted.derive(capture, disk, until=DESKMAIN, ours=ours, laid=aes_boot.AT_GEM_ENTRY).our_boot.ran
+        return aes_boot.booted.derive(capture, disk, until=desk, ours=ours, laid=aes_boot.AT_GEM_ENTRY).our_boot.ran
     first = made()
-    aes_boot.booted.derive(aes_boot.inf_preinit(), aes_boot.inf_disk_of(), until=DESKMAIN, ours=ours, laid=aes_boot.AT_GEM_ENTRY)
+    aes_boot.booted.derive(aes_boot.inf_preinit(), aes_boot.inf_disk_of(), until=desk, ours=ours, laid=aes_boot.AT_GEM_ENTRY)
     second = made()
     again = ob.who_ran(ob.Both(ob.watched(THE_TEARDOWN), ob.watched(THE_TEARDOWN, blob), blob, THE_TEARDOWN))
     assert first == second == made() and first[0] > 0 and first[1:] == (0, 0)
@@ -676,7 +678,7 @@ def test_labelled_staging_the_usable_disk_longword_is_a_code_address_s_half_mapp
         assert case.long_in(ours[what].ram, top) == start + returns_to - ob.GEM_ENTRY and case.word_in(ours[what].ram, top + WORD_BYTES)
         spans = [span for spans in ob.classes_at(the_rom_s[what], ours[what], (both.blob.base, both.blob.end)).values() for span in spans]
         assert not any(lo < top + LONG_BYTES and top < hi for lo, hi in spans), f"at {what} a class covers the longword"
-    assert both.ours.ended.registers["pc"] == DESKMAIN, "...and the boot that read its DESKTOP.INF arrived"
+    assert both.ours.ended.registers["pc"] == aes_boot.deskmain_entry(aes_boot.ours_of(both.blob)), "...and the boot that read its DESKTOP.INF arrived"
 
 
 # ---- (4) THE TWO STACK GATES, ON THE OUR-BOOT MACHINE: bound and measured (rulings W4-R9, W4-R4) ---------------------------------
@@ -909,7 +911,7 @@ def test_labelled_staging_argument_class_deskmain_served_the_shell_in_the_blob_i
     the first, `$88` and `$404` given back to the VDI's and the BIOS's own, the label carried. THE ROM's shel_write
     may be CALLED over an our-boot machine first (the desk's own call is the ROM's on both shores: ruling W4-R3)."""
     the_build = the_blob(blob)
-    at_the_desk = aes_boot.our_desk_machine(the_build, until=DESKMAIN).boot
+    at_the_desk = aes_boot.our_desk_machine(the_build, until=aes_boot.deskmain_entry(aes_boot.ours_of(the_build))).boot
     back = case.long_in(at_the_desk.ram, at_the_desk.registers["isp"]) & BUS
     assert the_build.base <= back < the_build.end and aes_boot.whose(back, aes_boot.blob_of(at_the_desk)) == aes_boot.OURS
     entered = aes_boot.our_desk_machine(the_build, until=the_build.entry("aes_rom_gem_main")).boot

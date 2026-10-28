@@ -895,7 +895,7 @@ AT_GEM_ENTRY = "at gem_entry, before the boot's first instruction, the run enter
 HANDLER_NAMES = ("AES_ROM_HCTL_BUTTON", "AES_ROM_HCTL_RECT")
 HANDLER_WORDS = 2                       # (mx, my)
 
-Ours = namedtuple("Ours", "base end image entry poll idle handlers rom door start", defaults=((), (), None))
+Ours = namedtuple("Ours", "base end image entry poll idle handlers rom door start desk_door", defaults=((), (), None, ()))
 Ours.__doc__ = """A blob AS A TAKEOVER READS IT (`ours_of`), by content — what a kept boot is keyed by: where it is
 linked (`base`) and ends (`end`: its allocated span), its bytes (`image`), its `entry` (ENTRY_SYMBOL), its
 dispatcher's `poll` and the `(start, end)` of the `idle` that calls it, `handlers`: `((the ROM's handler, its C
@@ -903,7 +903,9 @@ core's entry), ...)` — `rom`: `((address, bytes), ...)`, THE ROM DATA A LABELL
 (`restaged`: the VDI's opcode tables naming the blob's own handlers), laid over the ROM in every continuation —
 and `door`: THE TRAP DOOR A TAKEOVER MAPS BESIDE THE SCREEN MANAGER'S ENTRY, a `DoorPart` each (none: the screen
 manager alone is ours); `start`: the blob's own gem_entry (GEM_ENTRY_SYMBOL: where an our-boot machine is entered),
-None for a build that links none."""
+None for a build that links none; `desk_door`: `((the blob's entry, the ROM routine it stands for), ...)` — each routine
+the shell's desk door enters AT A THUNK OF OURS (a flipped one: `transcription.desk_door_thunked`, band 6 W3b's prep —
+deskmain with the four built-ins), none while each is the ROM's or the blob links no shell (`entry_on`)."""
 DoorPart = namedtuple("DoorPart", "what mapping")
 DoorPart.__doc__ = """One declaration of the registry as a blob answers it: `what` (its `RelocatedCode.what`) and
 `mapping` — `((the ROM's routine, the blob's own entry), ...)`, each entry found by symbol."""
@@ -953,8 +955,30 @@ def _ours_at(elf, base, end, image, door=()):
     handlers = tuple((getattr(addrs, name), placed[routines.core_symbol(name)].start) for name in HANDLER_NAMES
                      if routines.core_symbol(name) in placed)
     start = placed.get(GEM_ENTRY_SYMBOL)
+    shell = set(transcription.DESK_DOOR_CALLERS.values()) <= set(placed)
+    desk_door = tuple(sorted(transcription.desk_door_thunked(elf).items())) if shell else ()
     return Ours(base, max(end, base + len(image)), image, entry.start, poll.start, (idle.start, idle.start + idle.size),
-                handlers, door=_door_of(placed, blob, door), start=start.start if start is not None else None)
+                handlers, door=_door_of(placed, blob, door), start=start.start if start is not None else None,
+                desk_door=desk_door)
+
+
+def entry_on(ours, routine):
+    """WHERE A RUN ON A MACHINE WHOSE BLOB IS `ours` (None: the ROM's) ENTERS the desk door's ROM `routine` (an address):
+    the door's thunk of ours where the blob enters it at one, else the ROM's own address (band 6 W3b's prep: the
+    flip moves the stop with the door, from the one binding)."""
+    bound = {rom: entry for entry, rom in (ours.desk_door if ours is not None else ())}
+    return bound.get(routine, routine)
+
+
+def routine_at(ours, at):
+    """...and the converse: the ROM routine a run on that machine standing at `at` is entering — the one a door's
+    thunk of `ours` stands for, else `at` itself."""
+    return dict(ours.desk_door if ours is not None else ()).get(at, at)
+
+
+def deskmain_entry(ours):
+    """...deskmain's: where a boot of that machine arrives at the desk."""
+    return entry_on(ours, addrs.AES_ROM_DESKMAIN)
 
 
 def ours_of(blob, door=()):
@@ -1648,7 +1672,8 @@ class BootingOurs:
         _vet_clear_where_the_blob_goes(memory, ours)
         memory[ours.base:ours.base + len(ours.image)] = ours.image
         self._began, self._at_the_desk, self._ran = None, None, None
-        self.watched = {addrs.AES_ROM_DESKMAIN: ("deskmain's entry", self._arrived_at_the_desk),
+        self.desk = deskmain_entry(ours)     # ...where the desk door enters deskmain on this blob (W3b's prep)
+        self.watched = {self.desk: ("deskmain's entry", self._arrived_at_the_desk),
                         **watched_for_the_build_s_halt(memory, ours)}
 
     def entered(self, registers):
@@ -1685,7 +1710,7 @@ class BootingOurs:
                 + " — the blob lies in memory GEMDOS believes free: a Malloc or a Pexec of the boot's was handed it (a "
                   "disk with an accessory: ruling W4-R2), and the run went on over code that was no longer there")
         instructions, cycles, registers = ended
-        if self._at_the_desk is None and registers["pc"] & BUS == addrs.AES_ROM_DESKMAIN:
+        if self._at_the_desk is None and registers["pc"] & BUS == self.desk:
             self._at_the_desk, self._ran = (instructions, cycles, registers["isp"]), self._ran_so_far()   # ...ended there (`until`)
         ran = self._ran if self._ran is not None else self._ran_so_far()
         ours, the_rom_s, the_copy = ran
@@ -2583,6 +2608,7 @@ def _vet_stands_at_a_served_entry(boot):
     """`boot` stands STOPPED AT THE ENTRY OF A ROUTINE THE DOOR SERVES, called by the shell — or it is refused by name:
     answers `(the routine's name, its entry, the return address)`."""
     at, sp = boot.registers["pc"] & BUS, boot.registers["isp"]
+    at = routine_at(blob_of(boot), at)  # ...a door's thunk stands for its routine
     if boot.idle is not None or at not in SERVED_ROUTINES:
         raise Refused(f"THE SERVED DOOR ANSWERS A ROUTINE AT ITS ENTRY: this boot stands at {at:#x}"
                       + (f", the idle of {boot.idle} dispatcher" if boot.idle is not None else "")
@@ -2655,6 +2681,14 @@ def _refusing_a_second_arrival(name, until):
     return refused
 
 
+def second_arrivals_refused(ours, until):
+    """THE SERVED RUN'S WATCH ON A SECOND ARRIVAL (`served`): `{where a run on a machine whose blob is `ours` enters a
+    routine the door serves — at a door's thunk of ours where it is one (`entry_on`) —: (its name, the refusal)}`,
+    `until` aside."""
+    return {entry_on(ours, routine): (each, _refusing_a_second_arrival(each, until))
+            for routine, (each, _call) in SERVED_ROUTINES.items() if entry_on(ours, routine) != until}
+
+
 def answered_at_its_entry(boot, answer, calls=()):
     """THE SERVED DOOR'S ONE ACT (above), without the run that follows it: `boot` — stopped at the entry of a routine
     of `SERVED_ROUTINES` — vetted, `calls` made over its machine, and the routine ANSWERED the word `answer`:
@@ -2691,10 +2725,9 @@ def served(boot, answer, until=None, calls=(), budget=BOOT_INSNS):
     name, at, memory, called, answered = answered_at_its_entry(boot, answer, calls)
     ours = blob_of(boot)
     floppy = Floppy(memory, boot.disk, boot.drive_b)
-    again = {entry: (each, _refusing_a_second_arrival(each, until)) for entry, (each, _call) in SERVED_ROUTINES.items()
-             if entry != until}
     run = _Run(memory, floppy, budget, until=until, ours=ours,
-               observing={**handler_stops(ours), **trampoline_stops(ours), **again}, printer=boot.printer)
+               observing={**handler_stops(ours), **trampoline_stops(ours), **second_arrivals_refused(ours, until)},
+               printer=boot.printer)
     try:
         result = run.to_an_idle(answered, _io_seed(boot.io))
         registers = _registers_now()

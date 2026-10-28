@@ -2373,7 +2373,8 @@ def test_the_rom_depth_rule_measured_our_own_boot_enters_deskmain_where_the_rom_
     machine's VDI under our traps there is the ROM's. Over a disk with an accessory the run is refused by name."""
     shore = stack.shore_of(blob)
     run = stack.our_start_up_run(shore, stack.DESKMAIN_ROM)
-    assert run.ended == (stack.DESKMAIN_ROM, PD0_S[1] - THE_ROM_ENTERS_DESKMAIN) == (addrs.AES_ROM_DESKMAIN, 0xa364)
+    door = aes_boot.deskmain_entry(aes_boot.ours_of(blob))     # ...where our door enters deskmain (the ROM's while held)
+    assert run.ended == (door, PD0_S[1] - THE_ROM_ENTERS_DESKMAIN) and run.ended[1] == 0xa364
     assert run.the_rom_s == 0 and run.ours > 0
     gem_main = blob.entry(stack.our_gem_main(blob.elf)[0])
     assert run.entered[gem_main] == PD0_S[1] - THE_ROM_ENTERS_GEM_MAIN

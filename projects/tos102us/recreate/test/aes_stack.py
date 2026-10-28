@@ -2004,7 +2004,9 @@ def our_start_up_run(shore, until, boot=THE_BLANK_DISK):
     read = start_up_reading(blob.elf)
     watched = {blob.entry(callee) for callee, _under, _at in read.sites(ON_THE_FIRST_STACK) + read.sites(pd0_entry(blob.elf))}
     machine, disk = THE_BOOTS[boot]()
-    ends_at, reader = blob.entry(until) if isinstance(until, str) else until, blob.entry(THE_INF_READER)
+    # (a ROM routine the desk door enters — deskmain — is stopped at where the blob's door enters it: band 6 W3b's prep)
+    ends_at = blob.entry(until) if isinstance(until, str) else transcription.desk_door_bindings(blob.elf).get(until, until)
+    reader = blob.entry(THE_INF_READER)
     return _start_up_run(machine, disk, tuple(sorted((watched | {reader}) - {ends_at})), ends_at,
                          (blob.base, bytes(blob.blob), blob.entry(GEM_ENTRY)), reader)
 

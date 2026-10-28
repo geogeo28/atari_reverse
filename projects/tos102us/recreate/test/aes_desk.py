@@ -1419,7 +1419,8 @@ def _bound_by_a_transcription_s_operands(blob, symbol, rom):
 # — read off the blob, decoded, not named here. `{our source's symbol: how its bindings are read off a blob}`.
 # (AND SH_CMD'S DESK DOOR, band 6 slice F4's prep, ruling O2: our C, whose absolute `jsr`s enter the desk's four
 # built-ins — no bytes of the ROM's to read its operands at, so they are read off the blob's listing instead
-# (`transcription.desk_door_bindings`): each the ROM's routine, or the table's own thunk once that built-in is flipped.)
+# (`transcription.desk_door_bindings`): each the ROM's routine, or the table's own thunk once that built-in is flipped —
+# and, since band 6 W3b's prep, sh_main's door of deskmain read the same way, under the same entry.)
 UB_TRAMPOLINE = "aes_rom_ub_trampoline"
 BY_VALUE_CALLERS = {
     UB_TRAMPOLINE: functools.partial(_bound_by_a_transcription_s_operands, symbol=UB_TRAMPOLINE, rom=addrs.AES_ROM_UB_TRAMPOLINE),

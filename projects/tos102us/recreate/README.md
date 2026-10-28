@@ -592,7 +592,7 @@ TOO — `$fde844` by ub_trampoline's operand (N18) — and every `UNIT_<X>_WAVE_
 four built-ins by sh_cmd's desk door too, which `jsr`s the same thunks), the engine's eight `bsr`-only parts with their
 built-ins (`aes_desk.ENGINE_PARTS`) — and `UNIT_M_WAVE_4_HELD_AT_F4` / `UNIT_N_WAVE_4_HELD_AT_F4` are `()`; fat_swap
 and fat_mark flipped ⚠️ VERIFIED-BUT-UNPRICED (no run of the device model reaches Format's bad-sector arm). What is
-held of band 6 is W3a's cycle (the 17 + `$fe2172`) and W3b's deskmain; `LINKED_AND_NOT_FLIPPED` is empty. SINCE W3a's PREP the cycle has ONE HOME, `test/aes_desk_w3a.py`, before any of its C exists: its eighteen named in
+held of band 6 is W3b's deskmain alone — DECLARED target-only beside the cycle (`aes_desk_w3a.W3B`, `() -> word`) and held the ROM's by `DECLARED_NOT_LINKED` (its own line, which the flip deletes); the cartridge's pair stays the ROM's (W4-R12). `LINKED_AND_NOT_FLIPPED` is empty. SINCE W3a's PREP the cycle has ONE HOME, `test/aes_desk_w3a.py`, before any of its C exists: its eighteen named in
 `include/addrs.h` by the file each goes to (`desk/desktop.c` six, `desk/desksupp.c` three, `desk/deskinf.c` seven, the
 NEW `desk/deskins.c` two — ins_disk, ins_app; EACH FILE'S NAMES THE PREFIX ITS C ALREADY USES, the orchestrator's B4:
 desktop.c's and desksupp.c's unprefixed, deskinf.c's — and its split deskins.c's — `DESK_`; `$fded16` is
@@ -2755,6 +2755,26 @@ line clicked and dragged under the G_USERDEF stack's window (below). New hand: T
 (`the_chain_s_hands`: after the press, after the item), and a rubber box's at its door calls. Stagings stage 1's and 2's,
 and THE FRAME-TELLING REPLAY (below). Budgets: stage 2's `ROW_INSNS` and stage 1's `DIALOG_ROW_INSNS`, 17 rows.
 
+W3b's PREP (2026-10-27; STATUS.md, "BAND 6 W3b's PREP"): NOTHING FLIPS. The harness reads deskmain off the door's
+binding — `aes_boot.deskmain_entry(ours)` / `entry_on` / `routine_at` over `Ours.desk_door` (the door's thunks the
+blob enters), the our-boot's checkpoints AT_THE_DESK_DOOR, `BootingOurs`' who-ran watch, the served door's
+refusals of a second arrival, `aes_stack.our_start_up_run`'s stop — each the ROM's `$fe272e` today. Its rows
+(`test/aes_desk_w3b.py`): ten arrivals at deskmain's entry (five boot machines' first entries, the cartridge's
+LABELLED; five re-entries, two on the printer machine), each vetted on the ROM's machine now and registered at the
+flip (`register_at_the_flip`, refused by name while held). U1 (a)'s label: `bench/tier3.py` tallies deskmain's
+ROM span in every turn over our AES on both shores (TALLY_OUR_DESKMAIN / THE_ROM_S_TALLY_DESKMAIN, held alike),
+`Turn.in_deskmain`, pinned by row (`aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_DESKMAIN`: the seven desk-turn rows —
+U1's "eight" are these and ct_msgup's, whose pinned turn is ANOTHER PROCESS'S, the accessory's, not the desk's: held
+to none, the exclusion read off the measured turn's owner) and held where turns are vetted
+(`aes_switching.vet_its_turns`, its wiring pinned by a stand-in row) — the table says "LABELLED: the
+desk parked in the ROM's own deskmain frame" beside such a turn once deskmain is flipped. O4's invariant:
+`test_aes_desk_ours.ROM_GEM_TEXT_ON_OUR_WALKS` (deskmain 225,914 cycles) and LINE_F_COPY_ON_OUR_WALKS (174,398),
+measured on every walked chain — non-empty exactly while the blob binds deskmain the ROM's (`aes_desk.flipped()`):
+the flip empties the list and both are then held at 0. The served door's reading of a flipped built-in's thunk
+(`routine_at`, `aes_boot.second_arrivals_refused`) is pinned on both blobs; `BootingOurs.desk` and
+`our_start_up_run`'s mapping are unpinned while held, by nature (they move deskmain alone; the flip's our-boot tests
+red if either is wrong).
+
 A RECORDER'S BYTES PAST A FRAME ARE A HARNESS ARTIFACT, NOT A DROP (W3a stage 3's finish, the orchestrator's call): fslib's
 replay records six bytes of every GEMDOS call it does not tell, and past a shorter frame those are the CALLER'S STACK —
 the ROM's glue's return on one shore, ours on the other — which no build reproduces and GEMDOS never reads. The fix is a
@@ -3739,6 +3759,12 @@ sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskm
   (the table ours, the door the ROM's) cannot be generated, and the harness refuses one by name where it reads a
   binding (`aes_desk._bound`). SINCE SLICE F4 ALL FOUR ARE: the header
   binds each to its thunk, `test_aes_shell_door.SITES` names the thunks, and the four `.globl`s are the table's.
+- **deskmain IS BOUND THE SAME WAY SINCE W3b's PREP** (the orchestrator's O2): sh_main's bare call `jsr`s
+  `DESK_DOOR_BOUND_##routine` of its shape `desk_door_bare(image, AES_ROM_DESKMAIN)` (the built-ins' form) — the
+  generated header's `DESK_DOOR_BOUND_AES_ROM_DESKMAIN`, the ROM's routine
+  while `linef_table.DECLARED_NOT_LINKED` holds it, the table's thunk `linef_to_aes_deskmain` once flipped (a
+  `.globl`: `transcription.DESK_DOOR_THUNKS` names it, `DESK_DOOR_CALLERS` says whose door). The objects are
+  byte-identical to the bare `jsr 0xfe272e` until then.
 - **OFF TARGET** the five routines cannot run: the call leaves through the hook `recreate_call_desk_door`, keyed by
   the routine's ROM address (unbound, a door reached fails the run by name). AT TIER 1 THE ROM'S SHORE IS ANSWERED
   THE SAME WAY — "a ROM routine answered at its entry through a staged Line-F table" (`test/aes_shmain.py`): a RAM
@@ -4241,6 +4267,8 @@ recreate/
 │                       and unbound); `test_window.py` (the free window's order and
 │                       the blob's ceiling); `room_poison.py` / `test_room_poison.py` (the read guard: a poison
 │                       differential over every priced row)
+│                       `aes_desk_w3b.py` / `test_desk_w3b.py` (deskmain's prep: names, declaration, door,
+│                       arrivals, U1's label)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),
 │                       flipped_depths.py (W6-R4's PD0 gate on a private flipped build)
