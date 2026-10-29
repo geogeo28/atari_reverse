@@ -238,8 +238,8 @@ LINKED_HELD_NO_TABLE_ENTRY = {}
 DECLARED_NOT_LINKED = dict.fromkeys((name for name in aes_desk_w3a.W3A if aes_desk_w3a.STAGE_OF[name] > 3),
                                     "band 6 W3a: declared target-only, its C not yet written")
 # ---- end of band 6 W3a's ----
-# ---- band 6 W3b (deskmain; its prep): declared target-only, HELD THE ROM'S until its flip — which deletes this line ----
-DECLARED_NOT_LINKED.update(dict.fromkeys(aes_desk_w3a.W3B, "band 6 W3b: declared target-only, its C not yet written"))
+# ---- band 6 W3b (deskmain): declared target-only at its prep, HELD THE ROM'S until its flip — WRITTEN, LINKED AND
+# FLIPPED at band 6 W3b's flip (`src/desk/desktop.c`), so it holds nothing ----
 # ---- end of band 6 W3b's ----
 
 

@@ -236,14 +236,16 @@ def _captured(ram, frame, answer, capture):
     return at, bytes(ram[at:at + length])
 
 
-def in_place(arrived, wakes=(), stops=(), captures=None):
+def in_place(arrived, wakes=(), stops=(), captures=None, parks=False):
     """THE ROM'S OWN RUN of the routine from `arrived` to its return, over the real disk: hopped from GEMDOS's handler
     entry to where each `trap #1` returns — a trap the run meets only AFTER its return (fewer instructions to the
     return) is its caller's —, and the next of `wakes` (receptions, as a chain's hand gives them) taken in AT AN IDLE,
     or — where `stops` names one for it (a tuple, one per wake from the first; None: an idle) — AT THAT NAMED STOP
     (`aes_desk.STOPS`: a wait that never idles), where the run reaches it before its next trap. The DTA a search fills
     is the one the run's last Fsetdta named — refused by name where none did. `captures` (`{function: Capture}`): what
-    each such call wrote, kept in `written`. `Replay`."""
+    each such call wrote, kept in `written`. `parks`: a routine of THE PARKED KIND (band 6 W3b: deskmain's rows, which
+    end at the first idle — `aes_switching.SwitchingRow.ends_at_its_first_idle`): the run ends where it idles with no
+    wake left, its `Replay`'s boot the machine there. `Replay`."""
     boot, stands_at, received = arrived.boot, da.entry_of(arrived.name), ()
     pending = list(zip(wakes, (*stops, *(None,) * (len(wakes) - len(stops)))))
     handler, sp0 = case.long_in(boot.ram, addrs.VECTOR_TRAP_GEMDOS) & db.BUS, _sp(arrived.boot)
@@ -260,6 +262,9 @@ def in_place(arrived, wakes=(), stops=(), captures=None):
         if back is not None and (hop is None or back.instructions <= hop.instructions):
             assert _sp(back) == sp0 + L and not pending, f"{da.label_of(arrived)}: not its own return, or wakes left"
             return Replay(tuple(answers), tuple(fills), tuple(functions), handles, back, tuple(written))
+        if hop is None and parks and not pending:     # ...THE PARKED KIND: it ends at the idle with no wake left
+            idle = aes_boot.continued(boot, received, arrived.budget, None, stands_at)
+            return Replay(tuple(answers), tuple(fills), tuple(functions), handles, idle, tuple(written))
         if hop is None:
             assert pending and pending[0][1] is None, f"{da.label_of(arrived)}: the run idles with no wake left to take in"
             boot, stands_at = aes_boot.continued(boot, received, arrived.budget, None, stands_at), None

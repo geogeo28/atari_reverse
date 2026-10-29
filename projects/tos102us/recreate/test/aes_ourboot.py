@@ -18,8 +18,9 @@ says THAT MACHINE IS THE ROM'S, how far, and at what price:
     classes — a store one shore makes and the other does not is a difference even where both leave the same value,
     which is how a clear of a byte that is zero already is held).
   * WHO RAN (`who_ran`): a cycle profile differenced over the run — OUR shore NOT ONE CYCLE in the ROM's GEM text nor
-    in the Line-F handler's RAM copy, the ROM's shore none in the blob. "OURS BOOTED" IS CLAIMED TO deskmain's ENTRY
-    AND NO FURTHER (ruling W4-R3): every run here ends at an arrival at deskmain or before one.
+    in the Line-F handler's RAM copy, the ROM's shore none in the blob. "OURS BOOTED" IS CLAIMED TO THE DESKTOP'S
+    FIRST IDLE (ruling W4-R3, extended by band 6 W3b's O5): every run here ends at an arrival at deskmain or before one,
+    and the our-boot machine's own run to its first idle is `test_aes_ourboot.py`'s.
   * THE ROADS NO MACHINE TAKES — gem_main's teardown, gem_entry's second pass, the shell's launch pass, sh_cmd's arms —
     ARE RUN THROUGH THE SERVED DOOR (`aes_boot.answered_at_its_entry`: ruling W4-R6's LABELLED ARGUMENT CLASS), ON THE
     OUR-BOOT MACHINE AND THE ROM'S FROM THE SAME STOP: deskmain answered a word at its entry on both; a built-in of
@@ -31,7 +32,7 @@ says THAT MACHINE IS THE ROM'S, how far, and at what price:
 
 WHAT A COMPARISON CANNOT HOLD, said once: PD0's LIVE FRAMES (the build's own, from the stack pointer to the stack's
 top: sixty-two bytes at deskmain's entry) are vetted by what the caller DOES with an answer — the served passes —
-never byte for byte; and nothing here runs past deskmain's entry (the desk's depth under our frames is not claimed).
+never byte for byte; and nothing here runs past deskmain's entry (the desk's depth under our frames is `flipped_depths`').
 """
 import functools
 import re
@@ -857,8 +858,9 @@ WITHOUT_A_SECOND_COLUMN = {
     "gem_main, whole": (NEVER_RETURNS, "in a boot: its return is the desk's Quit, a hand's — the teardown is run through the served door"),
     "sh_main's launch, past dos_exec's entry": (RUNS_A_PROGRAM, "a real Pexec(0) loads over the blob (THE STANDING LIMIT)"),
     "sh_main's cartridge arm, the cartridge's loader": (NO_MACHINE, "the oracle serves no cartridge (ruling W4-R12): the arm halts by name"),
-    "the desk's depth under our frames, past deskmain": (NO_MACHINE, "not claimed: from deskmain's entry the desk calls the ROM's AES (ruling W4-R3)"),
 }
+# ("the desk's depth under our frames, past deskmain" LEFT THIS LIST AT BAND 6 W3b's FLIP — the orchestrator's O5: deskmain
+# is ours, "ours booted" is claimed TO THE DESKTOP'S FIRST IDLE, and that depth is `flipped_depths`' measure.)
 
 
 # ---- WHAT THE TABLE PRINTS OF A STRETCH, READ BACK (the fix pass: the line net of the ROM's Line-F handler is held) ---------------

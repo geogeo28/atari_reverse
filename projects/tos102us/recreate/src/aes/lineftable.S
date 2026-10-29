@@ -3,7 +3,7 @@
  *
  * 658 longwords, one for each entry of the ROM's table at `$fee900`: the build's own entry where it has one — a
  * byte-pinned `.S` entry as it is (84), or a thunk that re-pushes the ROM caller's Alcyon frame as the longword
- * slots a C core reads (569, 530 thunks) — and the ROM's own address in the rest (5: band 6's routines, the
+ * slots a C core reads (570, 531 thunks) — and the ROM's own address in the rest (4: band 6's routines, the
  * ROM's until each is ported).
  *
  * A KIND OF ITS OWN (`atari/target.mk`: LINEFTABLE_SOURCES): target-only, no ROM instruction, no row. BOUND (band 6
@@ -641,7 +641,7 @@ aes_linef_table:
     .long   linef_to_aes_sh_toalpha         /* $f9b0  $fead82  ours, through a thunk */
     .long   0xfed5c2                        /* $f9b4  $fed5c2  the ROM's */
     .long   linef_to_aes_desk_alloc         /* $f9b8  $fee80a  ours, through a thunk */
-    .long   0xfe272e                        /* $f9bc  $fe272e  the ROM's */
+    .long   linef_to_aes_deskmain           /* $f9bc  $fe272e  ours, through a thunk */
     .long   linef_to_aes_desk_free          /* $f9c0  $fee870  ours, through a thunk */
     .long   0xfeb2fc                        /* $f9c4  $feb2fc  the ROM's */
     .long   aes_rom_dos_exec                /* $f9c8  $fe3d2e  ours, native */
@@ -7223,6 +7223,16 @@ linef_to_aes_desk_alloc:
     lea     4(%sp),%sp
     rts
     .size   linef_to_aes_desk_alloc,.-linef_to_aes_desk_alloc
+
+/* $fe272e: aes_deskmain(image) */
+    .globl  linef_to_aes_deskmain
+    .type   linef_to_aes_deskmain,@function
+linef_to_aes_deskmain:
+    pea     (0).w
+    jsr     aes_deskmain
+    lea     4(%sp),%sp
+    rts
+    .size   linef_to_aes_deskmain,.-linef_to_aes_deskmain
 
 /* $fee870: aes_desk_free(image) */
     .type   linef_to_aes_desk_free,@function

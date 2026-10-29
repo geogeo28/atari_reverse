@@ -7,9 +7,15 @@
 #include "machine.h"
 #include "m68k_idioms.h"
 #include "aes/aes.h"
+#include "aes/deskleaf.h"
+#include "aes/evdoor.h"
+#include "aes/evmulti.h"
 #include "aes/gemctrl.h"
+#include "aes/gemdosif.h"
 #include "aes/gemstart.h"
+#include "aes/loader.h"
 #include "aes/obedit.h"
+#include "aes/objdraw.h"
 #include "aes/rect.h"
 #include "aes/gsxif.h"
 #include "aes/strings.h"
@@ -565,5 +571,177 @@ int16_t aes_hndl_button(uint8_t *image, int16_t clicks, int16_t x, int16_t y, in
     }
     aes_men_update(image, bus_long(image, desk + DESK_MENU_TREE));
     return done;
+}
+
+/* ==== BAND 6 W3b: deskmain, THE DESK ITSELF ==========================================================================
+ * COMPILED FOR THE TARGET ALONE (the user's R3, read to cover W3b: the orchestrator's O1): no host twin, no Tier 1 —
+ * held by its target-only rows at its arrivals (`test/test_desk_w3b.py`). sh_main's desk door `jsr`s its thunk
+ * (`aes/deskdoor.h`). Its bring-up and its exit are ROUTINES OF THEIR OWN (`noinline`, PD0): the loop's frame, under
+ * which every handler runs, is the six answer words alone. */
+
+/* The desk's work area (window 0's, into DESK_G_DESK_RECT) and its full rectangle (wind_calc of every gadget round it,
+ * into DESK_G_FULL_RECT). */
+static void desk_area_kept(uint8_t *image, uint32_t desk)
+{
+    uint32_t area = desk + DESK_G_DESK_RECT, full = desk + DESK_G_FULL_RECT;
+
+    (void)aes_desk_wind_get(image, DESKTOP_WORK_WINDOW, WF_WORKXYWH, area + GRECT_X, area + GRECT_Y, area + GRECT_W,
+                            area + GRECT_H);
+    (void)aes_desk_wind_calc(image, WC_WORK, WINDOW_KIND_ALL, rect_word(image, area, GRECT_X), rect_word(image, area, GRECT_Y),
+                             rect_word(image, area, GRECT_W), rect_word(image, area, GRECT_H), full + GRECT_X, full + GRECT_Y,
+                             full + GRECT_W, full + GRECT_H);
+}
+
+/* The launch's command and tail, the two FCBs and evnt_multi's message: each pointer to its buffer in the block. */
+static void buffers_pointed(uint8_t *image, uint32_t desk)
+{
+    set_bus_long(image, desk + DESK_G_A_CMD, desk + DESK_G_CMD);
+    set_bus_long(image, desk + DESK_G_A_TAIL, desk + DESK_G_TAIL);
+    set_bus_long(image, desk + DESK_A_FCB1, desk + DESK_G_FCB1);
+    set_bus_long(image, desk + DESK_A_FCB2, desk + DESK_G_FCB2);
+    set_bus_long(image, desk + DESK_A_RMSG, desk + DESK_G_RMSG);
+}
+
+/* Blitmode(`mode`) through the ROM's trp14 door, its return site parked (`desk/deskleaf.h`'s idiom). Its answer. */
+static int16_t blitmode(uint8_t *image, uint32_t return_site, int16_t mode)
+{
+    const uint16_t frame[] = {XBIOS_BLITMODE_FN, (uint16_t)mode};
+
+    desk_xbios_parked(image, return_site);
+    return (int16_t)desk_xbios_trap(frame, sizeof frame / sizeof frame[0]);
+}
+
+/* THE BLITTER ITEM, by what Blitmode(-1) answers: a blitter — the Options box made to end at the item (its last child,
+ * the line under Print Screen next, the box eight lines high), the INF's preference made the item's check and Blitmode
+ * set to it — or none: the box ending at Print Screen, six lines high. */
+static void blitter_item_shown(uint8_t *image, uint32_t desk)
+{
+    uint32_t menu = bus_long(image, desk + DESK_MENU_TREE);
+    int16_t hchar = (int16_t)be16(image + AES_GL_HCHAR);
+
+    if (!(blitmode(image, AES_DESKMAIN_BLITMODE_ASKED_RETURN, BLITMODE_ASK) & BLITMODE_BLITTER_BIT)) {
+        set_object_word(image, menu, OPTIONS_BOX, OB_TAIL, OPTN_PRINT_SCREEN);
+        set_object_word(image, menu, OPTN_PRINT_SCREEN, OB_NEXT, OPTIONS_BOX);
+        set_object_word(image, menu, OPTIONS_BOX, OB_HEIGHT, (int16_t)(hchar * OPTIONS_LINES_NONE));
+        return;
+    }
+    set_object_word(image, menu, OPTIONS_BOX, OB_TAIL, OPTN_BLITTER);
+    set_object_word(image, menu, OPTN_PRINT_SCREEN, OB_NEXT, OPTN_BLITTER_LINE);
+    set_object_word(image, menu, OPTIONS_BOX, OB_HEIGHT, (int16_t)(hchar * OPTIONS_LINES_BLITTER));
+    set_bus_word(image, desk + DESK_BLITTER_ON, bus_word(image, desk + DESK_CNX_BLITTER_ON));
+    (void)aes_desk_menu_icheck(image, bus_long(image, desk + DESK_MENU_TREE), OPTN_BLITTER,
+                               desk_word(image, desk, DESK_BLITTER_ON));
+    (void)blitmode(image, AES_DESKMAIN_BLITMODE_SET_RETURN, desk_word(image, desk, DESK_BLITTER_ON));
+}
+
+/* The menu shown: brought up to date, View's items enabled, its separator — and Save Desktop where there is no drive —
+ * disabled, the view and the sort the desk starts in checked, the first two preferences on. */
+static void menu_shown(uint8_t *image, uint32_t desk)
+{
+    int16_t item;
+
+    aes_desk_menu_bar(image, bus_long(image, desk + DESK_MENU_TREE), MENU_SHOWN);
+    aes_men_update(image, bus_long(image, desk + DESK_MENU_TREE));
+    for (item = VIEW_ITEM_ICONS; item <= SORT_ITEM_TYPE; item++)
+        aes_ob_change(image, bus_long(image, desk + DESK_MENU_TREE), item, 0, OB_CHANGE_NO_REDRAW);
+    aes_ob_change(image, bus_long(image, desk + DESK_MENU_TREE), VIEW_SEPARATOR, OB_STATE_DISABLED, OB_CHANGE_NO_REDRAW);
+    if (!(uint16_t)aes_isdrive(image))
+        aes_ob_change(image, bus_long(image, desk + DESK_MENU_TREE), OPTN_SAVE_DESKTOP, OB_STATE_DISABLED, OB_CHANGE_NO_REDRAW);
+    set_bus_word(image, desk + DESK_VIEW_ITEM, VIEW_ITEM_ICONS);
+    (void)aes_desk_menu_icheck(image, bus_long(image, desk + DESK_MENU_TREE), desk_word(image, desk, DESK_VIEW_ITEM),
+                               MENU_ITEM_CHECKED);
+    set_bus_word(image, desk + DESK_SORT_ITEM, SORT_ITEM_NAME);
+    (void)aes_desk_menu_icheck(image, bus_long(image, desk + DESK_MENU_TREE), desk_word(image, desk, DESK_SORT_ITEM),
+                               MENU_ITEM_CHECKED);
+    set_bus_word(image, desk + DESK_PREFERENCES, PREFERENCE_ON);
+    set_bus_word(image, desk + DESK_PREFERENCES + M68K_WORD_BYTES, PREFERENCE_ON);
+}
+
+/* THE BRING-UP, under wind_update and the busy bee: whether app_start read the INF (where it did not, the AES left). */
+__attribute__((noinline)) static int desk_brought_up(uint8_t *image, uint32_t desk)
+{
+    uint32_t screen;
+    int16_t tree;
+
+    (void)aes_desk_appl_init(image);
+    (void)aes_desk_wind_update(image, WM_BEG_UPDATE);
+    desk_area_kept(image, desk);
+    buffers_pointed(image, desk);
+    aes_desk_wait(image, DESK_WAIT_BUSY);
+    (void)aes_desk_rsrc_load(image);
+    for (tree = 0; tree < DESKMAIN_TREES; tree++)
+        (void)aes_ini_tree(image, desk + DESK_MENU_TREE + (uint32_t)tree * M68K_LONG_BYTES, tree);
+    if (!aes_app_start(image)) {
+        (void)aes_desk_appl_exit(image);
+        return 0;
+    }
+    aes_win_start(image);
+    aes_fpd_start(image);
+    aes_desk_verify(image, DESKTOP_WINDOW, DESK_VERIFY_UNCHANGED);
+    menu_shown(image, desk);
+    (void)aes_app_blddesk(image);
+    aes_do_wredraw(image, DESKTOP_WORK_WINDOW, rect_word(image, desk + DESK_G_DESK_RECT, GRECT_X),
+                   rect_word(image, desk + DESK_G_DESK_RECT, GRECT_Y), rect_word(image, desk + DESK_G_DESK_RECT, GRECT_W),
+                   rect_word(image, desk + DESK_G_DESK_RECT, GRECT_H));
+    screen = bus_long(image, desk + DESK_G_SCREEN);
+    (void)aes_desk_wind_set(image, DESKTOP_WORK_WINDOW, WF_NEWDESK, (int16_t)(screen >> 16), (int16_t)screen, NEWDESK_ROOT,
+                            NEWDESK_ZERO);
+    aes_desk_verify(image, DESKTOP_WINDOW, DESK_VERIFY_UNCHANGED);
+    set_bus_word(image, desk + DESK_G_WLASTSEL, 0);
+    aes_cnx_get(image);
+    blitter_item_shown(image, desk);
+    (void)aes_desk_wind_update(image, WM_END_UPDATE);
+    aes_desk_wait(image, DESK_WAIT_DONE);
+    return 1;
+}
+
+/* THE EXIT: the INF's windows kept and the INF saved, the menu put away, the AES left — then, where a resolution change
+ * was asked, the current drive made again (set_defdrv) and, where there is a drive, checked, and AES_DISK_USABLE made
+ * whether that went without a GEMDOS error. deskmain's word. */
+__attribute__((noinline)) static int16_t desk_left(uint8_t *image)
+{
+    aes_cnx_put(image);
+    aes_app_save(image, APP_SAVE_KEPT);
+    aes_desk_menu_bar(image, 0, MENU_PUT_AWAY);
+    (void)aes_desk_appl_exit(image);
+    if (!be16(image + AES_GL_RSCHANGE))
+        return DESKMAIN_DONE;
+    (void)aes_set_defdrv(image);
+    if ((uint16_t)aes_isdrive(image)) {
+        aes_drive_check(image, (int16_t)((int16_t)aes_dos_gdrv(image, AES_DESKMAIN_GDRV_RETURN) + DRIVE_LETTER_FIRST));
+        wr16(image + AES_DISK_USABLE, be16(image + AES_DOS_ERR) ? 0 : GEM_DISK_USABLE);
+    }
+    return DESKMAIN_GEM_LEFT;
+}
+
+/* $fe272e — deskmain (`desk/desktop.h`). evnt_multi's six answers into this frame, BY ADDRESS — the mouse, the button,
+ * the keys, the key, the clicks — read back off the bus as the handlers are handed them. */
+int16_t aes_deskmain(uint8_t *image)
+{
+    uint16_t answers_local[EV_MULTI_ANSWER_WORDS];
+    uint32_t desk = desk_globals(image), answers = desk_local_address(answers_local);
+    uint16_t events;
+    int16_t done = DESKMAIN_NOT_DONE;
+
+    if (!desk_brought_up(image, desk))
+        return DESKMAIN_GEM_LEFT;
+    while (!done) {
+        events = aes_desk_evnt_multi(image, DESKMAIN_EVENTS, DESKMAIN_CLICKS, DESKMAIN_BUTTON_MASK, DESKMAIN_BUTTON_STATE,
+                                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, bus_long(image, desk + DESK_A_RMSG), 0, 0,
+                                     answers + EV_RETS_X, answers + EV_RETS_Y, answers + EV_RETS_BUTTONS,
+                                     answers + EV_RETS_SHIFT_KEYS, answers + EV_MULTI_KEY, answers + EV_MULTI_CLICKS);
+        (void)aes_desk_wind_update(image, WM_BEG_UPDATE);
+        if (events & EV_MU_MESAG)
+            done = aes_hndl_msg(image);
+        if (events & EV_MU_KEYBD)
+            done = aes_hndl_kbd(image, (int16_t)bus_word(image, answers + EV_MULTI_KEY));
+        if (events & EV_MU_BUTTON)
+            done = aes_hndl_button(image, (int16_t)bus_word(image, answers + EV_MULTI_CLICKS),
+                                   (int16_t)bus_word(image, answers + EV_RETS_X), (int16_t)bus_word(image, answers + EV_RETS_Y),
+                                   (int16_t)bus_word(image, answers + EV_RETS_BUTTONS),
+                                   (int16_t)bus_word(image, answers + EV_RETS_SHIFT_KEYS));
+        (void)aes_desk_wind_update(image, WM_END_UPDATE);
+    }
+    return desk_left(image);
 }
 #endif

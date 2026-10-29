@@ -203,6 +203,12 @@
 #define DESK_G_FCB2           8008       /* bytes[36]: g_fcb2                   ($fe27c2 lea 8008(a5),a0)       */
 #define DESK_A_FCB2           8044       /* long: a_fcb2, := g_fcb2             ($fe27c6 move.l a0,8044(a5))    */
 /* ---- end of band 6 W3b's prep ---- */
+/* ---- BAND 6 W3b (`desk/desktop.h`): what deskmain stores that no earlier unit named ---- */
+#define DESK_G_FULL_RECT      0x1e10     /* bytes[GRECT_BYTES]: the desk's work area's full rectangle, wind_calc's
+                                          * (DESK_G_FULL_W its width)            ($fe278e addi.l #7696,(sp))    */
+#define DESK_CNX_BLITTER_ON   (DESK_CNX_PREFERENCES + DESK_BLITTER_ON - DESK_PREFERENCES) /* word: the INF's Blitter
+                                          * preference, the Blitter item's check where the blitter is ($fe2926 13654) */
+/* ---- end of band 6 W3b's ---- */
 
 #ifndef __ASSEMBLER__
 #include <stdint.h>

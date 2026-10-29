@@ -2353,6 +2353,21 @@ class DoorStops:
         self._in_call = False
         return self.first
 
+    parked_in = None                    # the door entry a run that ends PARKED stood inside (`parked`)
+
+    def parked(self):
+        """THE RUN ENDS PARKED (band 6 W3b's kind, `aes_event.Switches.parks`: the watch that follows it through the
+        dispatcher says so at its last idle): the door call it stands inside — the wait it parked in — closed there,
+        its cost to the park its own (no answer: it never returned); the entry kept (`parked_in`). REFUSED BY NAME
+        where no call is open: a parked run stands inside the event layer's wait."""
+        assert self._in_call, f"{PARKED_OUTSIDE_EVERY_CALL} (after {self.calls} door call(s))"
+        self.parked_in = self._open_entry
+        self._closed()
+        self._in_call = False
+
+
+PARKED_OUTSIDE_EVERY_CALL = "a run that ends parked stands inside no door call: it parked in no wait of the event layer's"
+
 
 class Ended(Exception):
     """A watched run reached a PC its watch ends it at (`EntryStops`)."""
@@ -3557,7 +3572,10 @@ class OncePerSession:
 #               keyboard every time round its loop, a process ready or woken too, and a key that arrives there is
 #               polled before that process runs (a key and a message in one wake are made no other way);
 #   `polls`     how many polls of the dispatcher's idle the ROM's own run makes, idles among them — every run of the
-#               row is held to it; None for a hand-made record that holds no run to a count.
+#               row is held to it; None for a hand-made record that holds no run to a count;
+#   `parks`     the ROM's own run ENDS PARKED, at the idle where nothing more is delivered, never returning (band 6
+#               W3b's kind, deskmain's rows: `aes_switching.SwitchingRow.ends_at_its_first_idle`) — read off that run
+#               (`aes_switching.switches_of`): every run of the row is then ended at that idle on either shore.
 # The watch that takes a run through one is `aes_switching.Switching` (imported where it is asked for: that module
 # imports this one); `SWITCHING_ROWS` is the registered rows' register, as `INTERRUPTED_ROWS` is the door's.
 @dataclasses.dataclass(frozen=True)
@@ -3568,6 +3586,7 @@ class Switches:
     at_calls: dict = dataclasses.field(default_factory=dict)
     at_polls: dict = dataclasses.field(default_factory=dict)
     polls: int = None
+    parks: bool = False
 
     def _replace(self, **changed):
         """This, with `changed` — a row's own spelling (`namedtuple._replace`) for a record that is no tuple."""

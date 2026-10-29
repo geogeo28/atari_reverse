@@ -3507,6 +3507,12 @@ DOOR_USERS_PRICED = {
         (41650, 65008), (14240, 22318), 3, NO_WINDOW),
     FM_ALERT_NO_DEFAULT: ((189526, 294660), (137340, 212420), 10, NO_WINDOW),
     FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: ((188196, 292106), (136010, 209866), 10, NO_WINDOW),
+    # ---- band 6 W3b: deskmain's five first entries (rows of the parked kind; door users: its ev_multi) ----
+    "aes_deskmain, the first entry, the desk alone (the blank disk) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": ((1014210, 2450904), (994090, 2418262), 6, (2, 64002, 43716)),
+    "aes_deskmain, the first entry, the DESKTOP.INF machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": ((1014210, 2450904), (994090, 2418262), 6, (2, 64002, 43716)),
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, as text [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": ((1026244, 2467960), (1006124, 2435318), 6, (2, 64002, 43716)),
+    "aes_deskmain, the first entry, the files machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": ((1014210, 2450904), (994090, 2418262), 6, (2, 64002, 43716)),
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, its cartridge's line a drive (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": ((1042192, 2492630), (1022072, 2459988), 6, (2, 64002, 43716)),
 }
 # ...and THE WHOLE RUN'S CYCLES on each blob, the ROM's and ours net of the entry both share — the second
 # differential's own measurement (`aes_switching.measured_on`: the table prices a row on one blob, a build is held
@@ -3536,6 +3542,12 @@ DOOR_USERS_WHOLE_RUN = {
         BENCH_BLOB: (118976, 99322), SHIPPED_BLOB: (118976, 97846)},
     FM_ALERT_NO_DEFAULT: {BENCH_BLOB: (1492972, 1412734), SHIPPED_BLOB: (1492972, 1405294)},
     FM_ALERT_A_DEFAULT_PAST_THE_BUTTONS: {BENCH_BLOB: (1490418, 1411164), SHIPPED_BLOB: (1490418, 1403856)},
+    # ---- band 6 W3b: deskmain's five first entries ----
+    "aes_deskmain, the first entry, the desk alone (the blank disk) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {BENCH_BLOB: (4503038, 3211168), SHIPPED_BLOB: (4503038, 3097320)},
+    "aes_deskmain, the first entry, the DESKTOP.INF machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {BENCH_BLOB: (4503038, 3211168), SHIPPED_BLOB: (4503038, 3097320)},
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, as text [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {BENCH_BLOB: (4533618, 3237038), SHIPPED_BLOB: (4533618, 3123430)},
+    "aes_deskmain, the first entry, the files machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {BENCH_BLOB: (4503038, 3211168), SHIPPED_BLOB: (4503038, 3097320)},
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, its cartridge's line a drive (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {BENCH_BLOB: (4770048, 3468912), SHIPPED_BLOB: (4770048, 3353178)},
 }
 
 
@@ -3636,13 +3648,14 @@ def test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_
 
 
 def test_the_door_user_pin_holds_a_target_only_door_user_companion_free(monkeypatch):
-    """...ITS TARGET-ONLY HALF, on a crafted registration (no door user of W3a's is registered yet): a door user moved
-    from `SWITCHING_ROWS` to `aes_event.TARGET_ONLY_SWITCHING_ROWS` is refused while the registry prices it WITH its
-    companion, and passes once it is listed companion-free."""
+    """...ITS TARGET-ONLY HALF, on a crafted registration (beside the target-only door users registered since band 6
+    W3b — deskmain's five, which the real pin holds companion-free): a door user moved from `SWITCHING_ROWS` to
+    `aes_event.TARGET_ONLY_SWITCHING_ROWS` is refused while the registry prices it WITH its companion, and passes once
+    it is listed companion-free."""
     held = door_users_that_switch()[SENDMSG_TO_A_FULL_PIPE]
     monkeypatch.setattr(aes_event, "SWITCHING_ROWS", {name: each for name, each in aes_event.SWITCHING_ROWS.items()
                                                       if name != SENDMSG_TO_A_FULL_PIPE})
-    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {SENDMSG_TO_A_FULL_PIPE: held})
+    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {**aes_event.TARGET_ONLY_SWITCHING_ROWS, SENDMSG_TO_A_FULL_PIPE: held})
     with pytest.raises(AssertionError, match=re.escape(A_DOOR_USER_S_COMPANION_AS_ITS_KIND)):
         test_every_door_user_that_switches_is_pinned_here_and_is_a_door_user_on_the_blob()
     companion_free = case.tier3_companion_free()
@@ -3719,7 +3732,7 @@ def test_the_table_vets_a_target_only_row_s_qpb_address_by_its_own_register(benc
     held = door_users_that_switch()[SENDMSG_TO_A_FULL_PIPE]
     monkeypatch.setattr(aes_event, "SWITCHING_ROWS", {name: each for name, each in aes_event.SWITCHING_ROWS.items()
                                                       if name != SENDMSG_TO_A_FULL_PIPE})
-    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {SENDMSG_TO_A_FULL_PIPE: held})
+    monkeypatch.setattr(aes_event, "TARGET_ONLY_SWITCHING_ROWS", {**aes_event.TARGET_ONLY_SWITCHING_ROWS, SENDMSG_TO_A_FULL_PIPE: held})
     asked, vet = [], aes_switching.vet_our_qpbs
     monkeypatch.setattr(aes_switching, "vet_our_qpbs", lambda who, qpbs, watch: asked.append(qpbs) or vet(who, qpbs, watch))
     tier3.measure(_table_row(SENDMSG_TO_A_FULL_PIPE), bench)

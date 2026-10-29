@@ -52,6 +52,7 @@ import aes_boot
 import aes_event
 import aes_switch
 import case
+import derived
 
 SCREEN_MANAGER = aes.SCREEN_MANAGER_PD
 BUS = aes.OS_BUS_ADDR_MASK
@@ -70,9 +71,11 @@ frame was laid under — and the stack pointer it stands `parked` at (what saves
 State = namedtuple("State", "context live")
 State.__doc__ = """HOW THE SCREEN MANAGER STANDS PARKED over a machine: the bytes of its saved context and of its LIVE
 frames (from its parked stack pointer to its stack's top). Two machines of one state resume it alike."""
-Recipe = namedtuple("Recipe", "name arguments machine at_idle")
+Recipe = namedtuple("Recipe", "name arguments machine at_idle row", defaults=(None,))
 Recipe.__doc__ = """A ROM run that left the screen manager in another state than it found it (`aes_switching.left_by`'s
-arguments): the call, the machine it started from (pokes), the interrupts taken at its idles."""
+arguments): the call, the machine it started from (pokes), the interrupts taken at its idles — and, for A REGISTERED
+ROW's run (`note_a_registered_row`, band 6 W3b), the row itself, run again as it is registered (its budget, its own
+drops, its stagings in its machine)."""
 
 
 class Refused(AssertionError):
@@ -137,6 +140,46 @@ def note(name, arguments, machine, at_idle, left):
         PROVENANCE.setdefault(after, Recipe(name, tuple(arguments), machine, dict(at_idle)))
 
 
+def note_a_registered_row(row, settled):
+    """A REGISTERED ROW THAT SWITCHES (`row`, an `aes_switching.SwitchingRow`, and its `Settled`) AS A STATE'S PROVENANCE
+    (band 6 W3b: deskmain's re-entries after a built-in stand the screen manager where the built-in's own registered row
+    leaves it — measured, not assumed): where its ROM run leaves the screen manager in another state than its machine
+    holds, that state's provenance is the row ITSELF, run again on a blob as it is registered (`_from_our_run_of`).
+    The state it leaves, or None."""
+    before = state_of(make_image(settled.pokes))
+    after = _the_state_a_run_leaves(row.name, tuple(row.arguments), settled.pokes, dict(row.at_idle or {}), row.at_calls,
+                                    row.at_polls, row.budget)
+    if after == before:
+        return None
+    PROVENANCE.setdefault(after, Recipe(row.name, tuple(row.arguments), settled.pokes, dict(row.at_idle or {}), row))
+    return after
+
+
+@derived.kept
+def _the_state_a_run_leaves(name, arguments, staged, at_idle, at_calls, at_polls, budget):
+    """The state the ROM's run of a row that switches (its fields, its settled machine `staged`) leaves the screen manager
+    in (`aes_switching._replayed`'s memory) — a derivation, kept by content."""
+    import aes_switching                # (it imports this module)
+    row = aes_switching.SwitchingRow("", name, arguments, lambda: staged, at_idle, at_calls=at_calls, at_polls=at_polls,
+                                     budget=budget)
+    return state_of(aes_switching._replayed(row, staged)[2])
+
+
+# ...AND A BOOT STOPPED EARLIER THAN ITS FIRST IDLE (band 6 W3b: deskmain's FIRST entry on each boot machine — the boot
+# `until` deskmain's entry). `{State: (the ROM's stopped Machine, a maker of the TAKEOVER machine stopped there, of a blob)}`,
+# the boot's own provenance at an earlier stop (`note_a_stopped_boot`): the same comparison makes it (`_from_a_takeover_boot`).
+STOPPED_BOOTS = {}
+
+
+def note_a_stopped_boot(rom_stopped, taken_over):
+    """The ROM's boot STOPPED EARLIER (`rom_stopped`, an `aes_boot.Machine` of `booted(..., until=)`) as the provenance of
+    the state it leaves the screen manager in: `taken_over(blob)` makes THE TAKEOVER MACHINE of the same boot, stopped
+    at the same address (`booted(..., until=, ours=)`). The state."""
+    state = state_of(rom_stopped.image())
+    STOPPED_BOOTS.setdefault(state, (rom_stopped, taken_over))
+    return state
+
+
 @functools.cache
 def the_boot_s():
     """`{State: the ROM-booted machine that leaves the screen manager so}`: the desk's boot (`aes_boot.desk_machine`:
@@ -158,11 +201,13 @@ def _key(blob):
 _OURS = {}                              # `{(State, a blob's key): the two spans as our build leaves them}`
 
 
-def _from_the_takeover_boot(rom_booted, blob):
+def _from_the_takeover_boot(rom_booted, blob, taken_over=None):
     """The two spans as THE TAKEOVER MACHINE of `rom_booted`'s boot holds them on `blob` — the machine held first to be
-    the ROM-booted one outside the classes a takeover differs in by nature, its screen manager parked in OUR text."""
-    taken = aes_boot.desk_machine(ours=blob)
-    beside = aes_boot.compared(rom_booted, taken)
+    the ROM-booted one outside the classes a takeover differs in by nature, its screen manager parked in OUR text.
+    `taken_over`: the maker of that machine for a boot STOPPED EARLIER (`STOPPED_BOOTS`) — its stop inside a BIOS
+    trap of the boot's (the frame its save area holds is each build's: `aes_boot.TRAP_SAVE_FRAME`, named beside)."""
+    taken = aes_boot.desk_machine(ours=blob) if taken_over is None else taken_over(blob)
+    beside = aes_boot.compared(rom_booted, taken, also=(aes_boot.TRAP_SAVE_FRAME,) if taken_over else ())
     if beside.differing or taken.resumed_in(taken.screen_manager()) != aes_boot.OURS:
         raise Refused(f"the takeover machine of {blob.elf} is not the ROM-booted one with the screen manager ours: it "
                       f"differs at {[(hex(at), length) for at, length in beside.differing[:4]]}")
@@ -175,8 +220,8 @@ def _from_our_run_of(recipe, blob):
     recursion ends at the boot) — held to the ROM's run as any row that switches is (`aes_switching.measured_on`)."""
     import aes_switching                # (it imports this module)
 
-    row = aes_switching.SwitchingRow(f"(the run that leaves the screen manager so: {recipe.name})", recipe.name,
-                                     recipe.arguments, lambda: recipe.machine, recipe.at_idle)
+    row = recipe.row or aes_switching.SwitchingRow(f"(the run that leaves the screen manager so: {recipe.name})", recipe.name,
+                                                   recipe.arguments, lambda: recipe.machine, recipe.at_idle)
     made = aes_switching.settled(row)
     if not named_in(made.drops):
         raise Refused(f"the ROM's run of {recipe.name} noted as leaving the screen manager in another state does not "
@@ -206,6 +251,9 @@ def prepared(blob, pokes):
     if key not in _OURS:
         if state in the_boot_s():
             _OURS[key] = _from_the_takeover_boot(the_boot_s()[state], blob)
+        elif state in STOPPED_BOOTS:
+            rom_stopped, taken_over = STOPPED_BOOTS[state]
+            _OURS[key] = _from_the_takeover_boot(rom_stopped, blob, taken_over)
         elif state in PROVENANCE:
             made_for(state, blob)
         else:

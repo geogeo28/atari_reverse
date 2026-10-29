@@ -776,12 +776,15 @@ def test_the_served_door_on_a_takeover_machine_calls_no_routine_and_a_door_the_t
     back (and its vex_timv the VDI's tick vector): THE DOOR IS NO LONGER OURS, refused where the served run ends and
     never silently lost (the design's risk 7 — a takeover's door is a claim about a machine at an idle of its desk)."""
     capture, disk = aes_boot.preinit(), aes_boot.blank_disk()
+    # (a takeover with NO door keeps the ROM's Line-F table, so its sh_main enters the ROM's deskmain even since band 6
+    # W3b's flip — `deskmain_entry` reads the blob's binding, which only a door machine's table carries out: below)
     taken = aes_boot.booted(capture, disk, until=DESKMAIN, ours=aes_boot.ours_of(isr.blob_named(blob)))
     with pytest.raises(Refused, match="a routine called over a TAKEOVER machine, before deskmain is answered"):
         aes_boot.served(taken, 1, until=SH_CMD, calls=(shel_write(THE_INF_ITSELF, b""),))
     again = aes_boot.served(taken, 0, until=GEM_MAIN)
     assert again.served[0].routine == "deskmain" and again.takeover.ours == taken.takeover.ours
-    behind = aes_boot.booted(capture, disk, until=DESKMAIN, ours=aes_boot.ours_of(isr.blob_named(blob), aes_event.THE_DOOR))
+    door = aes_boot.ours_of(isr.blob_named(blob), aes_event.THE_DOOR)
+    behind = aes_boot.booted(capture, disk, until=aes_boot.deskmain_entry(door), ours=door)     # (at its thunk since W3b)
     with pytest.raises(Refused, match="THE DOOR IS NO LONGER OURS where the served run ends"):
         aes_boot.served(behind, 0, until=GEM_MAIN)
 
@@ -1207,7 +1210,8 @@ def test_at_deskmain_s_entry_a_door_machine_holds_the_rom_s_tick_glue_in_contrl_
     `$948a` (the brief of the flip listed it among what the door gains) holds THE VDI'S OWN tick routine at the idle
     on both the ROM-booted and the door machine — no routine of GEM's: nothing of a door to map there."""
     capture, disk = aes_boot.preinit(), aes_boot.blank_disk()
-    behind = aes_boot.Machine(aes_boot.booted(capture, disk, until=DESKMAIN, ours=aes_boot.ours_of(isr.blob_named(blob), aes_event.THE_DOOR)))
+    door = aes_boot.ours_of(isr.blob_named(blob), aes_event.THE_DOOR)     # (deskmain entered at its thunk since band 6 W3b)
+    behind = aes_boot.Machine(aes_boot.booted(capture, disk, until=aes_boot.deskmain_entry(door), ours=door))
     assert left_the_rom_s(behind) == HELD_AT_DESKMAIN_S_ENTRY and len(HELD_AT_DESKMAIN_S_ENTRY) == 1
     (contrl, symbol), = HELD_AT_DESKMAIN_S_ENTRY.items()
     assert contrl in aes_event.TICK_GLUE.slots and contrl not in aes_event.THE_MACHINE_S_VECTORS[aes_event.TICK_GLUE.what]

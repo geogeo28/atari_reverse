@@ -1,22 +1,30 @@
-"""BAND 6 W3b — deskmain `$fe272e`, THE DESK'S LAST ROUTINE BUT THE CARTRIDGE'S PAIR: its PREP (`test_desk_w3b.py`).
+"""BAND 6 W3b — deskmain `$fe272e`, THE DESK'S LAST ROUTINE BUT THE CARTRIDGE'S PAIR: its prep, and its FLIP
+(`test_desk_w3b.py`).
 
-deskmain's signature is declared with the cycle it calls (`aes_desk_w3a.W3B`: target-only, `() -> word`) and held THE
-ROM'S by the generator (`linef_table.DECLARED_NOT_LINKED`) until its flip. This module is what the flip will need of
-the harness, made now and proved neutral while held:
+deskmain's signature is declared with the cycle it calls (`aes_desk_w3a.W3B`: target-only, `() -> word`); its C is
+`src/desk/desktop.c`'s, its table entry and sh_main's desk door its thunk since the flip. This module holds:
 
   * THE RETURN SITES its Line-F calls park (`desk/desktop.h`), held here to the ROM's own words;
-  * ITS ROWS' ARRIVALS (the W3b cut's §2.2 (A), the orchestrator's O3 / O7): A TARGET-ONLY ROW THAT SWITCHES at each
-    arrival at deskmain's entry — the FIRST ENTRY of each boot machine (the ROM's own boot stopped there: the arrival
-    a takeover at deskmain's entry would be made over, R6) and the RE-ENTRIES after a built-in (a chain of the hands
-    stopped there: `aes_deskarrive.arrival`) — each run from deskmain's entry to the FIRST IDLE (the desk parked in its
-    own evnt_multi: the row's wake is none). Every arrival is vetted now, on the ROM's machine (`vet_an_arrival`: the
-    shell's call, the ROM's stack pointer, a machine a row may be made over, a run that idles before deskmain returns);
-    REGISTERED AT THE FLIP (`register_at_the_flip`), REFUSED BY NAME while deskmain is held.
+  * ITS ROWS' ARRIVALS (the W3b cut's §2.2 (A), the orchestrator's O3 / O7): the FIRST ENTRY of each boot machine (the
+    ROM's own boot stopped there, R6) and the RE-ENTRIES after a built-in (a chain of the hands stopped there:
+    `aes_deskarrive.arrival`), each vetted on the ROM's machine (`vet_an_arrival`);
+  * THE ROWS (`row_of`): A TARGET-ONLY ROW THAT SWITCHES OF THE PARKED KIND (the user's ruling of 2026-10-28: "a new
+    target-only row kind that ends at the first idle" — `aes_switching.SwitchingRow.ends_at_its_first_idle`), each run
+    from deskmain's entry to the desk's first idle, its answer not compared (it never returns), its stagings said in
+    its label — THE XBIOS'S GETREZ STAGED (the bring-up's app_blddesk: the arrival's own shifter mode; Blitmode's
+    answer the same stub's: no blitter, O6) and GEMDOS REPLAYED by a frame-telling handler of the band's own (the
+    ROM's run in place to its first idle: `aes_deskdir.in_place(parks=True)`) — and the XBIOS door's park named (R9's
+    declared kind, `test_desk_app.XBIOS_DOOR_PARKED`);
+  * WHERE EACH ROW'S SCREEN MANAGER IS MADE OURS FROM (the takeover, `aes_takeover`): a first entry's, THE BOOT ITSELF
+    STOPPED AT deskmain's ENTRY (`note_a_stopped_boot`); a re-entry's, THE BUILT-IN'S OWN REGISTERED ROW whose ROM run
+    leaves the screen manager in the arrival's state (`note_a_registered_row`) — measured, by state;
+  * REGISTERED AT THE FLIP (`register_at_the_flip`), refused by name while the generator holds deskmain.
 
 The other two pieces of the prep live where they are read: U1's label (`aes_desk_turns_pinned.PARKED_IN_THE_ROM_S_
 DESKMAIN`, `bench/tier3.py`'s TALLY_OUR_DESKMAIN) and O4's invariant (`test_aes_desk_ours.ROM_GEM_TEXT_ON_OUR_WALKS`).
 """
 import functools
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -26,9 +34,21 @@ import aes
 import aes_boot
 import aes_desk
 import aes_desk_w3a as w3a
+import aes_deskapp
 import aes_deskarrive as da
+import aes_deskdir as cdir
+import aes_desksupp as ds
+import aes_event
+import aes_fslib as fsl
+import aes_shell as sh
+import aes_shmain
+import aes_takeover
 import case
+import preinit_snapshot
+import rom_data
 import test_aes_ourboot
+from harness import make_image
+from test_desk_app import XBIOS_DOOR_PARKED
 
 DESKMAIN = w3a.DESKMAIN
 DESKMAIN_ENTRY = getattr(addrs, DESKMAIN)
@@ -93,10 +113,83 @@ def vet_an_arrival(label):
     return arrived
 
 
+# ---- WHAT THE ROWS' PINS READ OFF THE MACHINE: deskmain's menu tree and the Options box (`desk/desktop.h`, one source) ----------
+_DESKTOP_H = rom_data.constants_of(rom_data.RECREATE / "include" / "desk" / "desktop.h")
+DESK_MENU_TREE, OPTIONS_BOX, OPTN_PRINT_SCREEN = (_DESKTOP_H[name] for name in ("DESK_MENU_TREE", "OPTIONS_BOX", "OPTN_PRINT_SCREEN"))
+OB_BYTES, OB_TAIL = _DESKTOP_H["OB_BYTES"], _DESKTOP_H["OB_TAIL"]
+
+
+# ---- THE STAGINGS (band 6 W3b's flip), each said in its row's label ------------------------------------------------------------
+GETREZ_STAGED = aes_deskapp.GETREZ_STAGED       # the XBIOS's trap answered the arrival's own shifter mode (stage 1's)
+SHIFTER_MODE_BITS = aes_deskapp.SHIFTER_MODE_BITS
+# GEMDOS REPLAYED by THE BAND'S OWN FRAME-TELLING HANDLER: G3's replay (`aes_desksupp.replay_pokes`) — the ROM's run in
+# place's answers and DTAs — told Dgetdrv's frame too, NONE (`aes_shell.FRAME_BYTES`: one source; band 6 W3a stage 3's
+# FRAMED precedent): deskmain's bring-up makes it four times, and the six bytes an untold call is recorded past its
+# frame are the caller's stack (the ROM's return address on its shore, our frame's word on ours), which no build
+# reproduces. Its own handler span:
+DGETDRV = addrs.GEMDOS_DGETDRV_FN
+REPLAYED = f"{ds.REPLAYED}; Dgetdrv's own frame told"
+TOLD_ARGUMENT_BYTES = {**ds.REPLAY_ARGUMENT_BYTES, DGETDRV: sh.FRAME_BYTES[DGETDRV]}
+TOLD_HANDLER_OFFSET, TOLD_HANDLER_BYTES = 0x2F00, 0xC0      # the gap between aes_deskutil.py's band and aes_gemsuper.py's (measured)
+TOLD_HANDLER_AT = aes.SPAN.claim(aes.WINDOW_AT + TOLD_HANDLER_OFFSET, TOLD_HANDLER_BYTES,
+                                 "test/aes_desk_w3b.py: GEMDOS replayed, Dgetdrv's own frame told")
+TOLD_HANDLER = fsl.replay_handler(TOLD_ARGUMENT_BYTES)
+assert len(TOLD_HANDLER) <= TOLD_HANDLER_BYTES
+sh.GEMDOS_LEDGERS.append(functools.partial(sh.GemdosLedger, TOLD_HANDLER_AT, TOLD_HANDLER, fsl.LEDGER, TOLD_ARGUMENT_BYTES,
+                                           fsl.RECORDED_ARGUMENT_BYTES, fsl.DTA_CELL_AT))
+STAGED_AS = f"{GETREZ_STAGED}; {REPLAYED}"
+
+
+def in_place(arrived):
+    """THE ROM'S OWN RUN IN PLACE from `arrived` to the desk's first idle (`aes_deskdir.in_place`, the parked kind's)."""
+    return cdir.in_place(arrived, parks=True)
+
+
+def staged(arrived):
+    """The row's stagings over the arrival's machine: Getrez answered the arrival's shifter mode, GEMDOS replayed
+    (`in_place`'s answers and the DTA each search left) through the band's frame-telling handler."""
+    mode = arrived.boot.io[addrs.SHIFTER_RESOLUTION - preinit_snapshot.IO_AT] & SHIFTER_MODE_BITS
+    ran = in_place(arrived)
+    fills = iter(ran.fills)
+    script = tuple((answer, next(fills) if function in fsl.SEARCHES else fsl.NO_DTA) for function, answer in zip(ran.functions, ran.answers))
+    return case.merge_pokes(aes_shmain.getrez_pokes(mode), ds.replay_pokes(script, TOLD_HANDLER_AT, TOLD_ARGUMENT_BYTES))
+
+
+# ---- WHERE EACH ROW'S SCREEN MANAGER IS MADE OURS FROM (`aes_takeover`) ------------------------------------------------------------
+# A first entry's machine is THE BOOT STOPPED AT deskmain's ENTRY: its takeover machine the same boot with the screen
+# manager ours, stopped there. A re-entry's is a built-in's aftermath: THE BUILT-IN'S OWN REGISTERED ROW whose ROM run
+# leaves the screen manager in the arrival's state (`BUILT_INS`, measured by state — refused by name where none does).
+BUILT_INS = ("AES_ROM_DESK_SHOW_FILE", "AES_ROM_DESK_PRINT_FILE", "AES_ROM_DESK_FORMAT", "AES_ROM_DESK_COPY_DISK")
+NO_PROVENANCE = "no registered row of a built-in leaves the screen manager where this re-entry finds it: it cannot be made ours"
+
+
+def screen_manager_s_provenance(label):
+    """`label`'s arrival's screen manager's state, NOTED (`aes_takeover`) where our build can be run to stand there: the
+    boot stopped at deskmain's first entry, or a built-in's registered row (`BUILT_INS`) whose ROM run leaves it so —
+    refused by name where none does (NO_PROVENANCE). The state."""
+    where, kind = ARRIVALS[label]
+    arrived = arrival(label)
+    state = aes_takeover.state_of(make_image(da.row_machine_of(arrived)))
+    if kind == FIRST_ENTRY:
+        return aes_takeover.note_a_stopped_boot(
+            aes_boot.Machine(arrived.boot),
+            lambda blob: aes_boot.Machine(aes_boot.booted(*BOOTS[where](), until=DESKMAIN_ENTRY, ours=aes_boot.ours_of(blob))))
+    if state in aes_takeover.PROVENANCE:
+        return state
+    for _name, held in aes_event.every_switching_row().items():
+        if held.row.name in BUILT_INS and aes_takeover.note_a_registered_row(held.row, held) == state:
+            return state
+    raise aes_takeover.Refused(f"{label}: {NO_PROVENANCE}")
+
+
 def row_of(label):
     """THE ROW AT `label`'s ARRIVAL (`aes_switching.SwitchingRow`, `aes_deskarrive.row_of`'s): deskmain from its entry,
-    no argument, its word compared, NO WAKE — the run ends at the desk's first idle."""
-    return da.row_of(arrival(label), label, True, pokes=da.row_machine_of(arrival(label)))
+    no argument, OF THE PARKED KIND — no wake, the run ends at the desk's first idle, its word not compared (it never
+    returns) — over the arrival's machine and its stagings (`staged`), the XBIOS door's park named."""
+    arrived = arrival(label)
+    machine = case.merge_pokes(da.row_machine_of(arrived), staged(arrived))
+    row = da.row_of(arrived, f"{label} [{STAGED_AS}]", False, pokes=machine)
+    return row._replace(also_dropped=XBIOS_DOOR_PARKED, ends_at_its_first_idle=True)
 
 
 # ---- REGISTERED AT THE FLIP ------------------------------------------------------------------------------------------------------
@@ -104,20 +197,29 @@ STILL_HELD = "deskmain's row registered while the generator still holds its entr
 
 
 def _held_back():
-    """The generator's held routines — imported here, not at the module's top (it imports every battery's registry)."""
-    bench = str(Path(__file__).resolve().parents[1] / "bench")
-    sys.path.insert(0, bench)
+    """The generator's held routines — imported here, not at the module's top (it imports every battery's registry).
+    WHERE THE GENERATOR ITSELF IS IMPORTING THE REGISTRY (its module half made: the rows register at import since the
+    flip), the hold is read off a second copy of its module — as `python bench/linef_table.py` does, the script
+    `__main__` and its import another module."""
+    bench = Path(__file__).resolve().parents[1] / "bench"
+    sys.path.insert(0, str(bench))
     try:
         import linef_table
     finally:
-        sys.path.remove(bench)
+        sys.path.remove(str(bench))
+    if not hasattr(linef_table, "held_back"):
+        spec = importlib.util.spec_from_file_location("linef_table_s_hold", bench / "linef_table.py")
+        linef_table = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(linef_table)
     return linef_table.held_back()
 
 
 def register_at_the_flip(label):
-    """`label`'s row REGISTERED — a target-only row that switches (`aes_desk_w3a.register_target_only_switching`: its
-    vouch, its census, its companion-free price) — ONCE deskmain IS FLIPPED; refused by the row's name while the
-    generator holds it (STILL_HELD). The row."""
+    """`label`'s row REGISTERED — a target-only row that switches, of the parked kind
+    (`aes_desk_w3a.register_target_only_switching`: its vouch, its census, its companion-free price) — ONCE deskmain IS
+    FLIPPED; refused by the row's name while the generator holds it (STILL_HELD). Its screen manager's provenance noted
+    first (`screen_manager_s_provenance`). The row."""
     assert DESKMAIN not in _held_back(), f"{label}: {STILL_HELD}"
     vet_an_arrival(label)
+    screen_manager_s_provenance(label)
     return w3a.register_target_only_switching(row_of(label))

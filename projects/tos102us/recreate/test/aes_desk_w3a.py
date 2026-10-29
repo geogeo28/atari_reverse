@@ -142,6 +142,10 @@ A_TIER_1_OF_W3A = "a W3a routine with a Tier 1 of its own — a host core, or a 
 A_TARGET_ONLY_ROW_IN_SWITCHING_ROWS = "a target-only row in SWITCHING_ROWS, the register of the rows with a companion"
 NOT_REGISTERED_COMPANION_FREE = "a target-only row registered with a companion, or not at all"
 NOT_THE_KIND_S = "a companion-free row that is no target-only row of W3a's"
+# ...AND THE PARKED KIND (band 6 W3b; the user's ruling of 2026-10-28: `aes_switching.SwitchingRow.ends_at_its_first_idle`):
+# deskmain's rows alone — a row of it of any other routine, or one registered anywhere but here, refused by name
+PARKED_ROUTINES = W3B
+A_PARKED_ROW_OF_ANOTHER_ROUTINE = "a row of the kind that ends at its first idle of a routine other than deskmain's"
 # A NAMED TARGET-ONLY ROW'S BUDGET (the user's ruling of 2026-10-24): the 2026-10-21 / 10-23 rule — NEEDED, FITTED (5 N
 # <= B), NOT STALE (B <= 10 N), N the row's OWN run — refused by the row's name where it is registered (F4's
 # `aes.vet_a_plain_row_s_budget` and `aes.refused_past_its_cap_by_name`, through `aes.register`); its value ONE NAMED
@@ -260,6 +264,7 @@ def register_target_only_switching(row):
     import aes_switching
     row_name = aes_switching.row_name(row)
     vet_a_target_only_row(row.name, row_name)
+    assert not row.ends_at_its_first_idle or row.name in PARKED_ROUTINES, f"{row_name}: {A_PARKED_ROW_OF_ANOTHER_ROUTINE}"
     row, held = aes_switching.held_of(row)
     final, writes = aes_switching._replayed(row, held.pokes)[2:]
     unvouched = vouched_for(row, held, (final, writes))
@@ -318,6 +323,8 @@ def census_refusals(registries):
     for name, held in sorted(r.switching_target_only.items()):
         if tuple(r.dropped.get(name, ())) != tuple(held.drops):
             refused.append(f"{name}: {NOT_ITS_VOUCHED_DROPS}")
+        if getattr(held.row, "ends_at_its_first_idle", False) and held.row.name not in PARKED_ROUTINES:
+            refused.append(f"{name}: {A_PARKED_ROW_OF_ANOTHER_ROUTINE}")
     refused += [f"{name}: {NOT_THE_KIND_S}" for name in sorted(r.companion_free) if name not in rows]
     for routine in TARGET_ONLY_ROUTINES:
         found = tier_1_of(routine, r.registered, r.companion_free)

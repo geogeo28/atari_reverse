@@ -126,9 +126,10 @@ test that uses it): `booted(..., ours=, laid=AT_GEM_ENTRY)`, `our_desk_machine`,
 machine with THE BLOB LAID WHERE THE RUN STANDS BEFORE ITS FIRST INSTRUCTION and the run ENTERED AT THE BLOB'S OWN
 gem_entry with the capture's whole register file. NOT ONE LONGWORD OF THE MACHINE IS MAPPED BY THE HARNESS: `$88`,
 `$404`, the three routines gem_entry stores by value, the VDI's three vectors and the screen manager's entry are each
-stored by OUR OWN RUN. "OURS BOOTED" IS CLAIMED TO deskmain's ENTRY AND NO FURTHER (ruling W4-R3: from there the desk —
-the ROM's — calls the ROM's AES through the ROM's Line-F table on both shores): WHO RAN is cut there (`OurBoot.ran`: a
-cycle profile — the ROM's GEM text and the Line-F handler's copy ZERO cycles, or the boot is refused by name), and
+stored by OUR OWN RUN. "OURS BOOTED" IS CLAIMED TO THE DESKTOP'S FIRST IDLE (ruling W4-R3, extended at band 6 W3b's
+flip by the orchestrator's O5 — deskmain is ours; before it, to deskmain's entry and no further): WHO RAN is measured to
+where the run ends (`OurBoot.ran`: a cycle profile — the ROM's GEM text and the Line-F handler's copy ZERO cycles, or the
+boot is refused by name), and
 what the machine differs from the ROM-booted one in, checkpoint by checkpoint, is `aes_ourboot.py`'s.
 
 EVERYTHING HERE IS A KEPT DERIVATION (`derived.kept`). A ROM boot runs no line of the reconstruction. TWO KEPT
@@ -977,7 +978,10 @@ def routine_at(ours, at):
 
 
 def deskmain_entry(ours):
-    """...deskmain's: where a boot of that machine arrives at the desk."""
+    """...deskmain's: where a boot of that machine arrives at the desk. ASKED ONLY OF A MACHINE WHOSE LINE-F TABLE IS
+    OURS — an our-boot (laid at gem_entry) or a door machine: a TAKEOVER WITH NO DOOR keeps the ROM's table, so its
+    sh_main enters the ROM's deskmain `$fe272e` whatever the blob binds — do not ask this for one (an `Ours` cannot
+    tell the two apart: both are `ours_of(blob)`)."""
     return entry_on(ours, addrs.AES_ROM_DESKMAIN)
 
 
@@ -1620,9 +1624,9 @@ PROFILE_HELD_BY_AN_OUR_BOOT = "an our-boot's own run (`aes_boot.booted`, laid at
 OurBoot = namedtuple("OurBoot", "ours at_the_desk ran")
 OurBoot.__doc__ = """What makes a `Boot` an OUR-BOOT machine's (above): the blob (`ours`, an `Ours`); `at_the_desk` —
 `(instructions, cycles, the supervisor stack pointer)` as the run FIRST arrived at deskmain's entry, None for a boot
-stopped before it; and `ran`, WHO RAN UP TO THERE (to where the boot ended, for one stopped earlier): `(cycles in the
-blob, cycles in the ROM's GEM text, cycles in the Line-F handler's RAM copy)` — the last two zero, or no such `Boot`
-exists."""
+stopped before it; and `ran`, WHO RAN UP TO WHERE THE BOOT ENDED — its first idle, or the stop it was asked (band 6 W3b's
+O5: no longer cut at deskmain's entry): `(cycles in the blob, cycles in the ROM's GEM text, cycles in the Line-F
+handler's RAM copy)` — the last two zero, or no such `Boot` exists."""
 LINE_F_COPY = (aes.AES_LINEF_COPY, aes.AES_LINEF_COPY + aes.LINEF_COPY_BYTES)
 
 
@@ -1671,7 +1675,7 @@ class BootingOurs:
         self._memory, self.ours = memory, ours
         _vet_clear_where_the_blob_goes(memory, ours)
         memory[ours.base:ours.base + len(ours.image)] = ours.image
-        self._began, self._at_the_desk, self._ran = None, None, None
+        self._began, self._at_the_desk = None, None
         self.desk = deskmain_entry(ours)     # ...where the desk door enters deskmain on this blob (W3b's prep)
         self.watched = {self.desk: ("deskmain's entry", self._arrived_at_the_desk),
                         **watched_for_the_build_s_halt(memory, ours)}
@@ -1693,9 +1697,9 @@ class BootingOurs:
         return tuple(now - then for now, then in zip(self._tallies(), self._began))
 
     def _arrived_at_the_desk(self, _memory, sp):
-        if self._at_the_desk is None:   # ...its FIRST arrival: the claim's cut (a second pass's is the served door's)
+        if self._at_the_desk is None:   # ...its FIRST arrival (a second pass's is the served door's)
             cost = aes_event.run_cost()
-            self._at_the_desk, self._ran = (cost["insns"], cost["cycles"], sp), self._ran_so_far()
+            self._at_the_desk = (cost["insns"], cost["cycles"], sp)
 
     def made(self, memory, ended, stored):
         """THE OUR-BOOT, VETTED WHERE THE RUN ENDED (above): its `OurBoot`. `ended`: `(instructions, cycles, the
@@ -1711,12 +1715,15 @@ class BootingOurs:
                   "disk with an accessory: ruling W4-R2), and the run went on over code that was no longer there")
         instructions, cycles, registers = ended
         if self._at_the_desk is None and registers["pc"] & BUS == self.desk:
-            self._at_the_desk, self._ran = (instructions, cycles, registers["isp"]), self._ran_so_far()   # ...ended there (`until`)
-        ran = self._ran if self._ran is not None else self._ran_so_far()
+            self._at_the_desk = (instructions, cycles, registers["isp"])     # ...ended there (`until`)
+        # WHO RAN, TO WHERE THE RUN ENDED (band 6 W3b's flip, the orchestrator's O5: "ours booted" is claimed to the
+        # desktop's FIRST IDLE, no longer cut at deskmain's entry — deskmain is ours)
+        ran = self._ran_so_far()
         ours, the_rom_s, the_copy = ran
         if the_rom_s or the_copy or not ours:
+            where = "deskmain's entry" if registers["pc"] & BUS == self.desk else "its first idle, or the stop it was asked"
             raise Refused(
-                f"NOT AN OUR BOOT — WHO RAN up to {'deskmain' + chr(39) + 's entry' if self._at_the_desk else 'where the boot was stopped'}: "
+                f"NOT AN OUR BOOT — WHO RAN up to where the run ended ({where}): "
                 f"{ours} cycles in the blob, {the_rom_s} IN THE ROM'S OWN GEM TEXT [{aes.AES_TEXT[0]:#x}, "
                 f"{aes.AES_TEXT[1]:#x}) and {the_copy} in the Line-F handler's RAM copy — a routine of the build that "
                 f"is still the ROM's (a `jsr` into its text, a vector or a code address by value left the ROM's, a "
@@ -2097,8 +2104,8 @@ def files_machine(view=VIEW_AS_ICONS, machine=None):
 def our_desk_machine(blob, until=None, machine=None):
     """THE DESK'S MACHINE, BOOTED BY OUR OWN gem_entry (`booted(..., laid=AT_GEM_ENTRY)`: A LABELLED STAGING — the blob
     `blob` (a `RomBench`) laid at the pre-init stop of the blank disk's capture and the run entered at its own
-    gem_entry) — to its first idle, or stopped at its first arrival at `until`. "OURS BOOTED" IS CLAIMED TO
-    deskmain's ENTRY AND NO FURTHER (`Machine.our_boot`: who ran, cut there)."""
+    gem_entry) — to its first idle, or stopped at its first arrival at `until`. "OURS BOOTED" IS CLAIMED TO ITS FIRST
+    IDLE (`Machine.our_boot`: who ran, to where the run ends — band 6 W3b's O5)."""
     return Machine(booted(machine or preinit(), blank_disk(), until=until, ours=ours_of(blob), laid=AT_GEM_ENTRY))
 
 

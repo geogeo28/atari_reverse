@@ -94,7 +94,7 @@ DOS_EXEC = "aes_rom_dos_exec"
 # (`transcription.DESK_DOOR_THUNKS`, bound by the generated `include/aes/lineftable.h`).
 DOOR_THUNK = {name: thunk for thunk, name in transcription.DESK_DOOR_THUNKS.items()}
 SITES = {
-    "deskmain": Site("aes_sh_main", addrs.AES_ROM_DESKMAIN, SP_IN_SH_MAIN, 0, ()),
+    "deskmain": Site("aes_sh_main", DOOR_THUNK["AES_ROM_DESKMAIN"], SP_IN_SH_MAIN, 0, ()),     # its thunk since band 6 W3b
     "dos_exec": Site("aes_sh_main", DOS_EXEC, SP_IN_SH_MAIN, SCRATCH_SLOT, DOS_EXEC_FRAME),
     "show a file": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_SHOW_FILE"], SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
     "print a file": Site("aes_sh_cmd", DOOR_THUNK["AES_ROM_DESK_PRINT_FILE"], SP_IN_SH_CMD, SCRATCH_SLOT, FILE_FRAME),
@@ -163,8 +163,8 @@ def test_a_call_out_of_the_shell_is_the_door_s_steps_round_the_rom_s_frame(name,
 def test_the_rom_routines_the_door_calls_are_the_ones_tier_3_declares_owed(blob):
     """THE ONE-SITE RULE, extended to the door (`bench/tier3.py`, ROM_CALLS_OWED_TO_A_LATER_BAND; `test_tier3.py`
     holds every entry to one site in its function): the blob's `jsr`s into the AES's ROM text that the table names
-    are exactly the door's ROM routines — deskmain alone since band 6 slice F4 flipped the four built-ins —, each held
-    by the function declared."""
+    are exactly the door's ROM routines — deskmain alone since band 6 slice F4 flipped the four built-ins, NONE since
+    band 6 W3b flipped deskmain —, each held by the function declared."""
     owed = bench_tier3().rom_calls_owed(BLOBS[blob]())
     the_door_s = {routine: holder for routine, (holder, _why) in bench_tier3().ROM_CALLS_OWED_TO_A_LATER_BAND.items()
                   if holder in ("aes_sh_main", "aes_sh_cmd")}

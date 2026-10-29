@@ -45,14 +45,25 @@ PINNED = {
         "bench_shipped": ((38790, 55990, 2140),),
     },
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": {
-        "bench": ((275058, 391066, 0),),
-        "bench_shipped": ((264970, 391066, 13368),),
+        "bench": ((274916, 392240, 0),),                # band 6 W3b: (275058, 391066, 0) — the note below
+        "bench_shipped": ((264830, 392240, 13368),),    # band 6 W3b: (264970, 391066, 13368)
     },
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": {
-        "bench": ((275400, 391858, 0),),
-        "bench_shipped": ((265312, 391858, 13368),),
+        "bench": ((275258, 393032, 0),),                # band 6 W3b: (275400, 391858, 0)
+        "bench_shipped": ((265172, 393032, 13368),),    # band 6 W3b: (265312, 391858, 13368)
     },
 }
+# (BAND 6 W3b's FLIP RE-PINNED THE TWO ctlmgr ROWS' FOUR TRIPLES BY HAND, measured (`scratchpad/b6/W3b/FLIP/scope/
+# pins.log`), as stage 3 did and for the same reason — `repin.py` refuses a moved ROM-side member: on these door
+# machines sh_main entered OUR deskmain (the user's window of 2026-10-28), so the desk's turn on our shore runs our
+# deskmain's loop and no cycle of the ROM's deskmain nor of the handler copy its Line-F calls ran — the ROM member
+# (the ROM's AES-span cycles LESS our shore's there) rose by 1,174 on both rows and both blobs, exactly what the
+# turn's "OS both run" fell (`tier3.txt`: 375,728 → 374,554), and ours fell by 142 / 140 — our deskmain's loop in
+# place of the ROM's loop's Line-F calls through our thunks. The 1,174 IS 710 + 464: the ROM's deskmain loop (710, its
+# U1 figure) and the ROM's Line-F handler's copy its calls ran (464), both on our shore before the flip and neither
+# since — so the table's "the ROM's Line-F handler alone" under the turn rose by the 464 too (150,928 → 151,392 and
+# 150,610 → 151,074) and the turn's figure net of it went 1.16 → 1.15 on both rows. The five switching rows' triples are unmoved: their
+# machines are the ROM's own, the desk parked in the ROM's deskmain frame on both shores.)
 
 # ...AND THE ROM'S deskmain LOOP INSIDE THOSE TURNS (band 6 W3b's prep; the user's U1 (a), 2026-10-27: "the eight
 # ROM-booted desk-turn rows are LABELLED 'the desk parked in the ROM's own deskmain frame', pinned by its cycles"). These
@@ -65,6 +76,11 @@ PINNED = {
 # SEVEN ROWS: U1's "eight" are seven desk-turn rows and ct_msgup's, whose pinned turn is ANOTHER PROCESS'S (the
 # accessory's, inside its wait for the rise), not the desk's [measured: the turn's owner, both blobs] — the label's
 # class is the seven; ct_msgup is held to none (absent here).
+# SINCE BAND 6 W3b's FLIP (the user's window of 2026-10-28) the figures are THE ROM'S SHORE'S loop (`Turn.in_deskmain`),
+# unmoved; OUR shore's (`Turn.ours_in_deskmain`, measured) is the same on the five switching rows — their machines the
+# ROM's own, the desk parked in the ROM's deskmain frame on both shores — and 0 on the two ctlmgr rows, whose door
+# machines park the desk in OUR deskmain: their turn compares our deskmain's turn with the ROM's loop (the table's
+# label says which: `tier3._parked_of`). `OURS_IN_OUR_DESKMAIN`: those two.
 PARKED_IN_THE_ROM_S_DESKMAIN = {
     "aes_ap_rdwr, the screen manager's write to the desk's full pipe, blocked; freed by the desk's own read": (784,),
     "aes_ap_sendmsg, from the screen manager to the desk's full pipe: parked; freed by the desk's own read": (784,),
@@ -74,3 +90,4 @@ PARKED_IN_THE_ROM_S_DESKMAIN = {
     "aes_rom_ctlmgr, woken by a button and the bar in one wake: the button's handler, then the menu worked": (710,),
     "aes_rom_ctlmgr, woken by the bar, an item chosen: MN_SELECTED written to the desk, which reads it": (710,),
 }
+OURS_IN_OUR_DESKMAIN = frozenset(name for name in PARKED_IN_THE_ROM_S_DESKMAIN if name.startswith("aes_rom_ctlmgr, "))

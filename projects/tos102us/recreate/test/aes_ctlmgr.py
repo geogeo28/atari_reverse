@@ -366,15 +366,23 @@ def the_desk_s_text(blob=None):
     return aes_desk.less_the_flipped((aes_desk.DESK_TEXT, aes_desk.UTILITY_TEXT), blob)
 
 
+# ...AND, ON A MACHINE THE ROM BOOTED, THE ROM'S OWN deskmain (band 6 W3b's flip; the user's U1 (a): "the desk parked in
+# the ROM's own deskmain frame"): deskmain is ours on every machine of ours, but where the ROM booted the machine the desk
+# stands parked inside the ROM's deskmain loop — its text the ROM's there whatever the blob binds, so its frame is a frame
+# of the desk's own as it was before the flip (`tier3.PARKED_IN_THE_ROM_S_DESKMAIN`: its loop's cycles pinned by row).
+DESKMAIN_ROM_SPAN = (addrs.AES_ROM_DESKMAIN, min(start for start in aes_desk.inventoried() if start > addrs.AES_ROM_DESKMAIN))
+
+
 def _the_desk_s_frames(memory, blob=None):
     """The A6 of every frame of THE DESK'S OWN, lowest first, in PD0's stack over a ROM-shore `memory` where the desk
     is parked, and UDA0's top. Walked up the ROM's frame chain (Alcyon's `link a6`: the caller's A6 at `0(a6)`, the
     return at `4(a6)`) from the A6 savestate keeps in PD0's UDA: the desk's frames begin at the first whose return
-    lies in the desk's ROM text still the ROM's on `blob` (`the_desk_s_text`). REFUSED BY NAME where the chain leaves
-    the stack before it reaches one: no ROM frame of the desk's is parked there."""
+    lies in the desk's ROM text still the ROM's on `blob` (`the_desk_s_text`) or in the ROM's own deskmain the desk is
+    parked in (`DESKMAIN_ROM_SPAN`, U1 (a)). REFUSED BY NAME where the chain leaves the stack before it reaches one: no
+    ROM frame of the desk's is parked there."""
     lo, top = (case.long_in(memory, aes.SHELL_PD + aes.PD_UDA) & aes_boot.BUS) + aes.UDA_STATE_BYTES, aes.AES_UDA1
     frame, frames = case.long_in(memory, lo - aes.UDA_STATE_BYTES + aes.UDA_A6) & aes_boot.BUS, []
-    its_text = the_desk_s_text(blob)
+    its_text = (*the_desk_s_text(blob), DESKMAIN_ROM_SPAN)
     while lo <= frame < top - aes.LONG_BYTES:
         returns_to = case.long_in(memory, frame + aes.LONG_BYTES) & aes_boot.BUS
         if frames or any(text_lo <= returns_to < text_hi for text_lo, text_hi in its_text):
@@ -393,13 +401,68 @@ def the_desk_s_live_frames(memory, blob=None):
     return frames[0] + aes.LONG_BYTES, top
 
 
+# THE TWO BUILDS' deskmain FRAMES UNDER THE PARKED DESK — A BY-NATURE WINDOW, BY ADDRESS (band 6 W3b's flip; THE USER'S
+# RULING of 2026-10-28, quoted at `DESKMAIN_FRAMES_RULING`). On a DOOR machine (`our_machine`: the takeover boot with the
+# door laid) our Line-F table is in place from the screen manager's first entry on — before sh_main's call of deskmain —
+# so sh_main's Line-F call word enters OUR deskmain (`linef_to_aes_deskmain`), and the desk stands parked in OUR
+# deskmain's frames (GCC's: its saved registers, its locals, the thunk's argument) where the ROM's machine holds the
+# ROM's deskmain frame (Alcyon's `link a6,#-72`, its saved registers) and the ROM's evnt_multi binding's under it. Two
+# builds' frames, each its own by nature — the window, ON SUCH A MACHINE ALONE (`deskmain_frames_window`): READ OFF THE
+# TWO MACHINES, from the desk's live frames' bottom on the ROM's (`the_desk_s_live_frames`) up to THE SLOT OF THE RETURN
+# INTO sh_main (`DESKMAIN_RETURNS_TO`) — that slot, sh_main's frame and everything above it are the ROM's text's on both
+# shores, laid as the ROM's (dead bytes) and compared. REFUSED BY NAME on any other machine.
+DESKMAIN_FRAMES_RULING = ("\"By-nature window\": a new by-nature class, BY ADDRESS, like the G_USERDEF ruling: the two builds' "
+                          "deskmain frames and saved registers under the parked desk, ONLY on the door machines where sh_main "
+                          "enters our deskmain (the ctlmgr woken rows' 3 machines), with a filler noise pin (both fills, as "
+                          "THE_USERDEF_STACK's) and a refusal of every edge widened by one byte")
+DESKMAIN_FRAMES_WHY = ("THE TWO BUILDS' deskmain FRAMES UNDER THE PARKED DESK (a door machine: sh_main entered OUR deskmain "
+                       "through our Line-F table — the user's ruling of 2026-10-28): the ROM's deskmain's frame and its "
+                       "evnt_multi binding's on its shore, our deskmain's and our thunk's on ours")
+DESKMAIN_RETURNS_TO = 0xFEB1DE          # sh_main's word after its Line-F call of deskmain ($feb1dc LF_CALL; $feb1de move.w d0,-6(a6))
+NOT_PARKED_IN_OUR_DESKMAIN = "a machine whose desk is not parked in OUR deskmain: no window of the two builds' deskmain frames"
+THUNK_RETURN_ABOVE_THE_SLOT = 2 * aes.LONG_BYTES     # our thunk's `pea` and its `jsr`'s return, under sh_main's return slot
+
+
+def _our_deskmain_thunk_return(blob):
+    """Where `linef_to_aes_deskmain`'s `jsr aes_deskmain` returns to on `blob`: the word after that `jsr`, read off the
+    thunk's own bytes."""
+    from opcodes import JSR_ABSOLUTE_LONG
+    start = blob.entry("linef_to_aes_deskmain")
+    code = bytes(blob.blob[start - blob.base:start - blob.base + JSR_SEARCH_BYTES])
+    at = code.index(JSR_ABSOLUTE_LONG)
+    return start + at + len(JSR_ABSOLUTE_LONG) + aes.LONG_BYTES
+
+
+JSR_SEARCH_BYTES = 0x10                 # the thunk's head: `pea (0).w` and its `jsr` lie inside it
+
+
+def deskmain_frames_window(ours, rom, blob):
+    """`(lo, hi)`: THE WINDOW OF THE TWO BUILDS' deskmain FRAMES (above) over our machine `ours` beside the ROM's `rom`
+    on `blob` — or None where our desk is not parked in OUR deskmain: the ROM's desk chain's slot of the return into
+    sh_main (`DESKMAIN_RETURNS_TO`) holds that return on BOTH machines, and under it, on ours, our thunk's `jsr`'s
+    return (`_our_deskmain_thunk_return`) — sh_main entered our deskmain, which has not returned."""
+    frames, _top = _the_desk_s_frames(rom, blob)
+    lo = frames[0] + aes.LONG_BYTES
+    slots = [frame + aes.LONG_BYTES for frame in frames if case.long_in(rom, frame + aes.LONG_BYTES) & aes_boot.BUS == DESKMAIN_RETURNS_TO]
+    if len(slots) != 1 or case.long_in(ours, slots[0]) & aes_boot.BUS != DESKMAIN_RETURNS_TO:
+        return None
+    if case.long_in(ours, slots[0] - THUNK_RETURN_ABOVE_THE_SLOT) & aes_boot.BUS != _our_deskmain_thunk_return(blob):
+        return None
+    return lo, slots[0]
+
+
 def lay_the_desk_s_live_frames(ours, rom, blob=None):
     """OUR SHORE'S MACHINE `ours` (an image, in place) GIVEN THE ROM'S BYTES OVER THE DESK'S LIVE FRAMES of the ROM's
     machine `rom` it starts beside (the note above), on `blob` — A LABELLED STAGING, laid where a row's two runs are
     entered. What it may lay is DEAD BYTES alone: REFUSED BY NAME where a frame link or a return of the desk's chain
-    differs (the desk would stand in other frames). The count of bytes laid."""
+    differs (the desk would stand in other frames). ON A MACHINE WHOSE DESK IS PARKED IN OUR deskmain (band 6 W3b's flip,
+    `deskmain_frames_window`) the two builds' deskmain frames are that window's, each its own: laid and held from the
+    window's top up alone. The count of bytes laid."""
     frames, top = _the_desk_s_frames(rom, blob)
     lo = frames[0] + aes.LONG_BYTES     # (the lowest frame's own link is its callee's: the AES's, under the desk's)
+    window = deskmain_frames_window(ours, rom, blob) if blob is not None else None
+    if window is not None:
+        lo = window[1]
     links = [(f"{at:#x}", case.long_in(rom, at), case.long_in(ours, at)) for frame in frames
              for at in (frame, frame + aes.LONG_BYTES) if lo <= at < top and case.long_in(rom, at) != case.long_in(ours, at)]
     assert not links, f"the desk's frame chain on our machine is not the ROM's: {links[:4]} (the ROM's, ours)"

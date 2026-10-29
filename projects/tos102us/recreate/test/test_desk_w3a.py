@@ -56,8 +56,12 @@ CARTRIDGE_PAIR = (0xFED554, 0xFED5C2)   # the table's two entries of the cartrid
 
 
 def _unflipped():
-    """W3a's routines of the stages not yet flipped — and deskmain, W3b's, held until its flip: the ROM's still."""
-    return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE] + list(w3a.W3B)
+    """W3a's routines of the stages not yet flipped — none since stage 3 — and W3b's deskmain while it is held: none
+    since W3b's flip. The ROM's still."""
+    return [name for name in w3a.W3A if w3a.STAGE_OF[name] > FLIPPED_THROUGH_STAGE] + [name for name in w3a.W3B if not W3B_FLIPPED]
+
+
+W3B_FLIPPED = True                      # band 6 W3b's flip: deskmain's C linked, its entry its thunk
 
 
 FLIPPED_THROUGH_STAGE = w3a.FLIPPED_THROUGH_STAGE    # its one home: the cycle's module (stage 3: the cycle whole)
@@ -65,14 +69,14 @@ FLIPPED_THROUGH_STAGE = w3a.FLIPPED_THROUGH_STAGE    # its one home: the cycle's
 
 def test_the_eighteen_are_band_6_s_routines_each_named_once_by_its_file_and_the_unflipped_ones_still_the_rom_s():
     """W3a's eighteen, each in ONE file of the split, each a band-6 routine and a target of the ROM's table — and with
-    deskmain (W3b) and the cartridge pair, those of the stages not yet flipped EVERY band-6 routine the shipped blob
-    still leaves the ROM's."""
+    the cartridge pair, those of the stages not yet flipped EVERY band-6 routine the shipped blob still leaves the ROM's
+    (deskmain among them until band 6 W3b's flip)."""
     assert {file: len(names) for file, names in w3a.SIGNATURES_BY_FILE.items()} == FILES
     assert len(w3a.W3A) == len(set(w3a.W3A)) == CYCLE_AND_HNDL_BUTTON and set(w3a.FILE_OF) == set(w3a.W3A)
     addresses = {getattr(addrs, name) for name in w3a.W3A}
     assert addresses <= set(aes_desk.routines()) and addresses <= set(aes._line_f_call_index())
     unflipped = {getattr(addrs, name) for name in _unflipped()}
-    assert aes_desk.still_the_rom_s() == {*unflipped, addrs.AES_ROM_DESKMAIN, *CARTRIDGE_PAIR}
+    assert aes_desk.still_the_rom_s() == {*unflipped, *CARTRIDGE_PAIR}       # (deskmain flipped at band 6 W3b)
     assert addrs.AES_ROM_DESK_INF_FOLDER not in addresses, "`$fde9ce` keeps its name: `$fded16` is the folder dialog"
 
 
@@ -131,7 +135,7 @@ def test_the_generator_holds_the_unflipped_stages_declared_and_not_linked_and_le
     linked = {symbol.name for symbol in transcription.symbol_table(blob.elf)}
     assert not [name for name in _unflipped() if routines.core_symbol(name) in linked], (
         "a core of DECLARED_NOT_LINKED is linked: move it to LINKED_AND_NOT_FLIPPED")
-    assert all(routines.core_symbol(name) in linked for name in w3a.W3A if name not in _unflipped())
+    assert all(routines.core_symbol(name) in linked for name in (*w3a.W3A, *w3a.W3B) if name not in _unflipped())
     held = set(generator.DECLARED_NOT_LINKED)
     assert not held & {*generator.LINKED_AND_NOT_FLIPPED, *generator.LINKED_HELD_NO_TABLE_ENTRY, *generator.ENTERED_BY_OURS_ALONE}
     addresses = {getattr(addrs, name) for name in held}
@@ -323,6 +327,12 @@ TARGET_ONLY_SWITCHING_ROWS_BY_NAME = {
     "aes_hndl_button, arrival 0 of 'folder: the file dragged onto it, Return'; the chain's own hands after the press [GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dcreate's and Fclose's own frames told]": w3a.HNDL_BUTTON,
     'aes_hndl_button, arrival 0 of "files: View > Show as Text, the long file\'s line clicked"; no wait [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_BUTTON,
     'aes_hndl_button, arrival 0 of "text view: A: opened, the file\'s line dragged to the trash, Return (Cancel)"; the chain\'s own hands after the press [GEMDOS REPLAYED: the ROM\'s run in place\'s answers and DTAs]': w3a.HNDL_BUTTON,
+    # band 6 W3b: deskmain's five first entries, the parked kind (its re-entries unpriced by name: `test_desk_w3b.py`)
+    "aes_deskmain, the first entry, the desk alone (the blank disk) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": w3a.DESKMAIN,
+    "aes_deskmain, the first entry, the DESKTOP.INF machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": w3a.DESKMAIN,
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, as text [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": w3a.DESKMAIN,
+    "aes_deskmain, the first entry, the files machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": w3a.DESKMAIN,
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, its cartridge's line a drive (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": w3a.DESKMAIN,
 }
 NAMED_TARGET_ONLY_ROWS_DECLARING_A_BUDGET = 38    # the user's ruling of 2026-10-24: its own count, beside F4's (12 + 9 + 17)
 TARGET_ONLY_ROWS_DECLARING_A_BUDGET = frozenset((   # ...and its rows BY NAME: the count pins how many, this which (RW3aP's F5)

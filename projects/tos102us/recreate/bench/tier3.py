@@ -2189,11 +2189,8 @@ ROM_CALLS_OWED_TO_A_LATER_BAND = {}
 # each, inside the function named. A call of one from any other C, a second site, or a call of any other routine of
 # the AES's text reds there — "a call from C reds" is now "a call from C outside the desk door reds".
 # (Since band 6 slice F4 the four built-ins are ours: sh_cmd's door `jsr`s their thunks — `include/aes/lineftable.h`,
-# generated — so their entries went; deskmain, W3b's, is the one left.)
-_THE_DESK_DOOR_S = "band 6: the desk's range, called through the desk door (`include/aes/deskdoor.h`)"
-ROM_CALLS_OWED_TO_A_LATER_BAND.update({
-    addrs.AES_ROM_DESKMAIN: ("aes_sh_main", f"{_THE_DESK_DOOR_S} — the desktop itself"),
-})
+# generated — so their entries went; and since band 6 W3b's flip deskmain's too: sh_main's door `jsr`s its thunk. The
+# block holds nothing: no `jsr` of the build lands in the AES's ROM text.)
 # ---- end of slice SH's block ------------------------------------------------------------------------------------------------
 
 
@@ -2861,6 +2858,15 @@ def vet_no_slot_names_the_rom(symbol, memory, relocations, came_with=None, forei
             f"interrupt would `jsr` that address")
 
 
+NOT_A_PARKED_RUN = "the register check skipped for a run that is not of the parked kind, or one whose answer is compared"
+
+
+def _parks(watch):
+    """Is `watch` (a measurement's watch of OUR run, or None) a run of THE PARKED KIND (`aes_event.Switches.parks`)?"""
+    switches = getattr(watch, "switches", None)
+    return bool(getattr(switches, "parks", False))
+
+
 class RomBench(rom_bench.RomBench):
     """The kit's bench, OUR run's memory relocated at the two moments it meets the ROM's (above): the fork queue's
     codes and the recording's ROM -> ours as our run is entered, and they and the glue's ours -> ROM in the image it
@@ -2895,9 +2901,29 @@ class RomBench(rom_bench.RomBench):
         # differs there is what the ROM's run stored.
         self._dropped_now = tuple(dropped)
         try:
+            if _parks(kwargs.get("watch")):
+                return self._measure_parked(entry, symbol, *args, dropped=compared, **kwargs)
             return super().measure(entry, symbol, *args, dropped=compared, **kwargs)
         finally:
             self._put_back, self._x_flag_declared, self._screen_manager_ours, self._dropped_now = (), False, False, ()
+
+    def _measure_parked(self, entry, symbol, args=(), regs=None, pokes=None, psg_seed=None, hw_seed=None, io_seed=None,
+                        returns=4, staged_entry=(0, 0), schedule=None, dropped=(), watch=None, original_watch=None):
+        """THE KIT'S `measure`, LESS ITS RETURN'S TWO VETS, FOR A RUN OF THE PARKED KIND ALONE (band 6 W3b; the user's
+        ruling of 2026-10-28: "tier3's own bench subclass skips the callee-saved register check a parked run can't
+        satisfy" — no kit line moved). Such a run never returns: its watch ends it where its process stands parked
+        (`aes_switching.Switching._parked`), so neither the callee-saved file nor D0 is a return's — every other
+        comparison is the kit's own (`_both_sides`: the image, the streams, the odd accesses, the refusals, the
+        dropped spans held to the original's ledger). REFUSED BY NAME for any other run (`_parks`)."""
+        assert _parks(watch) and not returns, f"{symbol}: {NOT_A_PARKED_RUN}"
+
+        def run_ours(image):
+            return self._call(image, symbol, args, io_seed=rom_bench._bench_io_seed(io_seed), schedule=schedule, watch=watch)
+
+        self._vet_pokes_are_clear_of_the_blob(symbol, pokes)
+        return self._both_sides(entry, symbol, dict(regs or {}), pokes, (psg_seed, hw_seed, io_seed), run_ours,
+                                lambda _ours, _original_registers: None, staged_entry, schedule=schedule, dropped=dropped,
+                                original_watch=original_watch)
 
     def _call(self, image, symbol, *args, **kwargs):
         relocations = [relocation for relocation in code_relocations(self.elf, symbol) if relocation.mapping]
@@ -3200,6 +3226,8 @@ DESK_TEXT_SPANS = aes_desk.less_the_flipped((aes_desk.DESK_TEXT, aes_desk.UTILIT
 DESKMAIN_ROM_SPAN = (addrs.AES_ROM_DESKMAIN, min(start for start in aes_desk.inventoried() if start > addrs.AES_ROM_DESKMAIN))
 DESKMAIN_IS_FLIPPED = not any(lo <= addrs.AES_ROM_DESKMAIN < hi for lo, hi in DESK_TEXT_SPANS)
 PARKED_IN_THE_ROM_S_DESKMAIN = "the desk parked in the ROM's own deskmain frame (a ROM-booted machine; the user's U1)"
+PARKED_IN_DESKMAIN_OURS_AGAINST_THE_ROM_S = ("the desk parked in deskmain, OUR deskmain's turn against the ROM's (a door machine: "
+                                             "the user's U1, re-read at band 6 W3b's flip, and its window of 2026-10-28)")
 # What a measurement keeps of its windows AS THE ROM'S RUN MADE THEM: how many, their whole cycles, their cycles in
 # the AES's own spans — of BOTH kinds (a turn of our screen manager is the ROM's ctlmgr's turn on that shore).
 Foreign = namedtuple("Foreign", "windows whole in_the_aes")
@@ -3215,8 +3243,12 @@ NO_FOREIGN_WINDOW = Foreign(0, 0, 0)
 # too, so its turn is priced on what the two shores do NOT both run: `the_rom_s` the ROM's AES-span cycles less those
 # our shore spent there (the desk's text, the ROM's leaves it calls, the handler copy its own Line-F calls run), and
 # `shared` everything of ours that is not the blob — held: the OS both run equal, and the desk's text alike.
-# `in_deskmain`: a desk turn's cycles in deskmain's own ROM span on our shore (the ROM's equal: held).
-Turn = namedtuple("Turn", "ours the_rom_s glue shared line_f whose in_deskmain", defaults=(0, aes_switching.THE_MANAGER_S, 0))
+# `in_deskmain`: a desk turn's cycles in deskmain's own ROM span ON THE ROM'S SHORE (the ROM's loop: U1's pinned figure);
+# ...and `ours_in_deskmain` (band 6 W3b's flip): ITS cycles there on our shore — the ROM's loop's own where the desk is parked
+# in the ROM's deskmain on both shores (equal: held), 0 where our shore's machine parks it in OUR deskmain (a door machine,
+# the user's window of 2026-10-28: its turn is our deskmain's, compared with the ROM's loop in `in_deskmain`).
+Turn = namedtuple("Turn", "ours the_rom_s glue shared line_f whose in_deskmain ours_in_deskmain",
+                  defaults=(0, aes_switching.THE_MANAGER_S, 0, 0))
 THE_ROM_S_TALLY_LINE_F = 2              # the ROM shore's tally alone: after its whole and its AES spans' cycles
 THE_ROM_S_TALLY_DESK, THE_ROM_S_TALLY_DESKMAIN = 3, 4
 SCREEN_MANAGER_S_TURN = "the screen manager's turn"
@@ -3339,7 +3371,7 @@ def _vet_switched_alike(who, ours, the_rom_s, blob=None):
                 f"net of two different things")
             continue
         if _whose_window(ours, nth) in aes_switching.TEXT_OVER_OUR_AES:
-            _vet_the_desk_s_turn_alike(who, nth, mine, its)
+            _vet_the_desk_s_turn_alike(who, nth, mine, its, getattr(ours, "desk_in_our_deskmain", False))
             continue
         assert not mine[TALLY_AES], (
             f"{who}: window {nth}, A TURN OF OURS ({_whose_window(ours, nth)}), spent {mine[TALLY_AES]} cycles of ours in "
@@ -3353,7 +3385,7 @@ def _vet_switched_alike(who, ours, the_rom_s, blob=None):
                    sum(window[TALLY_AES] for window in the_rom_s.foreign))
 
 
-def _vet_the_desk_s_turn_alike(who, nth, mine, its):
+def _vet_the_desk_s_turn_alike(who, nth, mine, its, in_our_deskmain=False):
     """THE DESK'S TURN (W6-R7) — or another process's whose text is the ROM's (`aes_switching.TEXT_OVER_OUR_AES`) — ON
     BOTH SHORES: the desk's own ROM text ran the same cycles in it, the OS both run (all but the AES's own spans and
     our blob) the same, and the ROM's AES-span cycles at least what our shore spent there (the process's side of
@@ -3368,9 +3400,17 @@ def _vet_the_desk_s_turn_alike(who, nth, mine, its):
         f"{who}: window {nth}, the desk's turn: our shore spent {mine[TALLY_AES]} cycles in the AES's own spans "
         f"({mine[TALLY_OUR_LINE_F]} in the handler's copy), more than the ROM's whole AES did ({its[TALLY_AES]}, "
         f"{its[THE_ROM_S_TALLY_LINE_F]})")
+    if in_our_deskmain:                 # ...THE DESK PARKED IN OUR deskmain on our shore (a door machine, band 6 W3b's flip):
+        assert not mine[TALLY_OUR_DESKMAIN], (      # its turn is our deskmain's, the ROM's loop runs on its shore alone
+            f"{who}: window {nth}, THE DESK'S TURN, parked in OUR deskmain, ran {mine[TALLY_OUR_DESKMAIN]} cycles of the "
+            f"ROM's deskmain on ours — {OUR_DESKMAIN_RAN_THE_ROM_S}")
+        return
     assert mine[TALLY_OUR_DESKMAIN] == its[THE_ROM_S_TALLY_DESKMAIN], (
         f"{who}: window {nth}, THE DESK'S TURN, ran {mine[TALLY_OUR_DESKMAIN]} cycles of the ROM's deskmain on ours and "
         f"{its[THE_ROM_S_TALLY_DESKMAIN]} on the ROM's — the desk parked in the ROM's deskmain frame ran its loop another way")
+
+
+OUR_DESKMAIN_RAN_THE_ROM_S = "a desk parked in our deskmain resumed in the ROM's: the machine is not what its window says"
 
 
 AS_IT_BEGAN, ELSEWHERE = "parked as it began", "parked elsewhere"
@@ -3435,12 +3475,12 @@ def turns_made(ours, the_rom_s):
 def _turn_of(mine, its, whose):
     """One window of ours as a `Turn` (above) — the desk's net of what both shores ran of the ROM's AES spans."""
     line_f = its[THE_ROM_S_TALLY_LINE_F] if len(its) > THE_ROM_S_TALLY_LINE_F else 0
-    the_rom_s, in_deskmain = its[TALLY_AES], 0
+    the_rom_s, in_deskmain, ours_in_deskmain = its[TALLY_AES], 0, 0
     if whose in aes_switching.TEXT_OVER_OUR_AES:
         the_rom_s, line_f = the_rom_s - mine[TALLY_AES], line_f - mine[TALLY_OUR_LINE_F]
-        in_deskmain = mine[TALLY_OUR_DESKMAIN]
+        in_deskmain, ours_in_deskmain = its[THE_ROM_S_TALLY_DESKMAIN], mine[TALLY_OUR_DESKMAIN]
     return Turn(mine[TALLY_BLOB] - mine[TALLY_GLUE], the_rom_s, mine[TALLY_GLUE], mine[TALLY_WHOLE] - mine[TALLY_BLOB], line_f, whose,
-                in_deskmain)
+                in_deskmain, ours_in_deskmain)
 
 
 # ---- THE IMAGE AT EVERY STOP OF THE DISPATCHER'S WATCH, BOTH SHORES (the blob-side hold; FLIP 4) ----------------------------
@@ -3839,6 +3879,12 @@ def vet_the_desk_s_live_frames(who, blob, rom, ours, programs, copies=None):
     its = rom.memory
     mapped = mapped_back(bytearray(ours.memory[:addrs.ST_RAM_BYTES]), code_relocations(blob.elf, aes_ctlmgr.SYMBOL))
     lo, top = aes_ctlmgr.the_desk_s_live_frames(its, blob)
+    # ...AND, WHERE OUR DESK IS PARKED IN OUR deskmain (band 6 W3b's flip; the user's by-nature window of 2026-10-28:
+    # `aes_ctlmgr.deskmain_frames_window`), the two builds' deskmain frames out of the compare — read off the two
+    # machines where the runs end; everything from the slot of the return into sh_main up compared as before
+    window = aes_ctlmgr.deskmain_frames_window(mapped, its, blob)
+    if window is not None:
+        lo = window[1]
     residue = aes_ctlmgr.residue_where_the_runs_end(its, *copies, mapped) if copies else frozenset()
     differing = [at for at in range(lo, top) if its[at] != mapped[at] and at not in residue]
     assert not differing, (
@@ -3916,16 +3962,20 @@ def _two_shores(blob, who, machine, switches, images_of=None):
     rom_image, our_image = (make_image({0: ram}) for ram in (aes_ctlmgr.the_rom_s_machine(machine), aes_ctlmgr.our_machine(machine, blob)))
     assert bytes(our_image[blob.base:blob.base + len(blob.blob)]) == blob.blob, f"{who}: the takeover machine does not hold this blob"
     door, programs = behind_our_door(our_image, blob), aes_ctlmgr.our_machine_s_programs(machine, blob)
+    in_our_deskmain = False
     if not door:                        # ...the desk is a process of ours behind a door alone (the binding's part of it)
         programs = tuple((pd, stack) for pd, stack in programs if pd != aes.SHELL_PD)
-    else:                               # ...and its live frames entered as the ROM's (`aes_ctlmgr`'s note: a staging)
+    else:                               # ...and its live frames entered as the ROM's (`aes_ctlmgr`'s note: a staging) —
+        # but for THE TWO BUILDS' deskmain FRAMES where the desk is parked in OUR deskmain (band 6 W3b's flip; the user's
+        # by-nature window of 2026-10-28: `aes_ctlmgr.deskmain_frames_window`), each shore's own
+        in_our_deskmain = aes_ctlmgr.deskmain_frames_window(our_image, rom_image, blob) is not None
         aes_ctlmgr.lay_the_desk_s_live_frames(our_image, rom_image, blob)
     assert door or not programs, f"{who}: a machine with loaded programs of ours and no door of ours"
     images.programs = programs
     at_idles, at_polls = (deliveries_for_our_shore(taken, blob.elf, aes_ctlmgr.SYMBOL) for taken in (switches.at_idles, switches.at_polls))
     ours_watching = dict(ours=aes_switching.our_dispatcher(blob), relocated=at_idles, relocated_polls=at_polls,
                          tally=_our_foreign_tally(blob, glue_of(blob)), ledger=_our_ledger, takeover=True, images=images.ours,
-                         door=door, programs=programs)
+                         door=door, programs=programs, desk_in_our_deskmain=in_our_deskmain)
     return TwoShores(relocations, images, rom_image, our_image, ours_watching, door, programs)
 
 
@@ -5353,9 +5403,13 @@ TURN_LINE = ("{indent}  {whose}: ours {ours} / ROM {the_rom_s} = {ratio:.2f} —
 
 def _parked_of(turn):
     """THE LABEL OF A DESK TURN THAT RUNS THE ROM'S deskmain LOOP ONCE deskmain IS FLIPPED (the user's U1 (a)) — said
-    with its pinned cycles; nothing before the flip, when the loop is the ROM's text on both shores like the rest."""
+    with its pinned cycles; nothing before the flip, when the loop is the ROM's text on both shores like the rest. Where
+    our shore's desk is parked in OUR deskmain (a door machine: the user's window of 2026-10-28) the turn compares OUR
+    deskmain's turn with the ROM's loop, and says so."""
     if not (DESKMAIN_IS_FLIPPED and turn.in_deskmain):
         return ""
+    if not turn.ours_in_deskmain:
+        return f"; LABELLED: {PARKED_IN_DESKMAIN_OURS_AGAINST_THE_ROM_S}, the ROM's loop {turn.in_deskmain} of the turn, ours 0"
     return f"; LABELLED: {PARKED_IN_THE_ROM_S_DESKMAIN}, its loop {turn.in_deskmain} of the turn on both shores"
 
 

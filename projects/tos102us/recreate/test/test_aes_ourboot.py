@@ -117,12 +117,13 @@ THE_ROM_ENTERS_DESKMAIN_AT = pinned.PD0_S[1] - pinned.THE_ROM_S_SP_IN_SH_MAIN - 
 
 @every_blob
 @every_machine
-def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_who_ran_is_cut_there(disk, blob):
+def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_its_first_idle_and_who_ran_is_ours(disk, blob):
     """THE OUR-BOOT MACHINE, BUILT (a LABELLED STAGING, ruling W4-R1): the blob laid at the pre-init stop and entered
-    at its own gem_entry boots — and ARRIVES AT deskmain's ENTRY ON THE ROM'S OWN STACK POINTER. WHO RAN UP TO THERE
-    (ruling W4-R3: "ours booted" is claimed to deskmain's entry and NO FURTHER): cycles in the blob, NOT ONE in the
-    ROM's GEM text, NOT ONE in the Line-F handler's RAM copy. Stopped there or run on to its first idle, the cut is
-    the same figures. It is no takeover: nothing was mapped — and the machine says what it is."""
+    at its own gem_entry boots — and ARRIVES AT deskmain's ENTRY ON THE ROM'S OWN STACK POINTER. WHO RAN — "ours
+    booted" claimed TO THE DESKTOP'S FIRST IDLE since band 6 W3b's flip (ruling W4-R3, extended by the orchestrator's
+    O5): cycles in the blob, NOT ONE in the ROM's GEM text, NOT ONE in the Line-F handler's RAM copy, stopped at
+    deskmain's entry AND run on to the first idle — the second the first's and more. It is no takeover: nothing was
+    mapped — and the machine says what it is."""
     ours_boots, _the_rom_s = THE_MACHINES[disk]
     desk = aes_boot.deskmain_entry(aes_boot.ours_of(the_blob(blob)))       # ...where our door enters deskmain
     booted, at_the_desk = ours_boots(the_blob(blob)), ours_boots(the_blob(blob), until=desk)
@@ -132,9 +133,12 @@ def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_who_ran_is_cut_t
     assert sp == THE_ROM_ENTERS_DESKMAIN_AT == 0xa364 and 0 < instructions < booted.boot.instructions and cycles > 0
     in_ours, in_the_rom_s_text, in_the_copy = made.ran
     assert in_ours > 0 and (in_the_rom_s_text, in_the_copy) == (0, 0)
-    assert at_the_desk.our_boot == made and at_the_desk.idle is None and at_the_desk.registers["pc"] == desk
+    to_the_desk = at_the_desk.our_boot
+    assert (to_the_desk.ours, to_the_desk.at_the_desk) == (made.ours, made.at_the_desk)
+    assert to_the_desk.ran[1:] == (0, 0) and 0 < to_the_desk.ran[0] < in_ours, "to deskmain's entry, then on to the idle: ours alone"
+    assert at_the_desk.idle is None and at_the_desk.registers["pc"] == desk
     assert (at_the_desk.boot.instructions, at_the_desk.registers["isp"]) == (instructions, sp)
-    assert booted.idle == aes_boot.OURS, "the desk — the ROM's text, over our AES since the binding — parks last, through OUR dispatcher"
+    assert booted.idle == aes_boot.OURS, "the desk — ours since band 6 W3b — parks last, through OUR dispatcher"
     assert bytes(booted.ram[made.ours.base:made.ours.base + len(made.ours.image)]) == made.ours.image
 
 
@@ -198,6 +202,26 @@ def _crafted(blob, words):
     return ours._replace(image=bytes(image))
 
 
+A_JUMP_TO_THE_ROM_S_DESKMAIN = aes_switch.JMP_ABSOLUTE_LONG + struct.pack(">I", addrs.AES_ROM_DESKMAIN)
+
+
+@every_blob
+def test_labelled_staging_an_our_boot_whose_desk_is_the_rom_s_after_all_is_refused_at_its_first_idle(blob):
+    """O5's NEGATIVE PAST deskmain's ENTRY (band 6 W3b's flip, review RW3F's B3): "ours booted" now reaches the desk's
+    FIRST IDLE, so a build whose deskmain is the ROM's after all — A LABELLED CRAFT: the door's thunk
+    (`linef_to_aes_deskmain`, where sh_main's desk door enters) made a jump to the ROM's deskmain — boots the blank disk
+    to its first idle exactly as ours to deskmain's entry, and WHO RAN, counted up to where the run ended, refuses it:
+    cycles in the ROM's GEM text and in the Line-F handler's RAM copy, every one of them past deskmain's entry."""
+    ours = aes_boot.ours_of(the_blob(blob))
+    at = aes_boot.deskmain_entry(ours) - ours.base
+    assert at != DESKMAIN - ours.base, "the door enters deskmain at its thunk (the flip)"
+    image = bytearray(ours.image)
+    image[at:at + len(A_JUMP_TO_THE_ROM_S_DESKMAIN)] = A_JUMP_TO_THE_ROM_S_DESKMAIN
+    with pytest.raises(Refused, match=r"NOT AN OUR BOOT — WHO RAN up to where the run ended \([^)]*\): \d+ cycles in the blob, [1-9]\d* IN THE "
+                                      r"ROM'S OWN GEM TEXT \[0x[0-9a-f]+, 0x[0-9a-f]+\) and [1-9]\d* in the Line-F handler's RAM copy"):
+        aes_boot.booted.derive(aes_boot.preinit(), aes_boot.blank_disk(), laid=aes_boot.AT_GEM_ENTRY, ours=ours._replace(image=bytes(image)))
+
+
 @every_blob
 def test_labelled_staging_what_the_our_boot_refuses_each_by_name(blob):
     """THE LAY'S REFUSALS, beside the premises' own (`test_aes_boot_w4.py`: no blob, a door, a window not free, a disk
@@ -212,7 +236,7 @@ def test_labelled_staging_what_the_our_boot_refuses_each_by_name(blob):
     # (BOTH SPANS THE BOOT'S WHO-RAN WATCHES ARE IN THE REFUSAL, EACH WITH CYCLES: the ROM's boot runs its text AND makes
     # its Line-F calls through the handler's RAM copy — a who-ran that stopped watching the copy would say 0 of it here)
     the_rom_s_after_all = _crafted(blob, A_JUMP_TO_THE_ROM_S_GEM_ENTRY)
-    with pytest.raises(Refused, match=r"NOT AN OUR BOOT — WHO RAN up to deskmain's entry: \d+ cycles in the blob, [1-9]\d* IN THE ROM'S OWN GEM "
+    with pytest.raises(Refused, match=r"NOT AN OUR BOOT — WHO RAN up to where the run ended \([^)]*\): \d+ cycles in the blob, [1-9]\d* IN THE ROM'S OWN GEM "
                                       r"TEXT \[0x[0-9a-f]+, 0x[0-9a-f]+\) and [1-9]\d* in the Line-F handler's RAM copy"):
         lay(ours=the_rom_s_after_all, until=DESKMAIN)
     with pytest.raises(Refused, match=r"THE BUILD'S OWN HALT, `trap #7` at .* \(blob \+ "):
@@ -925,21 +949,19 @@ def test_labelled_staging_argument_class_deskmain_served_the_shell_in_the_blob_i
     assert asked.served[0].calls == (ob.SH_WRITE,) and asked.registers["pc"] == the_build.entry("aes_sh_cmd")
 
 
-# ---- PAST THE CLAIM'S CUT: the our-boot machine at its first idle, measured for ruling W4-R10 ---------------------------------
-# NOT A CLAIM THAT OURS RAN THE DESK (from deskmain's entry the desk is the ROM's text — over OUR AES, through our Line-F
-# table, since band 6's binding: the desk's own claim is band 6's campaign's, `test_aes_desk_ours.py`).
-# What it says is how far the two machines are apart once the ROM's desk has run over each: nowhere outside the
-# classes of deskmain's entry and PD0's own stack and context — where the desk saved the registers the shell entered
-# it with (D3, D7, A3, A6: each build's own) and left its frames over two builds' residue.
+# ---- THE CLAIM'S CUT: the our-boot machine at its first idle (ruling W4-R10's measure; band 6 W3b's O5 makes it the claim) ---------
+# SINCE BAND 6 W3b's FLIP THE DESK IS OURS TO ITS FIRST IDLE (deskmain's C, `test_desk_w3b.py`): who ran is ours alone there
+# (the test above), and the two machines are apart nowhere outside the classes of PD0's own stack and context (our
+# deskmain's frames and saved registers, GCC's, over each build's residue), the desk's wait's parameter and the screen
+# manager's saved context and stack — RE-DERIVED AT THE FLIP AND PINNED, per blob and disk (`AT_THE_FIRST_IDLE`).
 @every_blob
 @every_machine
-def test_labelled_staging_past_the_claim_s_cut_the_machine_at_its_first_idle_differs_in_the_classes_alone(disk, blob):
-    """THE OUR-BOOT MACHINE RUN ON TO THE DESKTOP'S FIRST IDLE, beside the ROM-booted one (measured for ruling W4-R10;
-    no claim past deskmain's entry): ours idles in OUR dispatcher since band 6's binding (the ROM's desk calls our AES
-    through our table and parks through ours), the ROM's in its own; with every code address mapped back the two
-    megabytes differ ONLY in the classes — and of those, beside the dead ones, in PD0's stack (whole: the desk's live
-    frames over each build's), the desk's wait's parameter (its QPB in each build's AES frame) and the screen
-    manager's saved context and stack."""
+def test_labelled_staging_the_machine_at_its_first_idle_differs_in_the_classes_alone(disk, blob):
+    """THE OUR-BOOT MACHINE RUN ON TO THE DESKTOP'S FIRST IDLE, beside the ROM-booted one (ruling W4-R10's measure,
+    the claim's cut since band 6 W3b's O5): ours idles in OUR dispatcher (our deskmain parked in its evnt_multi), the
+    ROM's in its own; with every code address mapped back the two megabytes differ ONLY in the classes — and of those,
+    beside the dead ones, in PD0's stack (whole: the desk's live frames over each build's), the desk's wait's parameter
+    (its QPB in each build's frame) and the screen manager's saved context and stack: AS MANY BYTES AS PINNED."""
     ours_boots, the_rom_boots = THE_MACHINES[disk]
     ours, the_rom_s = ours_boots(the_blob(blob)), the_rom_boots()
     assert (ours.idle, the_rom_s.idle) == (aes_boot.OURS, aes_boot.THE_ROM_S)
@@ -950,10 +972,22 @@ def test_labelled_staging_past_the_claim_s_cut_the_machine_at_its_first_idle_dif
     found = ob.compared(as_a_stop(the_rom_s), as_a_stop(ours), the_blob(blob))
     assert found.differing == (), [(f"{at:#x}", length) for at, length in found.differing[:8]]
     assert {name for name in found.within if name in ob.LIVE_CLASSES} == {ob.PD0_FRAMES, ob.MANAGER_CONTEXT, ob.MANAGER_STACK, ob.PD0_PARKED}
-    # HOW MANY BYTES, all told, is each blob's own layout's (863 on the shipped blob and 734 on the bench one since band
-    # 6's binding — 343 / 326 before it, when the desk ran over the ROM's AES and parked in its dispatcher —, on both
-    # disks): the frames a compiler lays, now under the desk's own too — a bound, not a pin.
-    assert 0 < sum(count for name, count in found.within.items() if name != ob.THE_BLOB) < 1024, "under a kilobyte, all told"
+    # HOW MANY BYTES, all told, by class — each blob's own layout's: the frames a compiler lays, our deskmain's among them
+    # since band 6 W3b (863 on the shipped blob and 734 on the bench one before it, on both disks, a bound then; 343 /
+    # 326 before band 6's binding). PINNED at the flip (O5: the classes re-derived).
+    within = {name: count for name, count in found.within.items() if name != ob.THE_BLOB}
+    assert within == AT_THE_FIRST_IDLE[blob], within
+
+
+# `{blob: {class: the bytes the two machines differ in there}}` at the first idle, on both disks alike (measured, W3b's flip)
+AT_THE_FIRST_IDLE = {
+    "the bench blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11, ob.CONDITION_CODES: 1,
+                       ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
+                       ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 44, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
+    "the shipped blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
+                         ob.DISPATCHER_STACK: 143, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 164,
+                         ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 571, ob.PD0_PARKED: 1},
+}   # (1,001 / 1,018 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES)
 
 
 def test_a_wait_s_parameter_is_the_parked_class_only_where_both_shores_name_pd0_s_stack():

@@ -31,6 +31,7 @@ import aes_accessory_turns_pinned
 import aes_boot
 import aes_ctlmgr as cm
 import aes_desk
+import aes_desk_turns_pinned
 import aes_stack as stack
 import aes_event
 import aes_gemctrl as gc
@@ -138,10 +139,10 @@ PREMISES = {
 # `aes_turns_pinned`'s (by the row's name: `tools/repin.py` writes both from a recorded run).
 WHOLE_RUN = {
     THE_BAR: {BENCH: (812236, 772548), SHIPPED: (812236, 766410)},
-    THE_MENU: {BENCH: (1975728, 1770082), SHIPPED: (1975728, 1759934)},
+    THE_MENU: {BENCH: (1975728, 1768766), SHIPPED: (1975728, 1758620)},     # band 6 W3b: 1770082 / 1759934 (note below)
     PAST_THE_TITLES: {BENCH: (85630, 69792), SHIPPED: (85630, 68252)},
     THE_CLOSER: {BENCH: (313410, 236178), SHIPPED: (313410, 232282)},
-    BOTH: {BENCH: (1987850, 1778754), SHIPPED: (1987850, 1768180)},
+    BOTH: {BENCH: (1987850, 1777438), SHIPPED: (1987850, 1766866)},         # band 6 W3b: 1778754 / 1768180 (note below)
     AN_ARROW: {BENCH: (225718, 156022), SHIPPED: (225718, 152322)},
     A_DRAG: {BENCH: (605006, 520786), SHIPPED: (605006, 514486)},
     TOPPED: {BENCH: (147904, 117254), SHIPPED: (147904, 113578)},
@@ -149,6 +150,10 @@ WHOLE_RUN = {
     THE_COUNT_AT_3_A_BUTTON: {BENCH: (362068, 274678), SHIPPED: (362068, 268506)},
     THE_COUNT_AT_3_THE_BAR: {BENCH: (811980, 772420), SHIPPED: (811980, 766138)},
 }
+# (BAND 6 W3b's FLIP moved OUR run of the two rows whose message wakes the desk, -1,316 cycles on the bench blob and
+# -1,314 on the shipped one, the ROM's unmoved: on these door machines sh_main entered OUR deskmain (the user's window
+# of 2026-10-28, `aes_ctlmgr.deskmain_frames_window`), so the desk's turn runs our deskmain's loop where it ran the ROM's
+# loop and its Line-F calls through the handler's copy — measured, `scratchpad/b6/W3b/FLIP/suite3.log`.)
 # ...and how many windows of the ROM's processes each run holds beside the screen manager's turns: THE DESK'S, where
 # its message woke the desk — and none an accessory's since the narrow door flip: behind our door an accessory's turn
 # is a turn of OURS, priced by itself (`aes_accessory_turns_pinned`), and how many of those each run holds is pinned
@@ -222,6 +227,12 @@ def test_our_ctlmgr_woken_on_its_own_stack_does_what_the_rom_s_does_on_both_blob
     assert measured.own_cycles == (sum(turn.ours for turn in measured.its_turns), sum(turn.the_rom_s for turn in measured.its_turns))
     switching.vet_the_whole_run(_name(label), blob, measured, WHOLE_RUN[label])
     switching.vet_its_turns(_name(label), blob, measured)
+    # ...AND THE ROWS WHOSE DESK IS PARKED IN OUR deskmain, BY NAME (band 6 W3b; the user's window of 2026-10-28): there
+    # the desk's turn runs the ROM's deskmain loop on the ROM's shore alone — ours 0 against its pinned cycles; on every
+    # other row of these machines the turn has no deskmain loop on either shore
+    parked_in_ours = _name(label) in aes_desk_turns_pinned.OURS_IN_OUR_DESKMAIN
+    for turn in (turn for turn in measured.turns if turn.whose in switching.TEXT_OVER_OUR_AES):
+        assert turn.ours_in_deskmain == 0 and (turn.in_deskmain > 0) == parked_in_ours, (label, turn.in_deskmain, turn.ours_in_deskmain)
     # ...AND THE STACK, MEASURED ON THIS VERY RUN (the real entry, the real stack): how deep each ctlmgr went, pinned —
     # and ours fits the screen manager's 1,196 bytes with the worst nest of this build's interrupts on top.
     the_rom_s, bench, shipped = DEEPEST[label]
@@ -1178,15 +1189,19 @@ THE_FOUR_MACHINES = (gc.THE_DESK, A, W, gc.HIDING)
 
 def test_the_desk_s_live_frames_differ_at_the_takeover_in_dead_bytes_alone_and_are_laid_as_the_rom_s():
     """THE MEASURED REASON PD0's CLASS STAYS THE WHOLE STACK (`aes_ctlmgr`'s note), on each machine behind the door: the
-    desk's live frames — from its lowest ROM frame to UDA0's top — DIFFER from the ROM-booted machine's (dead locals),
-    the frame chain through them THE SAME (every link and return); the staging a row's runs are entered with lays
-    them, and the two are then one."""
+    desk's live frames — from its lowest ROM frame to UDA0's top — DIFFER from the ROM-booted machine's. SINCE BAND 6
+    W3b's FLIP each such machine parks the desk in OUR deskmain (sh_main's Line-F call through our table): the two
+    builds' deskmain frames are the user's by-nature window (`aes_ctlmgr.deskmain_frames_window`, 2026-10-28), and from
+    its top — the slot of the return into sh_main — up, the frame chain is THE SAME (every link and return) and differs
+    in dead bytes alone: the staging lays those, and the two are then one there."""
     blob = _shipped()
     for key in THE_FOUR_MACHINES:
         rom, ours = gc.machine(key).ram, bytearray(cm.our_machine(types.SimpleNamespace(machine=key), blob))
-        lo, top = cm.the_desk_s_live_frames(rom)
+        lo, top = cm.the_desk_s_live_frames(rom, blob)
+        window = cm.deskmain_frames_window(ours, rom, blob)
+        assert window is not None and window[0] == lo, key
         assert aes.AES_THEGLO < lo < top == aes.AES_UDA1 and ours[lo:top] != rom[lo:top], key
-        assert cm.lay_the_desk_s_live_frames(ours, rom) > 0 and ours[lo:top] == rom[lo:top], key
+        assert cm.lay_the_desk_s_live_frames(ours, rom, blob) > 0 and ours[window[1]:top] == rom[window[1]:top], key
 
 
 def test_the_lay_refuses_a_desk_standing_in_other_frames():
@@ -1249,8 +1264,10 @@ def test_under_a_flipped_binding_the_desk_s_frames_begin_at_its_caller_s_call(mo
     assert lowest == case.long_in(rom, held_lowest) & aes_boot.BUS
     assert case.long_in(rom, lowest + aes.LONG_BYTES) & aes_boot.BUS not in _the_binding_s_text()
     lo, top = cm.the_desk_s_live_frames(rom, blob)
-    assert lo == lowest + aes.LONG_BYTES and cm.lay_the_desk_s_live_frames(ours, rom, blob) > 0 and ours[lo:top] == rom[lo:top]
-    ours[lo:lo + aes.LONG_BYTES] = bytes(aes.LONG_BYTES)
+    _window_lo, window_hi = cm.deskmain_frames_window(ours, rom, blob)     # ...since band 6 W3b: our deskmain's frames below
+    assert lo == lowest + aes.LONG_BYTES and cm.lay_the_desk_s_live_frames(ours, rom, blob) > 0
+    assert ours[window_hi:top] == rom[window_hi:top]
+    ours[window_hi:window_hi + aes.LONG_BYTES] = bytes(aes.LONG_BYTES)  # (the return into sh_main: the window is then no more)
     with pytest.raises(AssertionError, match="the desk's frame chain on our machine is not the ROM's"):
         cm.lay_the_desk_s_live_frames(ours, rom, blob)
 
@@ -1301,8 +1318,14 @@ def test_a_menu_row_s_rom_run_copies_the_key_and_the_clicks_out_of_its_binding_s
     (the_rom_s, ours), = seen
     verdicts = [residue for _word, residue in the_rom_s.copied.values()]
     assert verdicts == [False] * (THE_ANSWER_WORDS - 2) + [True] * 2, "the key's and the clicks', the last two it copies"
-    assert ({to: residue for to, (_word, residue) in ours.copied.items()}
-            == {to: residue for to, (_word, residue) in the_rom_s.copied.items()})
+    # (SINCE BAND 6 W3b's FLIP our shore's desk is parked in OUR deskmain: the six out words are our deskmain's answer
+    # words, inside the user's by-nature window of the two builds' deskmain frames — other addresses, the same verdicts in
+    # the same order)
+    assert [residue for _word, residue in ours.copied.values()] == verdicts
+    rom = gc.machine(WOKEN[THE_MENU].machine).ram
+    ours_machine = cm.our_machine(WOKEN[THE_MENU], _shipped())
+    lo, hi = cm.deskmain_frames_window(ours_machine, rom, _shipped())
+    assert all(lo <= to < hi for to in ours.copied) and all(lo <= to < hi for to in the_rom_s.copied)
 
 
 def test_where_the_runs_end_a_residue_word_may_differ_and_nothing_else():

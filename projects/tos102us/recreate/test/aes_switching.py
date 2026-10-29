@@ -43,7 +43,7 @@ the image, the answer, and every callee-saved register back after the wake.
 import functools
 from collections import namedtuple
 
-from harness import addrs, bench_tier3, make_image
+from harness import addrs, bench_tier3, emu, make_image
 from recreate_kit import rom_bench
 
 import abi
@@ -169,7 +169,7 @@ class Switching:
     stack pointer there)}`: a QPB is a local of a LIVE frame — at or above that pointer), and `vet_ended(who)`."""
 
     def __init__(self, switches, *, inner=None, ours=None, relocated=None, relocated_polls=None, tally=_whole_cycles,
-                 observing=None, ledger=None, takeover=False, images=None, door=False, programs=()):
+                 observing=None, ledger=None, takeover=False, images=None, door=False, programs=(), desk_in_our_deskmain=False):
         assert not (ours is None and (relocated or relocated_polls)), "the ROM's shore takes its deliveries as they are"
         assert ours is not None or not takeover, "a machine whose screen manager is ours is OUR shore's"
         assert takeover or ours is None or not door, "a machine behind our door is a takeover machine"
@@ -178,6 +178,9 @@ class Switching:
             assert switches.polls is not None, "a delivery at a poll, and no count of the polls the ROM's run makes"
             _refuse_what_is_never_made("poll", switches.at_polls, switches.polls)
         self.switches, self.inner, self._ours, self._tally = switches, inner, ours, tally
+        # (band 6 W3b: OUR shore's machine holds the desk parked in OUR deskmain — a door machine, `aes_ctlmgr.
+        # deskmain_frames_window` — so its turn runs our deskmain where the ROM's runs the ROM's: `tier3`'s turn hold)
+        self.desk_in_our_deskmain = desk_in_our_deskmain
         self._observing, self._ledger = dict(observing or {}), ledger
         self._stored_outside, self._stores_seen = set(), frozenset()
         self._at_our_idle = switches.at_idles if relocated is None else relocated
@@ -263,11 +266,31 @@ class Switching:
         self.foreign_codes.update({slot: code for slot, code in self._code_slots(memory).items()
                                    if code != found[slot] and code in ROM_CODES})
 
+    ended_parked = None                 # the holder's tally where a run of the PARKED kind ended (`_parked`)
+
     def _past_its_last_idle(self, where, memory):
-        """The machine idles with every idle of the ROM's run made: a CALL's run would block for ever — refused."""
+        """The machine idles with every idle of the ROM's run made: a CALL's run would block for ever — refused. But a
+        run of THE PARKED KIND (`switches.parks`: band 6 W3b's, deskmain's rows) ENDS THERE (`_parked`)."""
+        if self.switches.parks:
+            self._parked(memory)
+            return
         raise Refused(
             f"{where}: the dispatcher idles once more than the ROM's own run did ({self.switches.idles}) — the "
             f"call would block, the machine waiting for an interrupt no case delivers")
+
+    def _parked(self, memory):
+        """A RUN OF THE PARKED KIND ENDS WHERE IT STANDS: the machine idles with every delivery taken, the row's own
+        process blocked in its wait (`SwitchingRow.ends_at_its_first_idle`). A window open there is closed (the
+        dispatch that brings the machine to its idle is the last turn's); the door call the process stands inside —
+        its wait — closed at the park (`aes_event.DoorStops.parked`); the holder's tally kept (`ended_parked`); and
+        the run SENT TO THE SENTINEL (`emu.bench_door_return`, the kit's own servicing of a stop: no kit line moved) so
+        that the bench run ends as a return does, its memory the machine parked."""
+        if self._window is not None:
+            self._close_the_window(memory)
+        if self.inner is not None:
+            self.inner.parked()
+        self.ended_parked = self._tally()
+        emu.bench_door_return(0, emu.SENTINEL, emu.STACK_TOP, returns=False)
 
     @staticmethod
     def _lay(delivery, memory, where):
@@ -566,6 +589,13 @@ class Switching:
         if self._resumes_at is not None or self._window is not None:
             raise Refused(f"{who}: the run ended inside another process than the one that made the call "
                           f"(the PD at {self._entering:#x})")
+        if self.switches.parks:         # ...THE PARKED KIND: ended at the idle after its last delivery, and there alone
+            if self.ended_parked is None:
+                raise Refused(f"{who}: {A_PARKED_RUN_NEVER_PARKED}")
+            if (self.idles, self.polls) != (self.switches.idles + 1, self.switches.polls):
+                raise Refused(f"{who}: the run parked after {self.idles} idle(s) and {self.polls} poll(s), where the ROM's own "
+                              f"parks after {self.switches.idles + 1} and {self.switches.polls}")
+            return
         if self.idles != self.switches.idles:
             raise Refused(f"{who}: the run made {self.idles} idle(s) where the ROM's own makes {self.switches.idles}")
         if self.switches.polls is not None and self.polls != self.switches.polls:
@@ -742,12 +772,20 @@ def ours(blob, switches, relocated, tally=_whole_cycles, inner=None, ledger=None
 # every drop is; LEFT OUT OF THE COMPANION'S COMPARE TOO — the one place a companion leaves a stored byte out beside
 # a QPB's address — each byte required to be one the ROM's run stored (`_its_own_by_nature`), and the battery that
 # declares it holds what the C stores there.
+# `ends_at_its_first_idle`: THE PARKED KIND (band 6 W3b, the user's ruling of 2026-10-28: "a new target-only row kind
+# that ends at the first idle"): the row's run NEVER RETURNS — it ends where the machine idles with nothing more
+# delivered, its process parked in its wait (deskmain's rows: from its entry to the desk's first idle). Its ROM run is
+# held to END SO (`_replayed`: one that returns is refused by name, as a row of any other kind whose run idles is), every
+# run of it is ended at that idle on either shore (`Switching._parked`), and its two shores' register files are not
+# compared where the run ends (`tier3.RomBench.measure`: a parked run restores no register). Its census: deskmain's alone
+# (`aes_desk_w3a.census_refusals`).
 # `the_rom_s_screen_manager`: WHY A ROW WHOSE RUN ENTERS THE SCREEN MANAGER STAYS ON THE ROM'S (`settled`: every other
 # such row is run, on our shore, with the screen manager OURS — `aes_takeover`): a reason, said in the row's battery
 # and counted by `test_aes_takeover.py`; "" for every other row.
 SwitchingRow = namedtuple("SwitchingRow", "label name arguments machine at_idle answered at_calls door at_polls budget "
-                                          "child_doors x_flag_differs also_dropped the_rom_s_screen_manager",
-                          defaults=(True, None, None, None, None, "", False, (), ""))
+                                          "child_doors x_flag_differs also_dropped the_rom_s_screen_manager "
+                                          "ends_at_its_first_idle",
+                          defaults=(True, None, None, None, None, "", False, (), "", False))
 NO_FRAME = b""                          # a routine of no argument: nothing at the first argument's place
 # What a registered row keeps (`aes_event.SWITCHING_ROWS`): the row, its settled machine, its Tier 3 drops, what its
 # run is taken through, the processes the ROM's dispatcher enters, its deliveries derived again, and the QPB
@@ -789,7 +827,8 @@ def scheduled(row, pokes, at_stops_only=()):
 def switches_of(reference):
     """What a run is taken through, read off the ROM's scheduled run `reference` of it."""
     return aes_event.Switches(reference.delivered, reference.idles, case.long_in(reference.started, aes.AES_RLR) & BUS,
-                              dict(reference.at_calls), dict(reference.at_polls), reference.polls)
+                              dict(reference.at_calls), dict(reference.at_polls), reference.polls,
+                              reference.ended == aes_switch.IDLES)
 
 
 def by_nature(uda):
@@ -840,8 +879,16 @@ def _replayed(row, staged):
     its replay — one watched run laying them at no cost — which has a ledger: `(the scheduled run, the replay's
     watch, its memory, its write ledger)`."""
     reference = scheduled(row, staged)
-    assert reference.ended == aes_switch.RETURNED, f"{row.name}: the ROM's scheduled run does not return ({reference.ended})"
+    if row.ends_at_its_first_idle:      # ...THE PARKED KIND (`SwitchingRow.ends_at_its_first_idle`)
+        assert reference.ended == aes_switch.IDLES, f"{row.name}: {A_PARKED_ROW_WHOSE_RUN_RETURNS} ({reference.ended})"
+    else:
+        assert reference.ended == aes_switch.RETURNED, f"{row.name}: the ROM's scheduled run does not return ({reference.ended})"
     return (reference, *_replay_of(row, staged, reference))
+
+
+A_PARKED_ROW_WHOSE_RUN_RETURNS = "a row of the kind that ends at its first idle whose ROM run returns: it never parks"
+A_PARKED_RUN_NEVER_PARKED = "a run of the kind that ends at its first idle that never parked there"
+A_PARKED_ROW_WITH_A_COMPANION = "a row of the kind that ends at its first idle registered with a companion: the kind is target-only"
 
 
 def _replay_of(row, staged, reference):
@@ -952,13 +999,14 @@ def foreign_stacks_named(dropped, image):
 
 
 @derived.kept
-def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, budget=None):
+def _settled(name, arguments, machine, at_idle, at_calls=None, at_polls=None, budget=None, parks=False):
     """A switching row SETTLED FROM THE ROM'S OWN RUNS (a derivation, kept by content): the scheduled run takes the
     interrupts (`aes_switch.scheduled`: what is delivered at which idle, how many idles, who is entered); its replay
     — one watched run laying them at no cost — is the run every shore is compared with, and its write ledger says
     which bytes of the windows that differ by nature it stored: each staged at the value it leaves, and the row's
     Tier 3 drops cut to them (`aes_event.settled_in_windows`: the one settling)."""
-    row = SwitchingRow("", name, arguments, lambda: machine, at_idle, at_calls=at_calls, at_polls=at_polls, budget=budget)
+    row = SwitchingRow("", name, arguments, lambda: machine, at_idle, at_calls=at_calls, at_polls=at_polls, budget=budget,
+                       ends_at_its_first_idle=parks)
     staged = _staged(row)
     reference, watch, final, writes = _replayed(row, staged)
     switches = watch.switches
@@ -1146,7 +1194,7 @@ def own_drops(row):
 def settled(row):
     """`row`'s `Settled`: its machine, its Tier 3 drops, what its run is taken through, who the dispatcher enters."""
     made = _settled(row.name, tuple(row.arguments), row.machine(), dict(row.at_idle or {}), row.at_calls, row.at_polls,
-                    *((row.budget,) if row.budget else ()))
+                    *((row.budget,) if row.budget else ()), **({"parks": True} if row.ends_at_its_first_idle else {}))
     drops = tuple(made.drops) + own_drops(row)
     if row.the_rom_s_screen_manager:    # ...a row left on the ROM's screen manager names neither of its spans
         drops = tuple(drop for drop in drops if drop[2] not in aes_takeover.WHYS)
@@ -1279,7 +1327,9 @@ def register_row(row, under=None):
     the ROM's own runs, its `Switches` the ninth field every run of it is taken through, its by-nature windows
     dropped at Tier 3 with the companion a drop needs. `under`: THE NAMES it is registered under where they are not
     its one own (`row_name`) — a session cut into slices (`aes_event.register_woken_slices`): one settling, ONE
-    `Registered` and one companion under every name. The row as registered."""
+    `Registered` and one companion under every name. A row of THE PARKED KIND is refused by name here: it is target-only
+    (no companion: `aes_desk_w3a.register_target_only_switching`). The row as registered."""
+    assert not row.ends_at_its_first_idle, f"{row_name(row)}: {A_PARKED_ROW_WITH_A_COMPANION}"
     row, held = held_of(row)
     undropped = functools.partial(companion, row)
     for name in under or (row_name(row),):
@@ -1396,7 +1446,8 @@ def vet_on_a_blob(blob, row, premise, windows, whole):
     moves says why: a frame, a path, the dispatcher itself. `(measured, our run's watch, the windows)`."""
     who = row_name(row)
     measured, watch, foreign = measured_on(blob, row)
-    assert (watch.idles, watch.polls, tuple(watch.entered)) == (premise.idles, settled(row).switches.polls, tuple(premise.entered)), who
+    switches = settled(row).switches    # (a run of THE PARKED KIND ends at the idle after its last delivery: one more)
+    assert (watch.idles, watch.polls, tuple(watch.entered)) == (premise.idles + switches.parks, switches.polls, tuple(premise.entered)), who
     assert tuple(foreign) == tuple(windows), f"{who}: foreign {tuple(foreign)}: the windows are the ROM's own run of the other process"
     assert watch.inner is None or watch.inner.closed == watch.inner.calls, f"{who}: every door call opened is closed"
     vet_the_whole_run(who, blob, measured, whole)

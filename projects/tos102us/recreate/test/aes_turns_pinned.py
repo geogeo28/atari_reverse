@@ -28,6 +28,26 @@ PINNED = {
         "bench": ((155830, 219072, 0),),
         "bench_shipped": ((138852, 219072, 8388),),
     },
+    "aes_deskmain, the first entry, the DESKTOP.INF machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {
+        "bench": ((10310, 14662, 0), (20336, 29054, 0),),
+        "bench_shipped": ((9498, 14662, 376), (17650, 29054, 1144),),
+    },
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, as text [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {
+        "bench": ((10310, 14662, 0), (20336, 29054, 0),),
+        "bench_shipped": ((9498, 14662, 376), (17650, 29054, 1144),),
+    },
+    "aes_deskmain, the first entry, the DESKTOP.INF machine, its cartridge's line a drive (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {
+        "bench": ((10310, 14662, 0), (20336, 29054, 0),),
+        "bench_shipped": ((9498, 14662, 376), (17650, 29054, 1144),),
+    },
+    "aes_deskmain, the first entry, the desk alone (the blank disk) [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {
+        "bench": ((10310, 14662, 0), (20336, 29054, 0),),
+        "bench_shipped": ((9498, 14662, 376), (17650, 29054, 1144),),
+    },
+    "aes_deskmain, the first entry, the files machine [THE XBIOS'S GETREZ STAGED: the arrival's own shifter mode; GEMDOS REPLAYED: the ROM's run in place's answers and DTAs; Dgetdrv's own frame told]": {
+        "bench": ((10310, 14662, 0), (20336, 29054, 0),),
+        "bench_shipped": ((9498, 14662, 376), (17650, 29054, 1144),),
+    },
     "aes_dispatch, opcode 11, as aes_ap_rdwr, a read of its empty pipe, blocked; woken by the screen manager's own write (the menu chain)": {
         "bench": ((197744, 278034, 0),),
         "bench_shipped": ((175100, 278034, 10772),),

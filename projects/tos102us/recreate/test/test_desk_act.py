@@ -586,7 +586,10 @@ def test_the_routines_g3_s_flip_leaves_entered_by_no_chain_are_called_by_g3_s_fl
     for name, callers in CALLED_BY_G3_ALONE.items():
         assert dar.rom_callers(name) == {da.entry_of(caller) for caller in callers}, name
         assert not callers & set(held), name
-    assert set(CALLED_BY_G3_ALONE) <= set(test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE)
+    # (SINCE BAND 6 W3b's FLIP who-ran reads a C core's run as its entry's (the orchestrator's O4): each of these runs
+    # through its core on a walked chain, or is listed as INLINED into its callers — never "called by our C alone")
+    listed = test_aes_desk_ours.NOT_ENTERED_ON_OUR_SHORE
+    assert not [name for name in CALLED_BY_G3_ALONE if "called by our C alone" in listed.get(name, "")]
 
 
 @pytest.mark.parametrize("name", NO_DOOR_PREMISES)

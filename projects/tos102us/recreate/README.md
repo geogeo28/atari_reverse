@@ -591,8 +591,7 @@ TOO — `$fde844` by ub_trampoline's operand (N18) — and every `UNIT_<X>_WAVE_
 (fun_d2desk, fun_drag, hndl_kbd); SINCE SLICE F4 WAVE 4's TWENTY ARE FLIPPED TOO — unit M's two built-ins and unit N's ten by their table entries (the
 four built-ins by sh_cmd's desk door too, which `jsr`s the same thunks), the engine's eight `bsr`-only parts with their
 built-ins (`aes_desk.ENGINE_PARTS`) — and `UNIT_M_WAVE_4_HELD_AT_F4` / `UNIT_N_WAVE_4_HELD_AT_F4` are `()`; fat_swap
-and fat_mark flipped ⚠️ VERIFIED-BUT-UNPRICED (no run of the device model reaches Format's bad-sector arm). What is
-held of band 6 is W3b's deskmain alone — DECLARED target-only beside the cycle (`aes_desk_w3a.W3B`, `() -> word`) and held the ROM's by `DECLARED_NOT_LINKED` (its own line, which the flip deletes); the cartridge's pair stays the ROM's (W4-R12). `LINKED_AND_NOT_FLIPPED` is empty. SINCE W3a's PREP the cycle has ONE HOME, `test/aes_desk_w3a.py`, before any of its C exists: its eighteen named in
+and fat_mark flipped ⚠️ VERIFIED-BUT-UNPRICED (no run of the device model reaches Format's bad-sector arm). Nothing of band 6 is held since W3b's flip (deskmain, target-only); the cartridge's pair stays the ROM's (W4-R12). `LINKED_AND_NOT_FLIPPED` is empty. SINCE W3a's PREP the cycle has ONE HOME, `test/aes_desk_w3a.py`, before any of its C exists: its eighteen named in
 `include/addrs.h` by the file each goes to (`desk/desktop.c` six, `desk/desksupp.c` three, `desk/deskinf.c` seven, the
 NEW `desk/deskins.c` two — ins_disk, ins_app; EACH FILE'S NAMES THE PREFIX ITS C ALREADY USES, the orchestrator's B4:
 desktop.c's and desksupp.c's unprefixed, deskinf.c's — and its split deskins.c's — `DESK_`; `$fded16` is
@@ -797,6 +796,11 @@ reaches a binding of unit D's, else the plain differential.
 Band 5 wave 4's slice B. **A LABELLED STAGING** (ruling W4-R1), said in the name of every row and test made of it;
 "OURS BOOTED" IS CLAIMED TO deskmain's ENTRY AND NO FURTHER (ruling W4-R3: from there the desk — the ROM's — calls the
 ROM's AES through the ROM's Line-F table on both shores).
+— EXTENDED TO THE DESK'S FIRST IDLE at band 6 W3b's flip (the orchestrator's O5): on THE OUR-BOOT MACHINE (the
+blob laid at gem_entry, a labelled staging — not a door or takeover machine) the desk is ours, so the run is ours to
+its first idle (`BootingOurs` measures who ran to where the run ended; `test_aes_ourboot.AT_THE_FIRST_IDLE`, and its
+negative past deskmain's entry: a build whose deskmain thunk jumps to the ROM's, refused at the first idle); the
+cut at deskmain's entry stays the stretches' checkpoint.
 
 - **THE MACHINE** (`aes_boot.our_desk_machine(blob)`, `our_inf_machine(blob)`; `Boot.our_boot`, an `OurBoot`): the
   pre-init capture with the blob laid in the window the premises hold free and THE PC ENTERED AT THE BLOB'S OWN
@@ -2775,6 +2779,33 @@ the flip empties the list and both are then held at 0. The served door's reading
 `our_start_up_run`'s mapping are unpinned while held, by nature (they move deskmain alone; the flip's our-boot tests
 red if either is wrong).
 
+W3b's FLIP (2026-10-28; STATUS.md, "BAND 6 W3b's FLIP"): deskmain is C (`src/desk/desktop.c`, `aes_deskmain`,
+target-only; the bring-up and the exit out of line for PD0), its table entry `$f9bc` the thunk
+`linef_to_aes_deskmain`, and sh_main's desk door bound to it. Its five first entries are rows of THE PARKED KIND
+(the user's ruling (a)): a target-only row that switches and ENDS AT THE DESK'S FIRST IDLE —
+`SwitchingRow.ends_at_its_first_idle`, `Switches.parks`, `DoorStops.parked()` closing the call open at the park,
+`Switching._parked` returning to the sentinel; it never returns, so its word is not compared, its run's idles are
+its premise's plus one, and Tier 3's own bench subclass (`RomBench._measure_parked`) skips the callee-saved
+register check a parked run cannot satisfy — no kit edit. Refused by name: a parked row of another routine, or
+with a companion, or whose ROM run returns. The five re-entries are UNPRICED BY NAME (`test_desk_w3b.UNPRICED_BY_NAME`,
+NO_PROVENANCE). A first entry's screen manager is prepared from the ROM boot STOPPED AT deskmain's ENTRY
+(`aes_takeover.STOPPED_BOOTS`, `note_a_stopped_boot`); a re-entry's from a built-in's registered row
+(`note_a_registered_row`). THE WINDOW OF THE TWO BUILDS' deskmain FRAMES (the user's ruling of 2026-10-28, BY ADDRESS,
+like the G_USERDEF ruling): on a door machine where sh_main enters OUR deskmain (the ctlmgr woken rows' machines),
+the desk's live frames are compared from `aes_ctlmgr.deskmain_frames_window` — DERIVED off the ROM's run (the lower
+of its live frames) and our machine (the slot holding the thunk's return into sh_main, `$feb1de`); refused on every
+other machine, pinned exact at both edges (computed, never declared: a byte wider fails the census), and both
+fills pinned by a noise pin
+(`test_desk_w3b.py`). U1's label then reads two ways (`tier3._parked_of`): "the desk parked in the ROM's own deskmain
+frame" on a ROM-booted machine (the five switching rows: the ROM's loop on both shores), and "the desk parked in
+deskmain, OUR deskmain's turn against the ROM's" on a door machine (ctlmgr's two: the ROM's loop 710 of the turn,
+ours 0 — `Turn.ours_in_deskmain`, `aes_desk_turns_pinned.OURS_IN_OUR_DESKMAIN`). O4: no ROM GEM text and no Line-F
+handler copy runs on any walked chain; a flipped routine RAN where its thunk OR ITS C CORE'S FIRST INSTRUCTION ran
+(`aes_desk.our_cores`). O5: "ours booted" reaches the desk's FIRST IDLE (`BootingOurs` measures who ran to where the
+run ended; `test_aes_ourboot.AT_THE_FIRST_IDLE`); a takeover with NO door still enters the ROM's deskmain (its
+Line-F table is the ROM's), a door machine our thunk (`aes_boot.deskmain_entry` reads the blob's binding — asked
+only of a machine whose table is ours, its docstring says why).
+
 A RECORDER'S BYTES PAST A FRAME ARE A HARNESS ARTIFACT, NOT A DROP (W3a stage 3's finish, the orchestrator's call): fslib's
 replay records six bytes of every GEMDOS call it does not tell, and past a shorter frame those are the CALLER'S STACK —
 the ROM's glue's return on one shore, ours on the other — which no build reproduces and GEMDOS never reads. The fix is a
@@ -3765,6 +3796,8 @@ sh_cmd; band 5 wave 4, ruling W4-R4). Six calls leave the shell: the ROM's deskm
   while `linef_table.DECLARED_NOT_LINKED` holds it, the table's thunk `linef_to_aes_deskmain` once flipped (a
   `.globl`: `transcription.DESK_DOOR_THUNKS` names it, `DESK_DOOR_CALLERS` says whose door). The objects are
   byte-identical to the bare `jsr 0xfe272e` until then.
+- **deskmain's door enters OUR deskmain since W3b's flip**: `DESK_DOOR_BOUND_AES_ROM_DESKMAIN` is
+  `linef_to_aes_deskmain`; on the shipped blob sh_main's door is `move.l #$a368,sp; jsr linef_to_aes_deskmain`.
 - **OFF TARGET** the five routines cannot run: the call leaves through the hook `recreate_call_desk_door`, keyed by
   the routine's ROM address (unbound, a door reached fails the run by name). AT TIER 1 THE ROM'S SHORE IS ANSWERED
   THE SAME WAY — "a ROM routine answered at its entry through a staged Line-F table" (`test/aes_shmain.py`): a RAM

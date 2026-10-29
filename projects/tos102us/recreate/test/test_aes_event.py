@@ -4911,7 +4911,9 @@ ROWS_THAT_SWITCH = {
 # with a turn of our screen manager inside and the second slice of the file selector's session behind the menu, which
 # shares its session's machine and drops.
 WITH_THE_SCREEN_MANAGER_OURS = {"aes_all_run": 1, "aes_ap_rdwr": 1, "aes_ap_tplay": 1, "aes_ap_trecd": 1, "aes_dispatch": 3,
-                                "aes_ev_block": 6, "aes_ev_mesag": 1, "aes_ev_multi": 16, "aes_fs_input": 2, "aes_marshal": 1}
+                                "aes_ev_block": 6, "aes_ev_mesag": 1, "aes_ev_multi": 16, "aes_fs_input": 2, "aes_marshal": 1,
+                                # (band 6 W3b) deskmain's five first entries: the bring-up runs two turns of it
+                                "aes_deskmain": 5}
 # ...and A ROW'S OWN by-nature bytes (`aes_switching.SwitchingRow.also_dropped`): ct_mouse's re-show under a menu
 # worked with the mouse shown — contrl[3] the ROM's stack word, the C's named one (`ctrl.c`'s MISSING ARGUMENT) — in
 # the three rows of hctl_rect whose run makes no VDI call after the menu.
@@ -4925,6 +4927,8 @@ TARGET_ONLY_ROWS_THAT_SWITCH = {
     "aes_do_open": 5, "aes_do_aopen": 1, "aes_do_info": 3, "aes_do_optnmenu": 4, "aes_do_deskmenu": 1,
     # ...and stage 3's fifty-one (`test_desk_w3a_stage3.py`): the three dispatchers and the File menu
     "aes_hndl_msg": 10, "aes_hndl_menu": 16, "aes_do_filemenu": 8, "aes_hndl_button": 17,
+    # ...and band 6 W3b's five (`test_desk_w3b.py`): deskmain's first entries, the parked kind
+    "aes_deskmain": 5,
 }
 A_ROW_S_OWN = "a row's own by nature: "
 THE_STALE_COUNT_KIND = A_ROW_S_OWN + "ct_mouse's re-show hands gsx_ncode two words where it takes three"
@@ -4998,14 +5002,17 @@ BY_NATURE_CENSUS = {
                            THE_BRACKET_S_SAVE_WORD: {"aes_ap_tplay": 4, "aes_ap_trecd": 7, "aes_ev_block": 1, "aes_ev_multi": 19,
                                                      "aes_ev_timer": 4, "aes_dispatch": 7},
                            A_QPB_S_ADDRESS: {"aes_ap_rdwr": 2, "aes_ap_sendmsg": 1, "aes_ev_mesag": 1, "aes_ev_multi": 27,
-                                             "aes_dispatch": 4, "aes_marshal": 1, "aes_desk_evnt_multi": 3},
+                                             "aes_dispatch": 4, "aes_marshal": 1, "aes_desk_evnt_multi": 3,
+                                             # (band 6 W3b) deskmain's five parked rows: the parked wait's QPB, a local
+                                             # of each build's evnt_multi binding's frame
+                                             "aes_deskmain": 5},
                            THE_STALE_COUNT_KIND: {"aes_hctl_rect": 3},
                            # ---- band 6 slice F2, group G2 (units A, K, J) ---- app_blddesk's every row, drive_check's three
                            # — and (band 6 slice F3, stage 2, author B) do_dopen's two under drive_check's floppy replayed;
                            # (its third fix pass) do_fopen's two, close_folder's and fun_close's folder arm after a show;
                            # (band 6 slice P7) the seven arriving with drive_check's own park held: drive_check's two,
                            # do_dopen's, do_fopen's two, close_folder's and fun_close's
-                           THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4},
+                           THE_XBIOS_DOOR_S_PARK: {"aes_app_blddesk": 4, "aes_deskmain": 5},   # (+ W3b: app_blddesk's, under deskmain's bring-up)
                            # (band 6 slice F4) Format's three formats and the copy's two copies: their floppy replayed
                            # reaches the BIOS; (band 6 W3a's stage 2) the three TARGET-ONLY rows whose ROM run stores
                            # drive_check's park over an arrival that holds none — inside the door's park that run stores

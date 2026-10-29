@@ -230,9 +230,11 @@ def test_the_table_says_a_foreign_window_under_every_row_that_has_one_and_under_
     import test_aes_ourboot                 # noqa: F401  (it registers the stretches)
     in_a_stretch = sum(stretch.turns for stretch in aes_ourboot.STRETCHES.values())
     assert in_a_stretch and len(ours) == len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)
-    assert turns_said == len(ours) + in_a_stretch, (
+    # (...each row's own number of them: one, but deskmain's first entries' TWO — band 6 W3b — as `aes_turns_pinned` holds)
+    turns_of_ours = sum(len(aes_turns_pinned.PINNED[name][SHIPPED]) if name in aes_turns_pinned.PINNED else 1 for name in ours)
+    assert turns_said == turns_of_ours + in_a_stretch, (
         f"{test_status.BENCH_TABLE} says a turn of the screen manager {turns_said} time(s) where the registry holds "
-        f"{len(ours)} rows whose run enters OUR screen manager, {len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)} of them pinned, "
+        f"{len(ours)} rows whose run enters OUR screen manager ({turns_of_ours} turns), {len(aes_turns_pinned.PINNED) - len(its_own.WOKEN)} of them pinned, "
         f"and {in_a_stretch} stretch(es) of the our-boot's with a turn inside")
 
 

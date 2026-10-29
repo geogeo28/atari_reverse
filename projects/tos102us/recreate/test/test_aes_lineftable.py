@@ -129,8 +129,9 @@ FLIPPED_AT_F4 = (12, 12, 2)    # unit M's two, unit N's ten; 2 entered (show_fil
 FLIPPED_AT_W3A_STAGE_1 = (9, 9, 0)
 FLIPPED_AT_W3A_STAGE_2 = (5, 5, 0)    # stage 2's five, target-only: none entered by a registered case (UNENTERED's five)
 FLIPPED_AT_W3A_STAGE_3 = (4, 4, 0)    # stage 3's four, target-only: none entered by a registered case (UNENTERED's four)
+FLIPPED_AT_W3B = (1, 1, 0)            # deskmain, target-only: its entry `$f9bc`, its thunk the desk door's; no case enters it
 FLIPPED_SINCE_F1 = (*FLIPPED_AT_F2.values(), *FLIPPED_AT_F3.values(), FLIPPED_AT_F4, FLIPPED_AT_W3A_STAGE_1,
-                    FLIPPED_AT_W3A_STAGE_2, FLIPPED_AT_W3A_STAGE_3)
+                    FLIPPED_AT_W3A_STAGE_2, FLIPPED_AT_W3A_STAGE_3, FLIPPED_AT_W3B)
 ENTRIES_FLIPPED_SINCE_F1 = sum(entries for entries, _thunks, _entered in FLIPPED_SINCE_F1)
 VERDICTS = {OURS_NATIVE: VERDICTS_AT_F1[OURS_NATIVE], OURS_THROUGH_A_THUNK: VERDICTS_AT_F1[OURS_THROUGH_A_THUNK] + ENTRIES_FLIPPED_SINCE_F1,
             THE_ROM_S: VERDICTS_AT_F1[THE_ROM_S] - ENTRIES_FLIPPED_SINCE_F1}
@@ -764,6 +765,9 @@ UNENTERED = {
     # ---- band 6 W3a, stage 3 ---- THE FOUR, TARGET-ONLY: no Tier 1 case, every row switches
     **{f"AES_ROM_{routine}": [INTERRUPTED] for routine in ("HNDL_MSG", "HNDL_MENU", "DO_FILEMENU", "HNDL_BUTTON")},
     # ---- end of W3a stage 3's ----
+    # ---- band 6 W3b ---- deskmain, TARGET-ONLY: no Tier 1 case, every row switches (its rows end parked at the first idle)
+    "AES_ROM_DESKMAIN": [INTERRUPTED],
+    # ---- end of W3b's ----
 }
 # of the THUNKS: THUNKS less the UNENTERED above (band 6 slice F1: 311 — unit O's 17, unit D's appl_init / appl_bvset;
 # each F2 group and F3 stage-author adds its own entered count on its line of FLIPPED_AT_F2 / FLIPPED_AT_F3)
@@ -928,9 +932,10 @@ def screen_of(ram):
 
 @pytest.mark.parametrize("blob_name", BLOBS)
 def test_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_the_rom_s_screen(blob_name):
-    """OUR gem_entry boots the blank disk; the ROM's desk — its own text, the ROM's by declaration — draws the desktop
-    THROUGH OUR TABLE over our AES and parks at OUR dispatcher's idle. THE SCREEN IS THE ROM'S OWN BOOT'S, BYTE FOR
-    BYTE. WHO RAN: no ROM routine the table makes ours was entered; thunks were; the handler's copy ran, its tail never.
+    """OUR gem_entry boots the blank disk; the desk — OURS since band 6 W3b (deskmain's C, entered by sh_main's desk door
+    at its thunk) — draws the desktop over our AES and parks at OUR dispatcher's idle. THE SCREEN IS THE ROM'S OWN
+    BOOT'S, BYTE FOR BYTE. WHO RAN: no ROM routine the table makes ours was entered; deskmain's thunk was; the handler's
+    copy ran nothing (no Line-F call word is left on the run).
     RISK 9, AS IT STANDS BOUND: gem_entry's copy took our operand to `$cc24` and, behind the handler, the nine and a
     half longwords `gemstart.S` holds there — THE ROM'S, dead data, byte-equal to the ROM's own machine; our table is
     indexed where the blob holds it and no byte of it is copied."""
@@ -945,11 +950,14 @@ def test_our_boot_over_our_table_reaches_the_desk_s_first_idle_with_the_rom_s_sc
     assert case.long_in(the_rom_s.ram, TABLE_OPERAND_IN_RAM) == aes.AES_LINEF_TABLE
     tail = slice(aes.AES_LINEF_COPY + HANDLER_BYTES, aes.AES_LINEF_COPY + aes.LINEF_COPY_BYTES)
     assert boot.ram[tail] == the_rom_s.ram[tail] == bytes(BASE_IMAGE[aes.AES_LINEF_TABLE:addrs.AES_ROM_LINEF_COPY_END])
-    assert not made.in_the_copy_s_tail and made.in_the_copy and made.in_thunks and made.thunks_entered
+    # (SINCE BAND 6 W3b's FLIP the desk is ours to its first idle: the handler's copy runs NOTHING — no Line-F call word
+    # is left on this run — and the one thunk entered is deskmain's, by sh_main's desk door)
+    assert not made.in_the_copy_s_tail and not made.in_the_copy and made.in_thunks
+    assert made.thunks_entered == [linef_table.thunk_symbol("AES_ROM_DESKMAIN")]
     assert not made.rom_routines_of_ours_entered, (
         f"ROM routines the table makes ours were entered: {[hex(target) for target in made.rom_routines_of_ours_entered]}")
-    cut = boot.our_boot.ran
-    assert cut[1:] == (0, 0) and made.in_the_blob > cut[0], "nothing of ours ran from deskmain's entry on"
+    cut = boot.our_boot.ran             # (who ran, to the first idle since band 6 W3b's O5)
+    assert cut[1:] == (0, 0) and 0 < cut[0] <= made.in_the_blob
 
 
 # ---- band 6 wave 1a's fix pass: THE ROUTINES LINKED AND NOT FLIPPED, held by a test of their own -------------------------

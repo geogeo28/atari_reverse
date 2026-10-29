@@ -12,5 +12,5 @@
 #define DESK_DOOR_BOUND_AES_ROM_DESK_PRINT_FILE linef_to_aes_desk_print_file   /* ours, through a thunk */
 #define DESK_DOOR_BOUND_AES_ROM_DESK_FORMAT linef_to_aes_desk_format   /* ours, through a thunk */
 #define DESK_DOOR_BOUND_AES_ROM_DESK_COPY_DISK linef_to_aes_desk_copy_disk   /* ours, through a thunk */
-#define DESK_DOOR_BOUND_AES_ROM_DESKMAIN AES_ROM_DESKMAIN   /* the ROM's */
+#define DESK_DOOR_BOUND_AES_ROM_DESKMAIN linef_to_aes_deskmain   /* ours, through a thunk */
 #endif /* TOS102US_AES_LINEFTABLE_H */

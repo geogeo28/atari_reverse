@@ -214,8 +214,11 @@ BAND_6_FLIPPED_AT_W3A_STAGE_1 = 9
 BAND_6_FLIPPED_AT_W3A_STAGE_2 = 5
 # ...and its stage 3: hndl_msg, hndl_menu, do_filemenu and hndl_button — the cycle whole
 BAND_6_FLIPPED_AT_W3A_STAGE_3 = 4
+# ...and band 6 W3b: deskmain, by its table entry and sh_main's desk door
+BAND_6_FLIPPED_AT_W3B = 1
 BAND_6_FLIPPED = (56 + sum(BAND_6_FLIPPED_AT_F2.values()) + sum(BAND_6_FLIPPED_AT_F3.values()) + BAND_6_FLIPPED_AT_F4
-                  + BAND_6_FLIPPED_AT_W3A_STAGE_1 + BAND_6_FLIPPED_AT_W3A_STAGE_2 + BAND_6_FLIPPED_AT_W3A_STAGE_3)
+                  + BAND_6_FLIPPED_AT_W3A_STAGE_1 + BAND_6_FLIPPED_AT_W3A_STAGE_2 + BAND_6_FLIPPED_AT_W3A_STAGE_3
+                  + BAND_6_FLIPPED_AT_W3B)
 
 
 def test_the_declared_spans_are_band_6_s_routines_not_flipped_and_the_rom_s_text_they_reach_each_run():
@@ -300,214 +303,34 @@ def test_the_viewer_s_stops_are_ours_once_the_show_engine_is_and_refused_by_name
 # at least — the proof a thunk no kit call can enter has (`test_aes_lineftable.UNENTERED`: the yielding bindings) — but
 # for the routines NO WALKED CHAIN REACHES ON OUR SHORE, by name with why (exact both ways).
 NOT_ENTERED_ON_OUR_SHORE = {
-    "AES_ROM_GSX_HARDCOPY": "unit O's: no chain answers Print Screen's alert (its chain raises it and stops), so nothing calls "
-                            "the hardcopy — Tier 1 holds it over an argument class (`test_desk_leaves.py`)",
-    # ---- band 6 slice F2, group G1 (units I, L) ---- EVERY ROM CALLER OF EACH FLIPPED (read off the GEM text:
-    # `aes_deskbind.calls_of`), so on our shore it is called by our C alone, never through the table — three of the
-    # group's own and seven of unit D's bindings, whose last ROM callers were the group's
-    **{name: f"its every ROM caller flipped at band 6 slice F2 (group G1: {callers}): called by our C alone on our shore" for name, callers in {
-        "AES_ROM_OBJ_INIT": "win_start", "AES_ROM_OBJ_WALLOC": "win_alloc", "AES_ROM_WIN_CNT": "win_ith",
-        "AES_ROM_DESK_GRAF_SHRINKBOX": "zoom_closed, do_wfull", "AES_ROM_DESK_OBJC_ADD": "obj_init, obj_ialloc",
-        "AES_ROM_DESK_OBJC_ORDER": "win_free, win_top", "AES_ROM_DESK_SHEL_WRITE": "pro_exec",
-        "AES_ROM_DESK_WIND_CLOSE": "zoom_closed", "AES_ROM_DESK_WIND_CREATE": "win_alloc",
-        "AES_ROM_DESK_WIND_DELETE": "win_free"}.items()},
-    # ---- end of group G1's ----
-    # ---- band 6 slice F2, group G2 (units A, K, J) ---- (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`)
-    # EVERY ROM CALLER FLIPPED at slice F2 (group G2) — called by our C alone on our shore: two of the group's own, a binding
-    # of unit D's and a glue leaf of unit O's, whose last ROM callers were the group's...
-    **{name: f"its every ROM caller flipped at band 6 slice F2 (group G2: {callers}): called by our C alone on our shore" for name, callers in {
-        "AES_ROM_APP_TRAN": "app_rdicon", "AES_ROM_DESK_APPL_BVSET": "app_blddesk", "AES_ROM_DOS_GDIR": "app_path_save"}.items()},
-    # ...and one whose ROM callers still the ROM's reach it on NO WALKED CHAIN (measured here) — its flipped callers'
-    # calls are our C's (scan_str's, the Install Application dialog's, reached since band 6 W3a's diet landed opn_appl's chain)
-    "AES_ROM_WIN_VIEW": "its ROM callers but do_viewmenu and win_start (flipped at slice F2) are do_dopen's (the ROM's, wave 2), "
-                        "which reaches it on no walked chain",
-    # ---- end of group G2's ----
-    # ---- band 6 slice F2, group G3 (units B, G) ---- ...CALLED BY OUR C ALONE: every Line-F call word of the routine in the
-    # ROM's GEM text lies in a routine G3 flipped at slice F2 (read off the image: `test_desk_act.CALLED_BY_G3_ALONE`) —
-    # five of unit G's own, unit D's objc_find binding and band 4's gsx_pline
-    **{f"AES_ROM_{routine}": f"its every call word in the ROM's text lies in {caller}, flipped at slice F2 (group G3): only "
-                             f"our C calls it" for routine, caller in (
-        ("FN_INIT", "fpd_start"), ("PN_INIT", "fpd_start"), ("FPD_BLDSPEC", "pn_open"), ("PN_ALLOC", "pn_open"),
-        ("FPD_ELIST", "fl_free"), ("PN_COMP", "pn_sort"), ("PN_FCOMP", "pn_comp"),
-        ("DESK_OBJC_FIND", "gr_obfind (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
-        ("GSX_PLINE", "gr_plns"))},
-    # ---- end of group G3's ----
-    # ---- band 6 slice F2, group G4 (units C, H, E, F) ----
-    # ...CALLED BY OUR C ALONE: every Line-F call word of the routine in the ROM's GEM text lies in a routine G4 flipped at
-    # slice F2 (read off the image), and a C caller calls the core, not the table's thunk. Tier 1 and the rows hold each.
-    **{f"AES_ROM_{routine}": f"its every call word in the ROM's text lies in {callers}, flipped at slice F2 (group G4): only "
-                             f"our C calls it" for routine, callers in (
-        ("DESK_MY_ITOA", "fmt_time and fmt_date"), ("DESK_FMT_TIME", "ob_sfcb and inf_dttmsz"),
-        ("DESK_FMT_DATE", "ob_sfcb and inf_dttmsz"), ("DESK_PATH_PART", "par_chk"),
-        ("DESK_APPL_WRITE", "fun_msg (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
-        ("DESK_FORM_ERROR", "d_errmsg (unit D's binding: no kit call enters its thunk either, `test_aes_lineftable.UNENTERED`)"),
-        ("DOS_DELETE", "d_dofdel (unit O's glue entry: its verified rows enter its thunk through the table, N15)"))},
-    # ---- end of group G4's ----
-    # ---- band 6 slice F2b ---- EVERY ROM CALLER FLIPPED, the last at slice F2b (i_find, win_bldview): called by our C
-    # alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`)
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F2b: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_FPD_OFIND": "i_find",
-           "AES_ROM_WIN_ICALC": "win_bldview", "AES_ROM_WIN_OCALC": "win_bldview", "AES_ROM_OBJ_IALLOC": "app_blddesk, win_bldview",
-           "AES_ROM_OBJ_WFREE": "app_blddesk, win_free, win_bldview"}.items()},
-    # ---- end of slice F2b's ----
-    # ---- band 6 slice F2c ---- EVERY ROM CALLER FLIPPED, the last at slice F2c: called by our C alone on our shore (each
-    # one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`; MEASURED by who-ran, which named exactly these)
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F2c: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_MEN_LIST": "men_update", "AES_ROM_DESK_MENU_IENABLE": "men_list, men_update",
-           "AES_ROM_GR_ISDOWN": "gr_bwait", "AES_ROM_GR_PLNS": "gr_bwait", "AES_ROM_DESK_OBJC_CHANGE": "act_chg",
-           "AES_ROM_ACT_CHKOBJ": "gr_obfind, act_allchg", "AES_ROM_DESK_DRAW_DIAL": "do_namecon",
-           "AES_ROM_DESK_OBJC_OFFSET": "draw_fld"}.items()},
-    # ---- end of slice F2c's ----
-    # ---- band 6 slice F3, stage 1, author A ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 1 (author A):
-    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
-    # MEASURED by who-ran, which named exactly these) — dr_code's by `$fde844`, flipped by its operand (N18) — and the
-    # cartridge's pair: its one ROM caller pn_active, flipped too, so the labelled chain that reaches it (the fix pass:
-    # `aes_desk.CARTRIDGE_OPENED`) enters our C pn_active, which calls their cores, never their thunks
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 1: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_DESK_D_DOFCOPY": "d_doop, dir_op", "AES_ROM_DESK_D_DOOP": "dir_op, inf_folder",
-           "AES_ROM_DESK_DR_CODE": "the userdef draw `$fde844`", "AES_ROM_DESK_OB_SFCB": "dr_code",
-           "AES_ROM_DESK_ADD_PATH": "d_doop, dir_op", "AES_ROM_DESK_SUB_PATH": "d_doop", "AES_ROM_DESK_GET_FNAME": "d_dofcopy",
-           "AES_ROM_DESK_DO_NAMECON": "d_dofcopy, dir_op", "AES_ROM_DESK_DRAW_FLD": "d_doop, dir_op",
-           "AES_ROM_DESK_D_DOFDEL": "d_dofcopy, d_doop, dir_op", "AES_ROM_DOS_CREATE": "app_getfh, d_dofcopy",
-           "AES_ROM_DOS_RMDIR": "d_doop", "AES_ROM_DOS_SETDT": "d_dofcopy", "AES_ROM_PN_FREE": "pn_close",
-           "AES_ROM_FL_FREE": "pn_free, pn_active", "AES_ROM_FN_ALLOC": "pn_active", "AES_ROM_FN_FREE": "pn_active"}.items()},
-    **{name: "its every ROM caller flipped (the last at band 6 slice F3, stage 1: pn_active): called by our C alone on our "
-             "shore — on the labelled chain that opens drive 'c' (`aes_desk.CARTRIDGE_OPENED`, `test_desk_util.py`)"
-       for name in ("AES_ROM_CART_SFIRST", "AES_ROM_CART_SNEXT")},
-    # ---- end of stage 1 A's ----
-    # ---- band 6 slice F3, stage 1, author B ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 1 (author B):
-    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
-    # MEASURED by who-ran, which named exactly these)
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 1: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_WIN_BLT": "win_slide, win_arrow", "AES_ROM_WIN_BLDVIEW": "desk_verify, win_blt, win_bdall",
-           "AES_ROM_APP_PARSE": "app_start", "AES_ROM_APP_RDICON": "app_start",
-           "AES_ROM_GR_DRGPLNS": "act_bdown", "AES_ROM_GR_ACCOBS": "act_bdown", "AES_ROM_MOVE_DRVICON": "act_bdown",
-           "AES_ROM_DESK_EVNT_BUTTON": "act_bdown", "AES_ROM_DESK_GRAF_RUBBOX": "act_bdown",
-           "AES_ROM_GR_BWAIT": "gr_drgplns", "AES_ROM_GR_EXTENT": "gr_drgplns", "AES_ROM_GR_OBALIGN": "gr_drgplns",
-           "AES_ROM_GR_OBFIND": "gr_drgplns, act_bsclick, act_bdown",
-           "AES_ROM_ACT_ALLCHG": "act_bsclick, act_bdown, desk_clear"}.items()},
-    # ...and the one STAGE 1 WHOLE names (the integration's, who-ran's): its two ROM callers flipped one by each author
-    "AES_ROM_PN_SORT": "its every ROM caller flipped (the last at band 6 slice F3, stage 1: pn_active, win_srtall): called by "
-                       "our C alone on our shore",
-    # ---- end of stage 1 B's ----
-    # ---- band 6 slice F3, stage 2, author A ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 2 (author A):
-    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
-    # MEASURED by who-ran, which named exactly these) — and fun_msg, whose third ROM caller, unit N's desk_util_error (held,
-    # wave 4), is on no walked chain
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_APP_GETFH": "app_start, app_save", "AES_ROM_APP_PATH_RESTORE": "app_save", "AES_ROM_APP_PATH_SAVE": "app_save",
-           "AES_ROM_APP_REVIT": "app_save", "AES_ROM_SAVE_STR": "app_save", "AES_ROM_DOS_WRITE": "app_save",
-           "AES_ROM_DESK_SHEL_GET": "app_start, app_save", "AES_ROM_DESK_SHEL_PUT": "app_save",
-           "AES_ROM_DESK_ADD_FNAME": "d_dofcopy, d_doop, dir_op, fun_mkdir", "AES_ROM_DESK_DEL_FNAME": "d_dofcopy, d_doop, dir_op, fun_mkdir",
-           "AES_ROM_DESK_HIDE_DIAL": "dir_op, fun_mkdir", "AES_ROM_DESK_SHOW_DIAL": "do_namecon, dir_op, fun_mkdir",
-           "AES_ROM_DOS_MKDIR": "d_doop, dir_op, fun_mkdir", "AES_ROM_DESK_DIR_OP": "fun_op", "AES_ROM_DESK_PAR_CHK": "fun_op",
-           "AES_ROM_WIN_ITH": "fun_rebld, cnx_put, win_shwall",
-           "AES_ROM_DESK_FUN_OP": "fun_ddst, fun_wdst", "AES_ROM_DESK_FUN_DDST": "fun_win2desk, fun_disk",
-           "AES_ROM_DESK_FUN_WDST": "fun_win2win, fun_disk", "AES_ROM_DESK_FUN_DISK": "fun_desk2win"}.items()},
-    "AES_ROM_DESK_FUN_MSG": "its every ROM caller on a walked chain flipped (the last at band 6 slice F3, stage 2: fun_rebld; "
-                            "win_shwall before it): unit N's desk_util_error, held, is on no walked chain",
-    # ---- end of stage 2 A's ----
-    # ---- band 6 slice F3, stage 2, author B ---- EVERY ROM CALLER FLIPPED, the last at slice F3's stage 2 (author B):
-    # called by our C alone on our shore (each one's ROM callers read off the GEM text: `aes_deskarrive.rom_callers`;
-    # MEASURED by who-ran, which named exactly these)
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_ACT_CHG": "do_wopen", "AES_ROM_CLOSE_FOLDER": "fun_close", "AES_ROM_CLOSE_WINDOW": "fun_close",
-           "AES_ROM_DESK_GRAF_GROWBOX": "do_wopen", "AES_ROM_DESK_WIND_OPEN": "do_wopen", "AES_ROM_DO_WOPEN": "do_diropen, pro_run",
-           "AES_ROM_PRO_EXEC": "pro_run", "AES_ROM_WIN_INAME": "desk_do_format", "AES_ROM_WIN_SNAME": "do_diropen",
-           "AES_ROM_ZOOM_CLOSED": "close_folder, close_window"}.items()},
-    "AES_ROM_WIN_FREE": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: close_window, cnx_get, do_dopen): "
-                        "called by our C alone on our shore",
-    "AES_ROM_DESK_EVNT_DCLICK": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: cnx_get): called by our C "
-                                "alone on our shore",
-    "AES_ROM_WIN_ALLOC": "its every ROM caller flipped (the last at band 6 slice F3, stage 2: cnx_get, do_dopen): called by our "
-                         "C alone on our shore",
-    # ...and STAGE 2 WHOLE's (the merge's, who-ran's on the tree of both stage-2 authors — the pn_sort class): ROM callers
-    # flipped one or more by each author
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F3, stage 2, by both authors: {callers}): called by our C "
-             "alone on our shore"
-       for name, callers in {
-           "AES_ROM_DO_DIROPEN": "fun_ddst; cnx_get, do_dopen, do_fopen", "AES_ROM_PN_ACTIVE": "fun_rebld, fun_disk; do_diropen",
-           "AES_ROM_PN_CLOSE": "fun_disk; do_fopen, close_window", "AES_ROM_PN_OPEN": "fun_disk; do_diropen",
-           "AES_ROM_WIN_SINFO": "fun_rebld; do_diropen"}.items()},
-    # (win_top `$fe2cf4` — its last ROM caller hndl_msg `$fe2344`, held, whose walked runs never reached its call — LEFT THE
-    # LIST at band 6 W3a's prep: the WM_TOPPED chain's hndl_msg calls it on our shore)
-    # ---- end of stage 2 B's ----
-    # ---- band 6 slice F3, stage 3 ---- (who-ran's on the stage's tree: fun_drag's four drivers, called by its C alone now,
-    # and app_afind, whose last ROM caller was fun_d2desk)
-    **{f"AES_ROM_DESK_FUN_{driver}": "its every ROM caller flipped (the last at band 6 slice F3, stage 3: fun_drag): called by "
-                                     "our C alone on our shore"
-       for driver in ("D2DESK", "DESK2WIN", "WIN2DESK", "WIN2WIN")},
-    "AES_ROM_APP_AFIND": "its every ROM caller flipped (the last at band 6 slice F3, stage 3: fun_d2desk): called by our C alone "
-                         "on our shore",
-    # ---- end of stage 3's ----
-    # ---- band 6 slice F4 ---- (who-ran's on the slice's tree; each one's ROM callers read off the GEM text:
-    # `aes_deskarrive.rom_callers`) — unit N's helpers, called by Format's and the copy's C alone now; the four built-ins
-    # are entered by sh_cmd's door (`aes_desk.BY_VALUE_CALLERS`)...
-    **{name: f"its every ROM caller flipped (the last at band 6 slice F4: {callers}): called by our C alone on our shore"
-       for name, callers in {
-           "AES_ROM_DESK_UTIL_OPEN": "desk_format, desk_copy_disk",
-           "AES_ROM_DESK_UTIL_SHOW": "desk_format, desk_copy_disk, util_bars, copy_tracks",
-           "AES_ROM_DESK_UTIL_REDRAW": "desk_format, util_error", "AES_ROM_DESK_UTIL_BARS": "desk_format, desk_copy_disk",
-           "AES_ROM_DESK_UTIL_ERROR": "desk_format, desk_copy_disk, copy_tracks", "AES_ROM_DESK_COPY_TRACKS": "desk_copy_disk",
-           "AES_ROM_DOS_AVAIL": "desk_copy_disk, viewer_line; dir_op at slice F3",
-           "AES_ROM_DOS_RAWCIO": "the engine's parts show_or_print, viewer_loop, viewer_more, viewer_line, rawcio_string"}.items()},
-    # ...two no run reaches at all: Format's bad-sector arm, which no disk of the device model takes (Flopfmt answers 0)
-    "AES_ROM_DESK_FAT_MARK": "its one ROM caller, desk_format (flipped at band 6 slice F4), calls it in its bad-sector arm alone, "
-                             "which no run of the device model reaches (Tier 1 holds it over argument classes)",
-    "AES_ROM_DESK_FAT_SWAP": "its one ROM caller, fat_mark (flipped at band 6 slice F4), is reached by no run (above)",
-    # ...one whose ROM callers but one are flipped, and that one reaches it on no walked chain
-    "AES_ROM_DESK_RSRC_GADDR": "its ROM callers flipped (the last on a walked chain at band 6 slice F4: util_open) but desk_open "
-                               "`$fe1568`'s (the ROM's), whose walked runs never reach its call: called by our C alone on our shore",
-    # ...and THE ENGINE'S EIGHT `bsr`-ONLY PARTS (R-W4-5): static C inside the two built-ins, flipped with them
-    # (`aes_desk.parts_flipped`) — no table entry, so no entry of ours to enter: their ROM spans running no cycle is the hold
+    # ---- BAND 6 W3b's FLIP RE-READ "ITS ENTRY RAN" (the orchestrator's O4): no Line-F call word is left on our walks, so
+    # no thunk of a routine our C calls is entered there any more; a flipped routine RAN where its entry of the table
+    # (a thunk, a `.S`) OR ITS C CORE'S FIRST INSTRUCTION (`aes_desk.our_cores`) ran on a walked chain. The list was
+    # re-derived from that measurement (`scratchpad/b6/W3b/FLIP/scope/pins2.log`; its old entries — "called by our C
+    # alone", each whose core now runs — went); it is THE ROUTINES NEITHER OF WHOSE ENTRIES RAN, by class:
+    # ...INLINED: every C call of the routine is inlined by GCC into its caller (the shipped blob's call graph names no
+    # caller of its out-of-line core but its thunk), and no ROM caller is left to enter that thunk — its code runs inside
+    # its callers, held by the walks there
+    **{f"AES_ROM_{routine}": "inlined into its every C caller (the shipped blob's call graph: no caller of its core but "
+                             "its thunk), whose ROM callers are all ours since band 6 W3b: its body runs inside them"
+       for routine in ('APP_GETFH', 'APP_PATH_RESTORE', 'APP_REVIT', 'CLOSE_FOLDER', 'DESK_ADD_PATH',
+                       'DESK_D_DOFDEL', 'DESK_FUN_D2DESK', 'DESK_FUN_OP', 'DESK_INF_FIELD', 'DESK_INF_FINISH',
+                       'DESK_MY_ITOA', 'DESK_PATH_PART', 'DESK_UTIL_REDRAW', 'DO_DESKMENU', 'FL_FREE', 'FN_ALLOC',
+                       'FN_FREE', 'FN_INIT', 'FPD_ELIST', 'GR_OBALIGN', 'HNDL_KBD', 'MEN_LIST', 'PN_ALLOC',
+                       'PRO_EXEC', 'SAVE_STR', 'WIN_CNT',)},
+    # ...THE SHOW / PRINT ENGINE'S EIGHT `bsr`-ONLY PARTS (R-W4-5): static C inside the two built-ins, no core of their own
     **{f"AES_ROM_DESK_{part}": "a `bsr`-only part of the show / print engine (no table entry: R-W4-5), flipped with its "
                                "built-ins at band 6 slice F4: static C inside them, no entry of ours to enter"
        for part in ("SHOW_OR_PRINT", "SHOW_NEXT_BYTE", "VIEWER_LOOP", "VIEWER_MORE", "VIEWER_PAGE", "VIEWER_LINE",
                     "RAWCIO_STRING", "PRINT_CHAR")},
-    # ---- end of slice F4's ----
-    # ---- band 6 W3a, stage 1 ---- (who-ran's on the stage's tree, MEASURED): THE NINE DIALOGS' CALLEES whose every
-    # call on a walked chain was a dialog's — the dialog bindings inf_show runs (form_center, form_dial, form_do,
-    # objc_draw, graf_mouse), Show Info's fields, counts and glue (inf_field, inf_dttmsz, inf_folder, inf_finish,
-    # d_errmsg, dos_rename, dos_chmod, dos_label, dos_space), the install dialogs' ANODE leaves (app_alloc, app_free,
-    # snap_disk, scan_str): called by our C alone on our shore since the stage
-    **{f"AES_ROM_{routine}": "its every call on a walked chain is one of the nine dialogs' (flipped at band 6 W3a's stage "
-                             "1): called by our C alone on our shore"
-       for routine in ("DESK_FORM_CENTER", "DESK_FORM_DIAL", "DESK_FORM_DO", "DESK_OBJC_DRAW", "DESK_GRAF_MOUSE",
-                       "DESK_INF_FIELD", "DESK_INF_DTTMSZ", "DESK_INF_FOLDER", "DESK_INF_FINISH", "DESK_D_ERRMSG",
-                       "DOS_RENAME", "DOS_CHMOD", "DOS_LABEL", "DOS_SPACE", "APP_ALLOC", "APP_FREE", "SNAP_DISK",
-                       "SCAN_STR")},
-    # ---- end of W3a stage 1's ----
-    # ---- band 6 W3a, stage 2 ---- (who-ran's on the stage's tree, MEASURED): THE CALLEES WHOSE EVERY CALL ON A WALKED
-    # CHAIN WAS ONE OF THE FIVE'S — stage 1's nine dialogs (do_info's, do_optnmenu's, do_deskmenu's, opn_appl under
-    # do_aopen), the openers (do_aopen, do_dopen, do_fopen, drive_check), and what the five ask (i_find, fpd_parse,
-    # get_spec, get_xywh, pro_chdir, ini_str, pro_cmd, pro_run, fun_alert, fun_rebld, form_alert): called by our C alone
-    **{f"AES_ROM_{routine}": "its every call on a walked chain is one of stage 2's five's (flipped at band 6 W3a's "
-                             "stage 2): called by our C alone on our shore"
-       for routine in ("DESK_INF_SHOW", "DESK_INF_FILE", "DESK_INF_FOLDER_DLG", "DESK_INF_DISK", "DESK_INF_PREF",
-                       "DESK_OPN_APPL", "DESK_INS_DISK", "DESK_INS_APP", "DO_AOPEN", "DO_DOPEN", "DO_FOPEN", "DRIVE_CHECK",
-                       "I_FIND", "FPD_PARSE", "GET_SPEC", "GET_XYWH", "PRO_CHDIR", "INI_STR", "PRO_CMD", "PRO_RUN",
-                       "DESK_FUN_ALERT", "DESK_FUN_REBLD", "DESK_FORM_ALERT")},
-    # ---- end of W3a stage 2's ----
-    # ---- band 6 W3a, stage 3 ---- (who-ran's on the stage's tree, MEASURED): THE CALLEES WHOSE EVERY CALL ON A WALKED
-    # CHAIN WAS ONE OF THE FOUR'S — hndl_menu and do_filemenu themselves, the menus' handlers (do_deskmenu, do_viewmenu,
-    # do_optnmenu, do_open, do_info, Format's do_format), the window messages' acts (do_wfull, do_xyfix, win_arrow,
-    # win_slide, win_top, fun_close, fun_mkdir) and the button's (wind_find, act_bsclick, graf_mkstate, act_bdown,
-    # fun_drag), the View arm's (win_srtall, win_bdall, win_shwall), and what the four ask (win_ontop, win_isel,
-    # win_find, desk_clear, menu_tnormal): called by our C alone — deskmain still enters hndl_msg and hndl_button
-    **{f"AES_ROM_{routine}": "its every call on a walked chain is one of stage 3's four's (flipped at band 6 W3a's "
-                             "stage 3): called by our C alone on our shore"
-       for routine in ("HNDL_MENU", "DO_FILEMENU", "DO_DESKMENU", "DO_VIEWMENU", "DO_OPTNMENU", "DO_OPEN", "DO_INFO",
-                       "DESK_DO_FORMAT", "DO_WFULL", "DO_XYFIX", "WIN_ARROW", "WIN_SLIDE", "WIN_TOP", "FUN_CLOSE",
-                       "DESK_FUN_MKDIR", "DESK_WIND_FIND", "ACT_BSCLICK", "DESK_GRAF_MKSTATE", "ACT_BDOWN", "DESK_FUN_DRAG",
-                       "WIN_SRTALL", "WIN_BDALL", "WIN_SHWALL", "WIN_ONTOP", "WIN_ISEL", "WIN_FIND", "DESK_CLEAR",
-                       "DESK_MENU_TNORMAL")},
-    # ---- end of W3a stage 3's ----
+    # ...AND THOSE NO WALKED RUN REACHES, by why
+    "AES_ROM_GSX_HARDCOPY": "unit O's: no chain answers Print Screen's alert (its chain raises it and stops), so nothing calls "
+                            "the hardcopy — Tier 1 holds it over an argument class (`test_desk_leaves.py`)",
+    "AES_ROM_DESK_FAT_MARK": "its one C caller, desk_format, calls it in its bad-sector arm alone, which no run of the device "
+                             "model reaches (Tier 1 holds it over argument classes)",
+    "AES_ROM_DESK_FAT_SWAP": "its one caller, fat_mark, is reached by no run (above)",
+    "AES_ROM_DESK_COPY_TRACKS": "its one C caller, desk_copy_disk, reaches it on the copy's run alone — W6-R8's, refused on our shore",
+    "AES_ROM_CART_SNEXT": "its one C caller, pn_active, asks for a second cartridge program: the labelled cartridge chain's holds one",
 }
 
 
@@ -515,13 +338,13 @@ NOT_ENTERED_ON_OUR_SHORE = {
 def _entered_on_our_shore():
     """`({a flipped routine's start: the walked chains whose steps entered its entry of ours}, {its start: the chains in
     which its ROM span ran a cycle})`."""
-    entries, entered, its_span_ran = desk.our_entries(), {}, {}
+    entries, cores, entered, its_span_ran = desk.our_entries(), desk.our_cores(desk.our_blob()), {}, {}
     for name in WALKED_ON_OUR_SHORE:
         steps = desk.walked_ours(name).steps
         ran = {at for stepped in steps for at, _cycles in stepped.entered}
         charged = {routine for stepped in steps for routine, cycles in desk.charged(stepped.profile.text).items() if cycles}
         for routine, ours in entries.items():
-            if ours in ran:
+            if ours in ran or cores.get(routine) in ran:    # ...its entry, or (band 6 W3b, O4) its C core's first instruction
                 entered.setdefault(routine, []).append(name)
             if routine in charged:
                 its_span_ran.setdefault(routine, []).append(name)
@@ -549,12 +372,12 @@ def test_every_flipped_routine_s_rom_span_ran_no_cycle_and_its_entry_of_ours_ran
 # ---- WHAT OF THE ROM'S GEM TEXT STILL RUNS ON OUR WALKS (band 6 W3b's prep, the orchestrator's O4) ------------------------------
 # THE INVARIANT W3b BUYS: once deskmain is ours, NO ROUTINE OF THE ROM'S GEM TEXT RUNS A CYCLE AND THE LINE-F HANDLER'S RAM
 # COPY RUNS NONE on any walked chain of our shore (its machines are our-boot machines: nothing parks the desk in a ROM
-# frame there). PREPARED AS A MEASURED LIST THE FLIP EMPTIES, never a skipped test: today the one routine is deskmain —
-# the desk's loop, the ROM's text over our AES — whose Line-F calls are the copy's every cycle; the flip deletes the line
-# and the figure, and the test then holds both at 0. `{routine: its ROM span's cycles summed over every walked chain}`
-# and the copy's sum, MEASURED (the W3b cut's `romtext.json`, re-read here).
-ROM_GEM_TEXT_ON_OUR_WALKS = {"AES_ROM_DESKMAIN": 225914}
-LINE_F_COPY_ON_OUR_WALKS = 174398
+# frame there). PREPARED AS A MEASURED LIST THE FLIP EMPTIES, never a skipped test: until W3b's flip the one routine was
+# deskmain — the desk's loop, the ROM's text over our AES, 225,914 cycles — whose Line-F calls were the copy's every
+# cycle (174,398); THE FLIP EMPTIED BOTH (measured) and the test holds both at 0. `{routine: its ROM span's cycles summed
+# over every walked chain}` and the copy's sum.
+ROM_GEM_TEXT_ON_OUR_WALKS = {}
+LINE_F_COPY_ON_OUR_WALKS = 0
 
 
 @functools.cache
@@ -629,7 +452,8 @@ THE_ROM_S_PD0 = {"folder: File > Close": 1398, "folder: opened": 1410, "file: Fi
                  "A: File > Open": 1460, "A: opened": 1446, "two windows: File > Close Window (one left on top)": 1364,
                  desk.FORMAT_UP: 1218, desk.FORMATTED: 816, "A: File > Format, OK, EXIT clicked": 886, desk.COPY_UP: 1212,
                  "file: shown, a key at its end": 1438}
-DEEPEST_PD0 = ("A: opened", 1500)     # (File > Open 1,534 before band 6 W3a's stage 3, 1,536 before its stage 2; 1,504 before slice F1)
+# (1,500 before band 6 W3b's flip; File > Open 1,534 before band 6 W3a's stage 3, 1,536 before its stage 2; 1,504 before slice F1)
+DEEPEST_PD0 = ("A: opened", 1452)
 
 
 def test_the_cut_s_depth_rows_the_rom_s_beside_ours_and_the_deepest_under_the_gate():
@@ -926,130 +750,131 @@ def test_a_boot_s_devices_are_vetted_as_a_continuation_s():
 # lines: a group's author hands back its partial flip's rows, and the ORCHESTRATOR'S INTEGRATION re-derives the
 # table over the merged flip, as tier3.txt and lineftable.S are made again, never hand-merged.)
 DEPTHS = {
-    'Desk > Desktop Info, Return': (1124, 668, 254, 0),
-    'Options > Set Preferences, Return': (1232, 668, 254, 0),
-    'Options > Save Desktop, Return': (1004, 668, 254, 0),
-    'Options > Print Screen (its alert raised, not answered)': (1004, 668, 254, 0),
-    "a key typed at the desk's idle": (658, 0, 240, 0),
-    'drive A: selected': (1232, 0, 254, 0),
-    'A: File > Show Info, Return': (1292, 668, 254, 0),
-    'A: Options > Install Disk Drive, Return': (1268, 668, 254, 0),
-    'A: Options > Install Disk Drive, Remove pressed': (1268, 668, 254, 0),
-    "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1268, 668, 254, 0),
-    'A: File > Open': (1488, 668, 254, 0),
-    'A: File > Format, Return (the warning answered)': (1020, 668, 254, 0),
-    'drive A: dragged to the trash, Return': (1460, 0, 254, 0),
-    'a rubber box on the desktop, round the trash': (1288, 0, 254, 0),
-    'A: opened': (1500, 0, 254, 0),
-    'window: View > Show as Text': (1156, 750, 254, 486),
-    'window: View > Sort by Size': (1156, 750, 254, 0),
-    'window: File > Close Window': (1444, 668, 254, 0),
-    'window: its closer clicked': (1400, 520, 260, 0),
-    'window: its fuller clicked': (1172, 520, 260, 0),
-    'window: A: opened again (two windows)': (1500, 0, 260, 0),
-    'file: selected': (1232, 0, 254, 0),
-    'file: File > Show Info, Return': (1308, 668, 254, 0),
-    "file: File > Show Info, Backspace, 'A', Return (renamed)": (1308, 668, 254, 0),
-    'file: File > Show Info, Read-Only pressed, Return': (1308, 668, 254, 0),
-    'file: read-only, dragged to the trash, OK — access denied, Return': (1460, 0, 254, 0),
-    'file: File > Open (the Show / Print / Cancel alert)': (1208, 668, 254, 0),
-    'file: shown, a key at its end': (1372, 308, 240, 0),
-    'file: double-clicked (the alert)': (1220, 0, 254, 0),
-    "file: dragged to the trash, Return (Cancel, the dialog's default)": (1460, 0, 254, 0),
-    'file: dragged to the trash, OK': (1460, 0, 254, 0),
-    "folder: File > New Folder, 'A', Return": (1336, 668, 254, 0),
-    'folder: the file dragged onto it, Return': (1472, 0, 254, 0),
-    'folder: opened': (1468, 0, 254, 0),
-    'folder: File > Close': (1484, 668, 254, 0),
-    'folder: selected, File > Show Info, Return': (1276, 668, 254, 0),
-    'folder: dragged to the trash, OK': (1460, 0, 254, 0),
-    'text view: A: opened': (1500, 0, 254, 486),
-    'text view: Options > Save Desktop, Return': (1300, 668, 254, 486),
-    'files: A: opened': (1500, 0, 254, 0),
-    "files: the window's down arrow clicked": (658, 706, 260, 0),
-    "files: the window's vertical bar clicked under its slider (a page)": (658, 706, 260, 0),
-    "files: the window's right arrow clicked": (1140, 404, 260, 0),
-    "files: the long file shown, a blank at each page's end and at its end": (1372, 668, 254, 0),
-    'files: the long file dragged onto the folder, Return': (1472, 0, 254, 0),
-    'files: the folder (not empty) dragged to the trash, OK': (1460, 0, 254, 0),
-    'files: the window made full': (1172, 520, 260, 0),
-    'files: the program selected, File > Show Info, Return': (1308, 668, 254, 0),
-    'files: the program selected, Options > Install Application, Return': (1336, 668, 254, 0),
-    'files: View > Show as Text': (1156, 750, 254, 486),
-    'window: its fuller clicked again (back to its size)': (1172, 520, 260, 0),
-    'files: the right arrow clicked, then the window made full': (1172, 520, 260, 0),
-    'files: the right arrow clicked, then View > Sort by Size': (1156, 750, 254, 0),
-    'window: View > Show as Icons (the view it has)': (1156, 750, 254, 0),
-    'window: Options > Save Desktop, Return': (1300, 668, 254, 0),
-    'files: the right arrow clicked, then Options > Save Desktop, Return': (1300, 668, 254, 0),
-    'a rubber box on the desktop, round drive B: and the trash': (1288, 0, 254, 0),
-    'drive A: dragged to a bare spot of the desktop': (1328, 0, 254, 0),
-    "drive A:'s object clicked at its corner, outside its image and its label": (718, 0, 254, 0),
-    'files: View > Sort by Size': (1156, 750, 254, 0),
-    'files: View > Sort by Date': (1156, 750, 254, 0),
-    'files: View > Sort by Type': (1156, 750, 254, 0),
-    'folder: the file dragged onto it again, Return — the name conflict, Return': (1472, 0, 254, 0),
-    "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1460, 0, 254, 0),
-    'folders: B dragged onto A, Return': (1472, 0, 254, 0),
-    'folders: A (holding B) dragged to the trash, OK': (1460, 0, 254, 0),
-    'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1236, 668, 254, 0),
-    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1472, 0, 254, 0),
-    "files: View > Show as Text, the long file's line clicked": (1084, 0, 254, 486),
-    'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1236, 668, 254, 0),
-    'folder: deletes unconfirmed — the file dragged to the trash': (1460, 0, 254, 0),
-    'folder: deletes unconfirmed — the folder dragged to the trash': (1460, 0, 254, 0),
-    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1460, 0, 254, 0),
-    'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1336, 668, 260, 0),
-    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1472, 668, 254, 0),
-    'A: opened, drive A: dragged into its window, Return': (1424, 0, 260, 0),
-    'A: opened, the trash dragged into its window, Return': (1232, 0, 260, 0),
-    'drive A: dragged onto drive B:, Return': (1460, 0, 254, 0),
-    'the trash dragged onto drive A:, Return': (1460, 0, 254, 0),
-    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1460, 0, 254, 0),
-    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1212, 668, 254, 0),
-    'file: dragged to the trash, OK — then drive A: dragged into its window': (1288, 0, 260, 0),
-    'files: the right arrow clicked, then the left arrow clicked': (1140, 404, 260, 0),
-    "files: the window's sizer pulled up and left (smaller)": (1152, 650, 260, 0),
-    'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1140, 404, 260, 0),
-    "files: the window's right arrow gadget itself clicked (a column)": (1140, 404, 260, 0),
-    "files: the window's down arrow gadget itself clicked (a row)": (658, 404, 260, 0),
-    "files: the window's up arrow gadget clicked (a row)": (658, 404, 260, 0),
-    "files: the window's horizontal slider dragged right": (1176, 706, 260, 0),
-    'window: Esc typed (the top window read again)': (1164, 0, 240, 0),
-    'two windows: File > Close Window (one left on top)': (1448, 668, 254, 0),
-    'files: the window sized smaller, then its right arrow clicked': (1140, 404, 260, 0),
-    'files: the right arrow clicked, then the long file shown': (1372, 668, 254, 0),
-    'files: View > Sort by Size, then the long file shown': (1372, 668, 254, 0),
-    "files: View > Show as Text, then the long file's line shown": (1268, 668, 254, 486),
-    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1336, 668, 254, 0),
-    'two windows: View > Show as Text': (1156, 750, 254, 486),
-    'files: a fifth entry, then the down arrow gadget clicked (a row)': (658, 404, 260, 0),
-    "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1460, 0, 254, 486),
-    'text view: drive A: dragged to a bare spot of the desktop': (1328, 0, 254, 0),
-    "A: File > Format, the warning's OK (the FORMAT dialog)": (1248, 668, 254, 0),
-    'A: File > Format, OK, EXIT clicked': (936, 308, 254, 0),
+    'Desk > Desktop Info, Return': (1084, 668, 254, 0),
+    'Options > Set Preferences, Return': (1192, 668, 254, 0),
+    'Options > Save Desktop, Return': (964, 668, 254, 0),
+    'Options > Print Screen (its alert raised, not answered)': (964, 668, 254, 0),
+    "a key typed at the desk's idle": (562, 0, 240, 0),
+    'drive A: selected': (1184, 0, 254, 0),
+    'A: File > Show Info, Return': (1252, 668, 254, 0),
+    'A: Options > Install Disk Drive, Return': (1228, 668, 254, 0),
+    'A: Options > Install Disk Drive, Remove pressed': (1228, 668, 254, 0),
+    "A: Options > Install Disk Drive, 'C' typed, Install pressed": (1228, 668, 254, 0),
+    'A: File > Open': (1448, 668, 254, 0),
+    'A: File > Format, Return (the warning answered)': (980, 668, 254, 0),
+    'drive A: dragged to the trash, Return': (1412, 0, 254, 0),
+    'a rubber box on the desktop, round the trash': (1240, 0, 254, 0),
+    'A: opened': (1452, 0, 254, 0),
+    'window: View > Show as Text': (1116, 750, 254, 486),
+    'window: View > Sort by Size': (1116, 750, 254, 0),
+    'window: File > Close Window': (1404, 668, 254, 0),
+    'window: its closer clicked': (1360, 520, 260, 0),
+    'window: its fuller clicked': (1132, 520, 260, 0),
+    'window: A: opened again (two windows)': (1452, 0, 260, 0),
+    'file: selected': (1184, 0, 254, 0),
+    'file: File > Show Info, Return': (1268, 668, 254, 0),
+    "file: File > Show Info, Backspace, 'A', Return (renamed)": (1268, 668, 254, 0),
+    'file: File > Show Info, Read-Only pressed, Return': (1268, 668, 254, 0),
+    'file: read-only, dragged to the trash, OK — access denied, Return': (1412, 0, 254, 0),
+    'file: File > Open (the Show / Print / Cancel alert)': (1168, 668, 254, 0),
+    'file: shown, a key at its end': (1332, 308, 240, 0),
+    'file: double-clicked (the alert)': (1172, 0, 254, 0),
+    "file: dragged to the trash, Return (Cancel, the dialog's default)": (1412, 0, 254, 0),
+    'file: dragged to the trash, OK': (1412, 0, 254, 0),
+    "folder: File > New Folder, 'A', Return": (1296, 668, 254, 0),
+    'folder: the file dragged onto it, Return': (1424, 0, 254, 0),
+    'folder: opened': (1420, 0, 254, 0),
+    'folder: File > Close': (1444, 668, 254, 0),
+    'folder: selected, File > Show Info, Return': (1236, 668, 254, 0),
+    'folder: dragged to the trash, OK': (1412, 0, 254, 0),
+    'text view: A: opened': (1452, 0, 254, 486),
+    'text view: Options > Save Desktop, Return': (1260, 668, 254, 486),
+    'files: A: opened': (1452, 0, 254, 0),
+    "files: the window's down arrow clicked": (562, 706, 260, 0),
+    "files: the window's vertical bar clicked under its slider (a page)": (562, 706, 260, 0),
+    "files: the window's right arrow clicked": (1100, 404, 260, 0),
+    "files: the long file shown, a blank at each page's end and at its end": (1332, 668, 254, 0),
+    'files: the long file dragged onto the folder, Return': (1424, 0, 254, 0),
+    'files: the folder (not empty) dragged to the trash, OK': (1412, 0, 254, 0),
+    'files: the window made full': (1132, 520, 260, 0),
+    'files: the program selected, File > Show Info, Return': (1268, 668, 254, 0),
+    'files: the program selected, Options > Install Application, Return': (1296, 668, 254, 0),
+    'files: View > Show as Text': (1116, 750, 254, 486),
+    'window: its fuller clicked again (back to its size)': (1132, 520, 260, 0),
+    'files: the right arrow clicked, then the window made full': (1132, 520, 260, 0),
+    'files: the right arrow clicked, then View > Sort by Size': (1116, 750, 254, 0),
+    'window: View > Show as Icons (the view it has)': (1116, 750, 254, 0),
+    'window: Options > Save Desktop, Return': (1260, 668, 254, 0),
+    'files: the right arrow clicked, then Options > Save Desktop, Return': (1260, 668, 254, 0),
+    'a rubber box on the desktop, round drive B: and the trash': (1240, 0, 254, 0),
+    'drive A: dragged to a bare spot of the desktop': (1280, 0, 254, 0),
+    "drive A:'s object clicked at its corner, outside its image and its label": (670, 0, 254, 0),
+    'files: View > Sort by Size': (1116, 750, 254, 0),
+    'files: View > Sort by Date': (1116, 750, 254, 0),
+    'files: View > Sort by Type': (1116, 750, 254, 0),
+    'folder: the file dragged onto it again, Return — the name conflict, Return': (1424, 0, 254, 0),
+    "folder: dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as B)": (1412, 0, 254, 0),
+    'folders: B dragged onto A, Return': (1424, 0, 254, 0),
+    'folders: A (holding B) dragged to the trash, OK': (1412, 0, 254, 0),
+    'folder: Options > Set Preferences, copies unconfirmed (the lower No), Return': (1196, 668, 254, 0),
+    'folder: the file dragged onto it again, copies unconfirmed — the name conflict, Return': (1424, 0, 254, 0),
+    "files: View > Show as Text, the long file's line clicked": (1036, 0, 254, 486),
+    'folder: Options > Set Preferences, deletes unconfirmed (the upper No), Return': (1196, 668, 254, 0),
+    'folder: deletes unconfirmed — the file dragged to the trash': (1412, 0, 254, 0),
+    'folder: deletes unconfirmed — the folder dragged to the trash': (1412, 0, 254, 0),
+    "files: the folder dragged onto drive A:'s icon, Return — the name conflict, Backspace, 'B', Return (copied as AUTB)": (1412, 0, 254, 0),
+    'file: dragged to the trash, OK — then drive A: selected, File > Show Info, Return': (1296, 668, 260, 0),
+    "file: read-only — File > New Folder, 'A', Return, the file dragged onto it, Return": (1424, 668, 254, 0),
+    'A: opened, drive A: dragged into its window, Return': (1376, 0, 260, 0),
+    'A: opened, the trash dragged into its window, Return': (1184, 0, 260, 0),
+    'drive A: dragged onto drive B:, Return': (1412, 0, 254, 0),
+    'the trash dragged onto drive A:, Return': (1412, 0, 254, 0),
+    "file: dragged onto drive A:'s icon, Return — the name conflict, Return": (1412, 0, 254, 0),
+    "folder: File > New Folder again, 'A', Return — the name taken, Return": (1172, 668, 254, 0),
+    'file: dragged to the trash, OK — then drive A: dragged into its window': (1240, 0, 260, 0),
+    'files: the right arrow clicked, then the left arrow clicked': (1100, 404, 260, 0),
+    "files: the window's sizer pulled up and left (smaller)": (1112, 650, 260, 0),
+    'files: the right arrow clicked, then the horizontal bar left of its slider (a page)': (1100, 404, 260, 0),
+    "files: the window's right arrow gadget itself clicked (a column)": (1100, 404, 260, 0),
+    "files: the window's down arrow gadget itself clicked (a row)": (562, 404, 260, 0),
+    "files: the window's up arrow gadget clicked (a row)": (562, 404, 260, 0),
+    "files: the window's horizontal slider dragged right": (1136, 706, 260, 0),
+    'window: Esc typed (the top window read again)': (1112, 0, 240, 0),
+    'two windows: File > Close Window (one left on top)': (1408, 668, 254, 0),
+    'files: the window sized smaller, then its right arrow clicked': (1100, 404, 260, 0),
+    'files: the right arrow clicked, then the long file shown': (1332, 668, 254, 0),
+    'files: View > Sort by Size, then the long file shown': (1332, 668, 254, 0),
+    "files: View > Show as Text, then the long file's line shown": (1300, 668, 254, 486),
+    "files: File > New Folder, 'A', Return (a fifth entry: a second row)": (1296, 668, 254, 0),
+    'two windows: View > Show as Text': (1116, 750, 254, 486),
+    'files: a fifth entry, then the down arrow gadget clicked (a row)': (562, 404, 260, 0),
+    "text view: A: opened, the file's line dragged to the trash, Return (Cancel)": (1412, 0, 254, 486),
+    'text view: drive A: dragged to a bare spot of the desktop': (1280, 0, 254, 0),
+    "A: File > Format, the warning's OK (the FORMAT dialog)": (1208, 668, 254, 0),
+    'A: File > Format, OK, EXIT clicked': (952, 308, 254, 0),
     'A: File > Format, OK, FORMAT clicked (formatted)': (958, 0, 254, 0),      # 880 before band 6 slice F4
-    "A: formatted, the alert's OK, EXIT clicked": (936, 308, 254, 0),
-    "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1460, 308, 254, 0),
-    'drive A: onto drive B:, OK, then Return (EXIT, the default)': (936, 308, 240, 0),
-    'file: File > Open, Print clicked (the printer not ready)': (1372, 308, 254, 0),
-    'file: the printer not ready, Cancel': (1268, 308, 254, 0),
+    "A: formatted, the alert's OK, EXIT clicked": (952, 308, 254, 0),
+    "drive A: dragged onto drive B:, the alert's OK (the DISKCOPY dialog)": (1412, 308, 254, 0),
+    'drive A: onto drive B:, OK, then Return (EXIT, the default)': (952, 308, 240, 0),
+    'file: File > Open, Print clicked (the printer not ready)': (1332, 308, 254, 0),
+    'file: the printer not ready, Cancel': (1300, 308, 254, 0),
     'file: the printer not ready, Retry (not ready again)': (898, 0, 254, 0),  # 822 before band 6 slice F4
-    'file: the printer not ready, five seconds, Retry (printed)': (1268, 308, 254, 0),
-    'file: File > Open, five seconds, Print clicked (printed)': (1372, 308, 254, 0),
-    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1372, 668, 254, 0),
-    'a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)': (1460, 308, 254, 0),
-    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1500, 0, 254, 0),
-    'files: the long file shown, then the folder AUTO double-clicked in the restored window': (1468, 668, 254, 0),
-    'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1484, 668, 254, 0),
-    "Esc typed at the desk's idle (no window open)": (658, 0, 240, 0),
-    'drives A: and B: boxed, drive A: dragged onto drive B:, Return': (1288, 0, 254, 0),
-    "two windows: the lower one's title clicked (WM_TOPPED)": (1116, 366, 260, 0),      # band 6 W3a's prep
-    "two windows: the top one's title dragged lower (WM_MOVED)": (1128, 650, 260, 0),   # band 6 W3a's prep
+    'file: the printer not ready, five seconds, Retry (printed)': (1300, 308, 254, 0),
+    'file: File > Open, five seconds, Print clicked (printed)': (1332, 308, 254, 0),
+    'file: shown, a key at its end — the file clicked, File > Open, shown again': (1332, 668, 254, 0),
+    'a single-sided disk in drive B:, drive A: dragged onto it, OK, COPY clicked (not the same type)': (1412, 308, 254, 0),
+    "c: opened (LABELLED: F3 THE CARTRIDGE'S LINE A DRIVE)": (1452, 0, 254, 0),
+    'files: the long file shown, then the folder AUTO double-clicked in the restored window': (1420, 668, 254, 0),
+    'files: the long file shown, AUTO opened, its file shown, then File > Close in the restored window': (1444, 668, 254, 0),
+    "Esc typed at the desk's idle (no window open)": (562, 0, 240, 0),
+    'drives A: and B: boxed, drive A: dragged onto drive B:, Return': (1240, 0, 254, 0),
+    "two windows: the lower one's title clicked (WM_TOPPED)": (1076, 366, 260, 0),      # band 6 W3a's prep
+    "two windows: the top one's title dragged lower (WM_MOVED)": (1088, 650, 260, 0),   # band 6 W3a's prep
     'files: the program installed as TOS-takes parameters, double-clicked, Cancel (the OPEN APPLICATION dialog: no launch)':
-        (1460, 668, 254, 0),      # band 6 W3a's stage 2 (do_open, do_aopen C); 1,524 at stage 1, 1,534 at its diet (the ROM's 1,504)
+        # band 6 W3b (deskmain C: 1,460 before); W3a's stage 2 (do_open, do_aopen C); 1,524 at stage 1, 1,534 at its diet (the ROM's 1,504)
+        (1412, 668, 254, 0),
     # ---- band 6 W3a stage 1's fix pass ----
-    desk.FILLED_FOLDER_INFO: (1276, 668, 254, 0),                # the ROM's 1,350
-    desk.TTP_INSTALLED_THEN_ASKED_AGAIN: (1336, 668, 254, 0),    # the ROM's 1,290
+    desk.FILLED_FOLDER_INFO: (1236, 668, 254, 0),                # the ROM's 1,350
+    desk.TTP_INSTALLED_THEN_ASKED_AGAIN: (1296, 668, 254, 0),    # the ROM's 1,290
     # ---- end of W3a stage 1's fix pass ----
 }

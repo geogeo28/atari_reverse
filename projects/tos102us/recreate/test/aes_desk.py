@@ -1510,7 +1510,8 @@ OurStepped = namedtuple("OurStepped", "boot profile blob entered")
 OurStepped.__doc__ = """A step of ours: the `Boot` there, the step's `Profile` (`stepped`'s), `blob`, the cycles the
 blob's own span ran, and `entered` — `((an entry of our bound table that lies in the blob, the cycles at its first
 instruction), ...)` for each such entry the step ran (band 6 slice F1: a flipped routine's thunk, entered by the ROM's
-desk's own call word; since slice F3, a by-value caller's operand of ours too — `BY_VALUE_CALLERS`)."""
+desk's own call word; since slice F3, a by-value caller's operand of ours too — `BY_VALUE_CALLERS`; since band 6 W3b,
+each band-6 routine's C core's first instruction too — `our_cores`)."""
 
 
 def _our_entries_in_the_blob(blob):
@@ -1518,6 +1519,16 @@ def _our_entries_in_the_blob(blob):
     the blob: our entries, thunks and native."""
     bound = (*_table_of(blob.blob, blob.entry(transcription.LINEF_TABLE_SYMBOL) - blob.base), *bound_by_value(blob).values())
     return tuple(sorted({entry for entry in bound if blob.base <= entry < blob.end}))
+
+
+def our_cores(blob):
+    """`{a band-6 routine's start: the first instruction of its C core in `blob`}` — every routine of the band with a
+    core the blob links (band 6 W3b: once deskmain is ours no ROM caller is left on our walks, and a routine our C
+    alone calls is entered at its core, never through the table — the O4 re-reading of "its entry ran")."""
+    import routines as cores        # (the module's `routines()` is band 6's starts)
+    names = {getattr(addrs, name): name for name in dir(addrs) if name.startswith("AES_ROM_")}
+    found = {start: cores.core_symbol(names[start]) for start in routines() if start in names}
+    return {start: blob.entry(symbol) for start, symbol in found.items() if symbol in blob.symbols}
 
 
 def our_stop(name, blob=None):
@@ -1547,7 +1558,7 @@ def stepped_ours(boot, received, until=None, at=None, budget=STEP_INSNS):
             after = aes_boot.continued.derive(boot, tuple(received), budget, until, at)
         profile, blob = _profile_read(), emu.prof_cycles(ours.base, ours.end)
         assert (ours.base, ours.end) == (our_blob().base, our_blob().end), "a step of ours is of the shipped blob's machine"
-        entered = tuple((at, cycles) for at in _our_entries_in_the_blob(our_blob())
+        entered = tuple((at, cycles) for at in sorted({*_our_entries_in_the_blob(our_blob()), *our_cores(our_blob()).values()})
                         if (cycles := emu.prof_cycles(at, at + WORD_BYTES)))
     finally:
         emu.prof_enable(False)

@@ -10,6 +10,7 @@ Tier 3 row (`ROWS`) but men_update's boot arrival (`NOT_A_ROW`).
     READ BY NO CALLER (`aes_deskbind.answer_readers`).
 """
 import pytest
+from harness import make_image
 
 import aes
 import aes_boot
@@ -358,14 +359,22 @@ def test_men_update_s_boot_arrival_alone_runs_the_screen_manager_where_no_histor
     refuses menu_ienable's own boot arrival (`test_desk_bind.NOT_A_ROW`); every other arrival names no span of it."""
     import aes_switching
     import aes_takeover
+    import aes_desk_w3b as w3b
+    for label, (_where, kind) in w3b.ARRIVALS.items():     # deskmain's first entries note the boot stopped at its entry
+        if kind == w3b.FIRST_ENTRY:                         # (not `import test_desk_w3b`: it imports the registry, which
+            w3b.screen_manager_s_provenance(label)          # imports this module — `test_derived`'s hand-out order)
     for routine, chain, nth in AT_ARRIVALS:
         if routine != MEN_UPDATE:
             continue
         made = aes_switching.settled(da.switching_row(da.arrival(routine, chain, nth), door_user=False))
         assert aes_takeover.named_in(made.drops) == ((routine, chain, nth) in NOT_A_ROW), chain
         if (routine, chain, nth) in NOT_A_ROW:
-            with pytest.raises(aes_takeover.Refused, match="STANDS PARKED WHERE NO HISTORY OF OURS IS KNOWN TO LEAVE IT"):
-                aes_takeover.prepared(blob, made.pokes)
+            # SINCE BAND 6 W3b's FLIP a history of ours DOES leave the screen manager there: the boot stopped at
+            # deskmain's first entry (`aes_takeover.STOPPED_BOOTS`, deskmain's first-entry rows' provenance — men_update's
+            # boot arrival is inside that bring-up, the screen manager not run since). The arrival stays NOT A ROW, by
+            # name (unregistered here; a row of it is the orchestrator's to schedule); the takeover now prepares it.
+            state = aes_takeover.state_of(make_image(made.pokes))
+            assert state in aes_takeover.STOPPED_BOOTS and aes_takeover.prepared(blob, made.pokes), chain
 
 
 def test_every_case_at_an_arrival_of_a_flipped_routine_is_a_row_and_its_pins_are_the_switching_ones():

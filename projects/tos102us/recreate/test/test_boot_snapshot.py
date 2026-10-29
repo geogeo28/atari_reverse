@@ -357,6 +357,9 @@ import test_desk_w3a_stage2                                # noqa: E402,F401  (d
 # ---- band 6 W3a, stage 3 ----
 import test_desk_w3a_stage3                                # noqa: E402,F401  (the three dispatchers and the File menu, flipped: target-only)
 # ---- end of W3a stage 3's ----
+# ---- band 6 W3b ----
+import test_desk_w3b                                       # noqa: E402,F401  (deskmain, flipped: target-only rows of the parked kind)
+# ---- end of W3b's ----
 import test_aes_gemsuper                                 # noqa: E402,F401  (the opcode switch: LAST — it lifts the others' rows)
 import aes                                                  # noqa: E402
 

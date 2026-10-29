@@ -205,6 +205,49 @@
 #define AES_DESKMAIN_BLITMODE_SET_RETURN   0xfe2946 /* ...Blitmode(the Blitter preference) ($fe2944 LF_CALL trp14)   */
 #define AES_DESKMAIN_GDRV_RETURN           0xfe2a52 /* dos_gdrv's host return site ($fe2a50 LF_CALL dos_gdrv)        */
 
+/* ==== BAND 6 W3b: deskmain (`src/desk/desktop.c`), COMPILED FOR THE TARGET ALONE (the user's R3, the orchestrator's O1:
+ * no host twin) ===========================================================================================================
+ *   $fe272e deskmain()                       THE DESK: brought up — the AES joined, the desk's work area kept, its
+ *                                            buffers pointed, its resource and fourteen trees, the INF (app_start:
+ *                                            failed, the AES left and 0), the windows and the files' pools, the menu
+ *                                            shown (View's checks, the separator and — no drive — Save Desktop
+ *                                            disabled), the desktop built and drawn, the INF's windows opened again,
+ *                                            the Blitter item shown where Blitmode answers a blitter; then THE LOOP —
+ *                                            evnt_multi, and under wind_update the message, the key, the click each
+ *                                            handled IN THAT ORDER (a later one's answer the one kept) — until a
+ *                                            handler answers done; then the INF's windows kept and saved, the menu put
+ *                                            away, the AES left. 1 — or 0 where a resolution change was asked (the
+ *                                            current drive made again and checked, AES_DISK_USABLE := no GEMDOS error) */
+#define DESKMAIN_TREES        14         /* ini_tree's trees, the menu's first   ($fe27f8 cmpw #14,d6)           */
+#define DESKMAIN_GEM_LEFT     0          /* deskmain's word: app_start failed, or a resolution change asked
+                                          *                                     ($fe2806 clr.w d0, $fe2a72 clr.w d0) */
+#define DESKMAIN_DONE         1          /* ...the desk left for a built-in or a program ($fe2a78 moveq #1,d0)  */
+#define DESKMAIN_NOT_DONE     0          /* the loop's word before a handler's   ($fe2982 clr.w d5)             */
+/* evnt_multi's question: a key, a click, a message — two clicks at most, the left button down */
+#define DESKMAIN_EVENTS       (EV_MU_KEYBD | EV_MU_BUTTON | EV_MU_MESAG) /* ($fe2980 moveq #19,d4)               */
+#define DESKMAIN_CLICKS       2          /* ($fe29ce move.w #2,-(sp))                                            */
+#define DESKMAIN_BUTTON_MASK  1          /* ($fe29c8 move.l #$00010001: the mask, then the state)                */
+#define DESKMAIN_BUTTON_STATE 1
+/* the menu as the desk brings it up */
+#define MENU_SHOWN            1          /* menu_bar's `show`                   ($fe2816 move.w #1,(sp))        */
+#define MENU_PUT_AWAY         0          /* ...its tree 0 and `show` 0          ($fe2a34 clr.w (sp), clr.l -(sp)) */
+#define MENU_ITEM_CHECKED     1          /* menu_icheck's `check`               ($fe2872 move.w #1,(sp))        */
+#define VIEW_SEPARATOR        31         /* the View menu's line between the views and the sorts ($fe2848 #$001f0008) */
+#define OB_CHANGE_NO_REDRAW   0          /* ob_change's `redraw`                 ($fe282c clr.w (sp))            */
+#define PREFERENCE_ON         1          /* the first two preferences' word      ($fe2898 move.w #1,8118(a5))    */
+#define NEWDESK_ROOT          1          /* wind_set WF_NEWDESK's root object    ($fe28ba move.w #1,-(sp))       */
+#define NEWDESK_ZERO          0          /* ...and its last word                ($fe28b8 clr.w (sp))            */
+#define APP_SAVE_KEPT         0          /* app_save's word: the INF kept, not written ($fe2a30 clr.w (sp))      */
+/* THE BLITTER ITEM: Blitmode(-1) asked, and where its answer has a blitter the Options box made two lines longer —
+ * its last child the Blitter item past the line under Print Screen —, the item's check the INF's preference and
+ * Blitmode set to it; with none the box ends at Print Screen (its next the box) */
+#define BLITMODE_ASK          (-1)       /* ($fe28e2 move.w #-1,(sp))                                            */
+#define BLITMODE_BLITTER_BIT  0x0002     /* Blitmode's answer: a blitter there   ($fe28f0 btst #1,d5)            */
+#define OPTIONS_BOX           36         /* the Options menu's box               ($fe28fa adda.l #868: 36's ob_tail) */
+#define OPTN_BLITTER_LINE     43         /* the line before the Blitter item     ($fe290e move.w #43, 42's ob_next) */
+#define OPTIONS_LINES_BLITTER 8          /* the box's height in character lines   ($fe2918 asl.w #3,d0)           */
+#define OPTIONS_LINES_NONE    6          /* ($fe296c muls.w #6,d0)                                              */
+
 #ifndef __ASSEMBLER__
 #include <stdint.h>
 
@@ -225,6 +268,8 @@ int16_t aes_hndl_msg(uint8_t *image);                                           
 int16_t aes_hndl_menu(uint8_t *image, int16_t title, int16_t item);                              /* $fe22ce */
 int16_t aes_do_filemenu(uint8_t *image, int16_t item);                                           /* $fe1e80 */
 int16_t aes_hndl_button(uint8_t *image, int16_t clicks, int16_t x, int16_t y, int16_t button, int16_t keys); /* $fe2172 */
+/* band 6 W3b: target-only */
+int16_t aes_deskmain(uint8_t *image);                                                            /* $fe272e */
 #endif
 #endif
 

@@ -103,7 +103,9 @@ def test_every_row_s_machine_is_one_a_history_of_ours_reaches(blob):
     blob), two spans whose live part is not the ROM's."""
     states = {takeover.state_of(make_image(held.pokes)) for held in _rows_with_the_screen_manager_ours().values()}
     (boot, _booted), = takeover.the_boot_s().items()
-    assert boot in states and states - {boot} == set(takeover.PROVENANCE) and len(takeover.PROVENANCE) == 3
+    # (...and since band 6 W3b, THE BOOT STOPPED AT deskmain's FIRST ENTRY: its first entries' rows', one state)
+    assert boot in states and states - {boot} == set(takeover.PROVENANCE) | set(takeover.STOPPED_BOOTS)
+    assert len(takeover.PROVENANCE) == 3 and len(takeover.STOPPED_BOOTS) == 1
     for held in _rows_with_the_screen_manager_ours().values():
         image = make_image(held.pokes)
         made, at = takeover.prepared(blob, held.pokes), takeover.spans_of(image)
@@ -142,7 +144,7 @@ def test_the_rows_with_the_screen_manager_ours_are_those_whose_run_enters_it_and
     its handler (`aes_ctlmgr.HANDLED`), where the two spans are classes each such row names."""
     ours, switching_rows = _rows_with_the_screen_manager_ours(), aes_event.every_switching_row()
     enters = {name for name, held in switching_rows.items() if held.switches.process != SM and SM in held.entered}
-    assert set(ours) == enters and len(ours) == 33
+    assert set(ours) == enters and len(ours) == 38      # (33 before band 6 W3b: + deskmain's five first entries)
     assert not [name for name, held in switching_rows.items() if held.row.the_rom_s_screen_manager]
     assert not [name for name, held in switching_rows.items() if held.switches.process == SM and name in ours]
     pinned = {name for name in aes_turns_pinned.PINNED if not name.startswith(its_own.cm.SYMBOL)}
@@ -483,7 +485,7 @@ def test_how_each_row_leaves_our_screen_manager_parked_is_what_status_says(name)
     message written, the lock queued on); FOUR end where a noted run left it and are held to our build's own run to
     that state; EVERY OTHER ends ELSEWHERE — our screen manager's final saved context and live frames on those rows
     are compared with nothing, and vetted only by the runs that wake it again from a park of that kind."""
-    held = aes_event.SWITCHING_ROWS[name]
+    held = aes_event.every_switching_row()[name]
     blob = tier3().shipped_bench()
     for state in takeover.PROVENANCE:                   # ...every state a row begins from, made first (READ in a run)
         takeover.left_as_ours(blob, state) or takeover.made_for(state, blob)

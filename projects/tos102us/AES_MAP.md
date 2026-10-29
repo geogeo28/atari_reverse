@@ -435,6 +435,9 @@ at `0xFE3922`), not a generic ISP; `0x9488+0xC4` = the irq handlers' private sta
   W3b PREP (2026-10-27): deskmain `FE272E` declared `() -> word` target-only and held the ROM's (DECLARED_NOT_LINKED);
   sh_main's call bound through the desk door (`DESK_DOOR_BOUND_AES_ROM_DESKMAIN`); return sites named `FE28EC` / `FE2946`
   (Blitmode asked / set) and `FE2A52` (dos_gdrv); desk-block a_fcb1 +8004 / a_fcb2 +8044 named.
+  W3b FLIP (2026-10-28): deskmain `FE272E` written in C and flipped (target-only, `aes_deskmain` in desktop.c); its
+  Line-F entry `$f9bc` the thunk `linef_to_aes_deskmain`, sh_main's desk door bound to it. Band 6's ROM's still: the
+  cartridge pair `FED554` / `FED5C2` (W6-R8) alone.
 Cross-deps: band 1 ob_change/ob_draw → band 2; fm_*/mn_*/gr_* loops → band 4's ev_*; desk bindings → everything; the forker map
 spans bands 4/2 (mchange draws the cursor via `FED412` → saved USER_CUR).
 
