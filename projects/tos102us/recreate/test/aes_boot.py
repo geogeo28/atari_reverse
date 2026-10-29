@@ -301,7 +301,14 @@ FLOPRD_BUFFER_AT, FLOPRD_DEVICE_AT, FLOPRD_SECTOR_AT, FLOPRD_TRACK_AT, FLOPRD_SI
 # disk in again. Where the modes lie is read out of that instruction.
 FLOPPY_MODE_LOAD = 0xfc12e6             # Rwabs's `movea.l #<the modes>,a1`, the drive number then added
 MOVEA_L_IMMEDIATE_A1 = 0x227c
-MEDIA_UNCHANGED, MEDIA_CHANGED = addrs.MEDIACH_UNCHANGED, addrs.MEDIACH_CHANGED
+MEDIA_UNCHANGED, MEDIA_MAYBE, MEDIA_CHANGED = addrs.MEDIACH_UNCHANGED, addrs.MEDIACH_MAYBE, addrs.MEDIACH_CHANGED
+# ...and THE DRIVE'S WRITE-PROTECT LATCH, which the ROM's Getbpb reads as it ends a change ($fc113e..$fc116c): it copies
+# the latch (a byte of the floppy's vertical-blank service, in the capture's mask) into its copy beside it and stores
+# the mode MAYBE where the latch is set. THE MODEL DOES NOT (the user's ruling, 2026-10-29: "Keep the limit" — a
+# machine independent of capture noise): `Floppy._getbpb`. Where both lie is read out of Getbpb's two instructions.
+FLOPPY_LATCH_COPY_LOAD = 0xfc113e       # Getbpb's `movea.l #<the latches' copies>,a0`, the drive number then added
+FLOPPY_LATCH_LOAD = 0xfc114a            # ...and its `movea.l #<the latches>,a1`, the same
+MOVEA_L_IMMEDIATE_A0 = 0x207c
 # The nine words of a BPB, from a boot sector (little-endian, `st_build`'s offsets): what the ROM's Getbpb computed
 # when it logged the disk in, and what its record for the drive must hold for the disk served to be that disk.
 BOOT_SECTOR_BPB = struct.Struct("<HBHBHHBHH")       # bytes/sector, sectors/cluster, reserved, FATs, root entries,
@@ -428,6 +435,12 @@ def driver_boot_sector(memory):
 def driver_mode(memory):
     """...and the byte the driver keeps drive A:'s media-change mode in — read out of Rwabs's own instruction."""
     return _operand_of(memory, FLOPPY_MODE_LOAD, MOVEA_L_IMMEDIATE_A1, "its media-change modes") + DRIVE_A
+
+
+def driver_latches(memory):
+    """...and the bytes the ROM's Getbpb copies drive A:'s write-protect latch from and into: `(the latch, its copy)`."""
+    return (_operand_of(memory, FLOPPY_LATCH_LOAD, MOVEA_L_IMMEDIATE_A1, "its write-protect latches") + DRIVE_A,
+            _operand_of(memory, FLOPPY_LATCH_COPY_LOAD, MOVEA_L_IMMEDIATE_A0, "its write-protect latches' copies") + DRIVE_A)
 
 
 def geometry_of(boot_sector):
@@ -589,9 +602,10 @@ class Floppy:
         drive's record off it (`record_spans`) and ends any change. For the disk the machine logged in the record's
         bytes are the ones it holds and are not laid again — the desk's forced change of A:, GEMDOS's Mediach answered
         so, and the disk copy's own Getbpb of its source; a disk the formatter rewrote, or drive B:'s first, is logged
-        in. (It leaves the mode MAYBE where the drive's write-protect latch is set — a byte of the capture's mask this
-        model does not read: UNCHANGED is stored, and a latched drive's next transfer would compare the serial and
-        find the same disk.)"""
+        in. THE LIMIT, KEPT BY RULING (2026-10-29, "Keep the limit"): the ROM's copies the drive's write-protect latch
+        beside it and leaves the mode MAYBE where it is set (`driver_latches`) — a byte of the capture's mask this
+        model does not read: UNCHANGED is stored, the copy untouched, and a latched drive's next transfer would
+        compare the serial and find the same disk. Pinned by name in `test_aes_devices.py`."""
         device = self._word(sp + DEVICE_AT)
         disk, record = self._disk_of(GETBPB, device), self._record_of(device)
         for at, data in record_spans(disk):

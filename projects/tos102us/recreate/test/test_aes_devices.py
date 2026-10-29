@@ -30,6 +30,7 @@ A, B = aes_boot.DRIVE_A, aes_boot.DRIVE_B_DEVICE
 SECTOR = st_build.SECTOR_BYTES
 BUFFER, STACK, SKEW = 0x60000, 0x6f000, 0x6e000     # free RAM of the DESKTOP.INF capture (held: `free_ram_of`)
 STACK_BELOW = 0x400                     # how deep a routine's own frames go under its stack pointer, at most
+STACK_BAND = range(STACK - STACK_BELOW, STACK + LONG_BYTES * 4)    # ...and the frame the battery lays above it
 RETURNED_TO = 0x6f800                   # the return address a ROM run is stopped at on arrival: never executed
 ROM_RUN_INSNS = 200_000
 SUPERVISOR_MASKED = aes_boot.SR_SUPERVISOR | addrs.SR_IPL_MASK
@@ -85,7 +86,19 @@ def rom_s_own(memory, floppy, function, frame):
 def outside_the_stack(memory):
     """The megabyte less the band a routine's own frames are pushed in."""
     ram = bytes(memory[:aes_boot.RAM_BYTES])
-    return ram[:STACK - STACK_BELOW], ram[STACK + LONG_BYTES * 4:]
+    return ram[:STACK_BAND.start], ram[STACK_BAND.stop:]
+
+
+def differing_outside_the_stack(one, other):
+    """The addresses outside the stack's band at which two machines differ."""
+    return {at for at in range(aes_boot.RAM_BYTES) if one[at] != other[at] and at not in STACK_BAND}
+
+
+def getbpb_answers_of(ours, theirs, device, in_b):
+    """Getbpb of `device`, the model's served over `ours` and the ROM's own run in place over `theirs` (drive B:
+    holding `in_b`): `[ours, theirs]`, D0 of each."""
+    return [run(memory, aes_boot.Floppy(memory, aes_boot.inf_disk_of(), in_b), aes_boot.GETBPB, struct.pack(">H", device))
+            for run, memory in ((served, ours), (rom_s_own, theirs))]
 
 
 def floprd_frame(buffer, device, sector, track, side, count):
@@ -297,17 +310,59 @@ def test_the_disk_formatted_single_sided_is_a_new_boot_sector_two_empty_fats_an_
 def test_a_served_getbpb_stores_what_the_rom_s_own_getbpb_stores_over_the_served_floprd(which):
     """THE ROM'S GETBPB RUN IN PLACE — its Floprd of the boot sector the model's — and the model's Getbpb served at
     the entry, over the same machine: the same answer, and the same megabyte outside the routine's own stack (the
-    drive's record, BPB, geometry and serial; the driver's boot-sector buffer; the mode; the write-protect copy)."""
+    drive's record, BPB, geometry and serial; the driver's boot-sector buffer; the mode; the write-protect copy).
+    OVER LATCHES STAGED CLEAR (`with_the_latches_clear`): the model reads none (the limit, pinned below), and a capture
+    may hold one set — a fresh one has held drive B:'s."""
     device, in_b = {"drive B:'s first log-in, a blank disk": (B, aes_boot.blank_disk()),
                     "drive B:'s first log-in, a disk formatted single-sided": (B, desk.walked(desk.FORMATTED).machine.boot.disk),
                     "drive A:'s own disk, read again": (A, None)}[which]
-    ours, theirs = inf_memory(), inf_memory()
-    answers = [run(memory, aes_boot.Floppy(memory, aes_boot.inf_disk_of(), in_b), aes_boot.GETBPB, struct.pack(">H", device))
-               for run, memory in ((served, ours), (rom_s_own, theirs))]
+    ours, theirs = (with_the_latches_clear(inf_memory()) for _ in range(2))
+    answers = getbpb_answers_of(ours, theirs, device, in_b)
     assert answers[0] == answers[1] == aes_boot.driver_record(ours) + device * aes_boot.FLOPPY_BPB_RECORD_BYTES
     assert outside_the_stack(ours) == outside_the_stack(theirs)
     if device == B:
         assert bytes(ours[answers[0]:answers[0] + aes_boot.FLOPPY_RECORD_FLAGS]) == aes_boot.bpb_of(in_b)[:aes_boot.FLOPPY_RECORD_FLAGS]
+
+
+# THE WRITE-PROTECT LATCHES, A LABELLED STAGING: each drive's latch and the ROM's Getbpb's copy of it laid clear (one
+# latch set where a test names its drive) — where they lie read out of Getbpb's own instructions
+# (`aes_boot.driver_latches`: $9f8, $9fa).
+WRITE_PROTECTED, NOT_PROTECTED = 0xff, 0x00     # a latch as the floppy's vertical-blank service leaves it (captures hold both)
+
+
+def latch_bytes(memory, device):
+    """`(the latch, its copy)` of drive `device`."""
+    return tuple(at + device - A for at in aes_boot.driver_latches(memory))
+
+
+def with_the_latches_staged(memory, latched_device=None):
+    """STAGED: both drives' latches and copies clear, but drive `latched_device`'s latch set (its copy clear)."""
+    for device in (A, B):
+        latch_at, copy_at = latch_bytes(memory, device)
+        memory[latch_at], memory[copy_at] = WRITE_PROTECTED if device == latched_device else NOT_PROTECTED, NOT_PROTECTED
+    return memory
+
+
+def with_the_latches_clear(memory):
+    return with_the_latches_staged(memory)
+
+
+@pytest.mark.parametrize("device", (A, B), ids=("drive A:", "drive B:"))
+def test_the_limit_kept_a_served_getbpb_reads_no_write_protect_latch_where_the_rom_s_own_getbpb_does(device):
+    """THE LIMIT, BY NAME (the user's ruling, 2026-10-29: "Keep the limit"): with the drive's latch set, the ROM's
+    Getbpb copies it beside it and leaves the drive's mode MAYBE; the model's leaves the copy and stores UNCHANGED —
+    and THOSE TWO BYTES are all the two machines differ in. Both drives are staged here (the battery runs the ROM's
+    Getbpb of either). A latched drive's NEXT transfer is not pinned: the model answers Mediach of drive A: alone
+    and holds no MAYBE, so what the ROM's serial re-check would do there is outside the model, by the same ruling."""
+    ours, theirs = (with_the_latches_staged(inf_memory(), latched_device=device) for _ in range(2))
+    in_b = aes_boot.blank_disk() if device == B else None
+    answers = getbpb_answers_of(ours, theirs, device, in_b)
+    assert answers[0] == answers[1]
+    _latch_at, copy_at = latch_bytes(ours, device)
+    mode_at = aes_boot.driver_mode(ours) + device - A
+    assert differing_outside_the_stack(ours, theirs) == {copy_at, mode_at}
+    assert (theirs[copy_at], theirs[mode_at]) == (WRITE_PROTECTED, aes_boot.MEDIA_MAYBE)
+    assert (ours[copy_at], ours[mode_at]) == (NOT_PROTECTED, aes_boot.MEDIA_UNCHANGED)
 
 
 def formatted_memory():

@@ -7049,6 +7049,54 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       desk_alloc clears the desk's 19,094-byte globals before every entry and nothing the bring-up calls before the
       store writes the word (measured zero at all ten arrivals, `test_desk_w3b.py`); the D0 = 0 arms (U2) and the
       blitter-present arm (O6), as ruled.
+  - **BAND 6's BOUNDARY — THE FROM-EMPTY GATE OVER FRESH CAPTURES, THE `$90c` PHASE OVER THE KEPT SET; THREE
+    CAPTURE- OR INVOCATION-SENSITIVE TESTS FOUND AND FIXED, TESTS ONLY** (2026-10-29, at HEAD `154875d`; the checks
+    `scratchpad/b6/BOUNDARY/handback.md`, each in a private copy of the tree; the fix slice one author alone in the
+    shared tree, `scratchpad/b6/BFIX/handback.md`). THE USER'S RULING (2026-10-29), quoted: **"Keep the limit"** — (b):
+    the served Getbpb keeps ignoring the write-protect latch (the existing, documented limit); the comparison with the
+    ROM's Getbpb stages the latches clear, a labelled staging named in the test; a second test pins the limit by name;
+    the noise test stays as it is; machines stay independent of capture noise.
+    - THE FRESH RUN: `make gates FRESH=1` (no `build/`, no `kept/`; `GUARDED_PYTEST_ARGS="-n 8"`): all six captures
+      made again by Hatari, phase `$93a`, preinit-twice passed; **4 failed / 34,473 passed / 8 skipped**; the ROM build
+      rc 0; tier3.txt `f72ea6c3` byte-identical to HEAD's (9,354 lines), both blobs, `libtos102us.so`, all 172 shipped
+      objects and `TOS102RC.IMG` byte-identical to the shared build's.
+    - THE `$90c` PHASE, ON THE KEPT SET: band 5's `$90c` capture set (`scratchpad/b5/W2/F/p90c`) was DELETED by the
+      periodic `/tmp` cleaner (its directories left, every file gone). The shared tree's own kept snapshot IS savptr
+      `$90c` (the long at `$4a2`), so the whole suite over the kept set is that phase's run: `make test` rc 0, 34,477
+      passed / 8 skipped, tier3.txt and every product identical. The default gates have run over a `$90c` snapshot
+      since 2026-10-16.
+    - THE THREE REDS (four cases), NONE A DEFECT OF THE SHIPPED CODE, AND THEIR FIXES:
+      (1) `test_makefile`'s gate-workers test read `-n 8`: make exports a command-line variable into its recipes'
+      environment, so a gate run naming `GUARDED_PYTEST_ARGS` leaked into the inner `make -n gates` — `_MAKE_S_OWN`
+      now holds `GUARDED_PYTEST_ARGS` and `PYTEST_ARGS` (red before, green after, with either in the environment).
+      (2) `test_aes_devices`'s Getbpb comparison, drive B:'s two cases: the FRESH inf capture holds drive B:'s
+      write-protect latch SET (`$9f8..$9fb` = `00 ff 00 ff`), and the ROM's Getbpb (`$fc113e..$fc116c`, read) copies
+      the latch to `$9fa+drive` and leaves the mode MAYBE where it is set — one byte, `$755b`. BY THE RULING the model
+      keeps the limit: the comparison now runs over the latches STAGED CLEAR (`with_the_latches_clear`, where they
+      lie read out of Getbpb's own operands, `aes_boot.driver_latches`), and
+      `test_the_limit_kept_a_served_getbpb_reads_no_write_protect_latch_where_the_rom_s_own_getbpb_does` pins the
+      limit by name on drives A: and B: (the battery runs the ROM's Getbpb of either): latched, the two machines
+      differ in exactly the copy and the mode — the ROM's `ff` / MAYBE, ours untouched / UNCHANGED. Not pinned, by
+      the same ruling: a latched drive's NEXT transfer (the model answers Mediach of A: alone and holds no MAYBE).
+      Option (a), the model reading the latch, was tried first and REDDENED
+      `test_the_inf_machine_depends_on_no_byte_the_capture_does_not_reproduce` (drive A:'s mode `$755a` moved under
+      the noise: the latch is a byte of the mask) — the reason for the ruling.
+      (3) `test_aes_desk_rom`'s COPY clicked (copied): the copy's random serial `ce 23 c7` shared its middle byte
+      with the source's `ec 23 6d`, and the predicate pinned five fixed offsets. It now asks: every difference within
+      the serial and the checksum word (`COPY_MAY_DIFFER_AT`), the serial NEW, and the copy's boot-sector sum
+      Protobt's for an unbootable sector (`PROTOBT_UNBOOTABLE_SUM`, `$1234 + 1`; the real copy's `$1235` on both sets)
+      — the copy's boot sector the source's with a new serial, fixed but for which serial bytes coincide. (The fix's
+      first form, a set derived from the differing bytes, let a stale checksum through; review RBF caught it.)
+    - MUTANTS, all KILLED (`scratchpad/b6/BFIX/mutants_item2.txt`, `item3_*.txt`): on the FRESH copy, the staging
+      removed → drive B:'s two comparison cases red; the limit pin inverted → both drives red; the model following
+      the latch → both drives' limit pins red; on both capture sets (`item3_rbf_f2.txt`, `item3_rbf_f1.txt`), the
+      COPY predicate over the real copy → True; a stale checksum, a stale checksum HIGH byte alone, the serial left
+      unchanged (checksum recomputed) and a byte past the boot sector → False; a coinciding serial byte with its
+      checksum recomputed → True — and with the predicate's checksum clause removed (a file mutant, restored and
+      hash-verified) both stale-checksum copies read True: the clause is what refuses them.
+    - SUITES: the whole suite over the FRESH set (a private copy, `make test PYTEST_ARGS="-n 8"`): 34,479 passed /
+      8 skipped, rc 0, phase `$93a`, every capture unchanged by it; the from-empty `make test` on the shared tree:
+      34,479 passed / 8 skipped, rc 0, phase `$90c` (`## Suite`). No source, object, blob or tier3 line moved.
 * **Next** — BAND 4 IS CLOSED BY STEP R (its entry, above): the event layer and the scheduler are C on both builds, all
   eight of the door's entries are rebound, every blocking entry and every session is blocked-then-woken on both
   blobs, the event tape's two routines are in C — and the machinery the flips stood on is retired (the nested run
@@ -8545,10 +8593,16 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (BAND 6 W3b's FLIP, the last suite run; `make guarded` collects the same ids — the gate
-is the orchestrator's): **34,477 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (BAND 6's BOUNDARY fix slice, the last suite run; `make guarded` collects the same ids — the gate
+is the orchestrator's): **34,479 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BAND 6's BOUNDARY, ITS FIX SLICE (2026-10-29, alone in the shared tree; the wave log's entry): `make test`
+  (`PYTEST_ARGS="-n 8"`), `build/*.so`, `build/bench*` and every `__pycache__` moved aside first: 34,487 collected,
+  **34,479 pass**, rc 0, phase `$90c` (the kept set) (`scratchpad/b6/BFIX/final_make_test.log`, 15 m 32 s of pytest);
+  tier3.txt `f72ea6c3`, `libtos102us.so` and both blobs byte-identical to the set-aside build. The same suite over the
+  FRESH set (phase `$93a`, a private copy): 34,479 passed / 8 skipped, rc 0. RE-SUMMED against the W3b flip's fix
+  pass's 34,485: +2 `test_aes_devices.py` (the limit kept, drives A: and B:) — 34,487, the suite's own count.
 - BAND 6 W3b's FLIP, ITS FIX PASS AFTER REVIEW RW3F (2026-10-29, alone in the shared tree): `make test`
   (`PYTEST_ARGS="-n 8"`), `build/*.so`, `build/bench*` and every `__pycache__` moved aside first: 34,485 collected,
   **34,477 pass against this STATUS** (`scratchpad/b6/W3b/FLIP/final_fix_make_test.log`, 14 m 56 s of pytest; the

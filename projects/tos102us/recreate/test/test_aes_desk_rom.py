@@ -332,8 +332,15 @@ LEFT_BEHIND = {
 # engine's CR LF: `$fed6b4`, `$fed6bc`) or nothing printed
 PRINT_ENDS_WITH = b"\r\n"
 BOOT_SECTOR_CHECKSUM_AT = st_build.SECTOR_BYTES - WORD_BYTES
-COPY_DIFFERS_AT = {*range(st_build.BOOT_SERIAL_AT, st_build.BOOT_SERIAL_AT + st_build.BOOT_SERIAL_BYTES),
-                   *range(BOOT_SECTOR_CHECKSUM_AT, st_build.SECTOR_BYTES)}
+
+
+# A copy may differ from its source in the boot sector's serial (a new random one, any byte of which can coincide with
+# the source's) and its checksum word, and nowhere else...
+COPY_MAY_DIFFER_AT = frozenset((*range(st_build.BOOT_SERIAL_AT, st_build.BOOT_SERIAL_AT + st_build.BOOT_SERIAL_BYTES),
+                                *range(BOOT_SECTOR_CHECKSUM_AT, st_build.SECTOR_BYTES)))
+# ...and its checksum is Protobt's for a sector that must NOT be executable: the magic sum broken by one (the ROM's
+# `addq.w #1,(buf + 510)` after storing `BOOT_EXECUTABLE_SUM - sum`, as `src/xbios/protobt.c` transcribes it).
+PROTOBT_UNBOOTABLE_SUM = st_build.ATARI_BOOT_EXECUTABLE_SUM + 1
 
 
 def formatted_single_sided_and_logged_in(chain):
@@ -343,8 +350,14 @@ def formatted_single_sided_and_logged_in(chain):
 
 
 def copied_onto_drive_b(chain):
+    """The source, the inf disk, copied onto drive B: — every byte the same but the serial and the checksum, the serial
+    NEW and the checksum Protobt's: so the copy's boot sector is the source's with a new serial, fixed but for which of
+    the serial's bytes happen to coincide."""
     source, copy = chain.machine.boot.disk, chain.machine.boot.drive_b
-    return {at for at in range(len(source)) if source[at] != copy[at]} == COPY_DIFFERS_AT and source == aes_boot.inf_disk_of()
+    differs = {at for at in range(len(source)) if source[at] != copy[at]}
+    return (differs <= COPY_MAY_DIFFER_AT and accessory_disk.serial_of(copy) != accessory_disk.serial_of(source)
+            and st_build.boot_checksum(copy[:st_build.SECTOR_BYTES]) == PROTOBT_UNBOOTABLE_SUM
+            and source == aes_boot.inf_disk_of())
 
 
 def printed(chain):

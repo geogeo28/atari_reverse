@@ -267,9 +267,11 @@ def test_the_tools_that_make_the_captures_import_no_test_module():
 _GATE_SUITE = re.compile(r"cache_dir=\S+/(test|guarded)\.cache (.*?) (?:-p recreate_kit\.guarded_image )?test >")
 _PYTEST_RUN = re.compile(r"-m pytest\b")
 # What a make AROUND this process hands every make below it: a gate's command-line variables (`FRESH=1`,
-# `GUARDED_PYTEST_ARGS=...`) reach its sub-makes through MAKEFLAGS, and `FRESH` exports the derivations' root — each
-# would answer for the defaults asked here.
-_MAKE_S_OWN = ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "FRESH", "AES_DERIVED_ROOT")
+# `GUARDED_PYTEST_ARGS=...`) reach its sub-makes through MAKEFLAGS, `FRESH` exports the derivations' root, and make
+# exports every command-line variable into its recipes' environment — so a gate run as `make gates
+# GUARDED_PYTEST_ARGS="-n 8"` (or `make test PYTEST_ARGS=...`) hands it to this process. Each would answer for the
+# defaults asked here.
+_MAKE_S_OWN = ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "FRESH", "AES_DERIVED_ROOT", "GUARDED_PYTEST_ARGS", "PYTEST_ARGS")
 
 
 def _make(*arguments, environment=None, probe=None, check=True):
