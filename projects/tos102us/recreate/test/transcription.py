@@ -219,7 +219,13 @@ def transcription_routine(symbol):
 # whose place in the blob is then the exact value, with `target_anchor` None. And ONE reference is REBOUND (`rebound`,
 # band 6's binding): the Line-F handler's table operand names OUR call table where the ROM's names its own — whose
 # first bytes lie in a pinned region (what gem_entry copies) — by design another object than the transcription.
-Relocated = namedtuple("Relocated", "width target_anchor why base thunk rebound", defaults=(None, None, False))
+# And a reference may reach THE ROM'S OWN BYTES IN PLACE (`in_place`, boot B1; the orchestrator's call under the user's
+# ruling "ROM-window overlay"): its target is the ROM address the ROM's own word names, read or entered where it lies —
+# ROM code no transcription holds (the boot head's memory-valid check, bank test, sync wait) or ROM data (D11 open:
+# each an obligation in its component's census). Refused for a target any battery byte-pins (it must reach the
+# transcription) and for one outside the ROM.
+Relocated = namedtuple("Relocated", "width target_anchor why base thunk rebound in_place",
+                       defaults=(None, None, False, False))
 PC_RELATIVE = WORD_BYTES
 ABSOLUTE = LONG_BYTES
 
@@ -249,8 +255,11 @@ def _relocation_target(at, relocation):
 
 def _relocated_value(at, placed_at, relocation):
     """The exact bytes the reference at ROM address `at`, placed at blob address `placed_at`, must hold:
-    the ROM's own reference followed to its target, and that target's place in the blob — or the thunk's."""
-    if relocation.thunk:
+    the ROM's own reference followed to its target, and that target's place in the blob — or the thunk's, or the ROM
+    target itself where it lies (`in_place`)."""
+    if relocation.in_place:
+        target = _relocation_target(at, relocation)
+    elif relocation.thunk:
         target = bench().entry(relocation.thunk)
     else:
         target = transcribed_address(relocation.target_anchor, _relocation_target(at, relocation))
@@ -266,17 +275,25 @@ def _relocated_value(at, placed_at, relocation):
 # region out contiguously and the pin proves it did. A reference into bytes nobody pins would be a value
 # computed against a layout nobody checked (`text_raster.S`'s `lea` of raster.S's fringe table is the case
 # that asks it).
-Region = namedtuple("Region", "lo hi anchor entries", defaults=((),))
+Region = namedtuple("Region", "lo hi anchor entries laid", defaults=((), None))
 PINNED_REGIONS = []
+# A REGION PINNED AT ITS LAID ADDRESS (boot B1; the user's rulings "ROM-window overlay" and "Own link rule"): a `.S` no
+# Tier 3 blob links, linked by a rule of its own at the address it RUNS at (`Laid.at`, its first byte) — the boot head,
+# laid over a copy of the ROM window. `blob` answers `(base, bytes)` of the product that holds it, read when the pin
+# runs (never at import). Its references are measured from where it is laid, and may only reach the ROM in place: a
+# reference into a Tier 3 blob's region would be computed against a layout this product does not share.
+Laid = namedtuple("Laid", "at blob")
 # A battery that declares a region calls `pinned_region(` by that name, whatever it imported it as — the marker
 # `every_pinned_region` imports a test module by (`every_pinned_region(` itself is not one).
 _DECLARES_A_REGION = re.compile(r"\bpinned_region\(")
 
 
-def pinned_region(lo, hi, anchor, entries=()):
+def pinned_region(lo, hi, anchor, entries=(), laid=None):
     """Declare the ROM bytes `lo`..`hi`, laid out from the `.S` entry of `anchor` (and holding `entries`'),
-    as a region this battery byte-pins — at import, so every region is known before any pin runs."""
-    region = Region(lo, hi, anchor, tuple(entries))
+    as a region this battery byte-pins — at import, so every region is known before any pin runs. `laid`: a `Laid`, for
+    a region pinned where it is LAID rather than in the bench blob (it names no entries: it is one product's whole)."""
+    assert laid is None or not entries, f"${lo:x}..${hi:x} is pinned where it is laid and names entries of a blob"
+    region = Region(lo, hi, anchor, tuple(entries), laid)
     PINNED_REGIONS.append(region)
     return region
 
@@ -318,6 +335,19 @@ def assert_transcribed(region, *, relocated=None):
     for at, relocation in relocated.items():
         target = _relocation_target(at, relocation)
         assert relocation.base is None or region.lo <= relocation.base < region.hi, f"${at:x}'s table is outside the region"
+        assert not region.laid or relocation.in_place, (
+            f"${at:x} ({relocation.why}) lies in a region pinned where it is LAID: it may reach the ROM in place, not a "
+            f"Tier 3 blob's layout")
+        assert region.laid or not relocation.in_place, (
+            f"${at:x} ({relocation.why}) is in_place outside a region pinned where it is LAID: a Tier 3 blob's word "
+            f"cannot reach the ROM's bytes where they lie")
+        if relocation.in_place:
+            assert addrs.ROM_BASE <= target < addrs.ROM_BASE + addrs.ROM_BYTES, (
+                f"${at:x} ({relocation.why}) reaches ${target:x} in place, which is not the ROM")
+            assert not _one_pinned_region_holds(target), (
+                f"${at:x} ({relocation.why}) reaches ${target:x} in place, but ${target:x} is byte-pinned — a reference "
+                f"into a transcription must reach the transcription")
+            continue
         if relocation.thunk:
             assert relocation.rebound or not _one_pinned_region_holds(target), (
                 f"${at:x} ({relocation.why}) names the thunk {relocation.thunk}, but ${target:x} is byte-pinned — "
@@ -326,7 +356,8 @@ def assert_transcribed(region, *, relocated=None):
         assert _one_pinned_region_holds(target, getattr(addrs, relocation.target_anchor)), (
             f"${at:x} ({relocation.why}) is relocated to ${target:x} as measured from {relocation.target_anchor}, "
             f"but no byte-pinned region holds both — its value would be computed against a layout nobody checks")
-    start = transcribed_address(region.anchor, region.lo)
+    start = region.laid.at if region.laid else transcribed_address(region.anchor, region.lo)
+    read = functools.partial(_laid_bytes, region.laid) if region.laid else _blob_bytes
     for name in region.entries:
         assert transcribed_address(region.anchor, getattr(addrs, name)) == bench().entry(transcription_symbol(name)), (
             f"{name} is not where the ROM has it in the region {region.anchor} lays out")
@@ -335,7 +366,7 @@ def assert_transcribed(region, *, relocated=None):
         relocation = relocated.get(at)
         size = relocation.width if relocation else WORD_BYTES
         placed_at = start + at - region.lo
-        ours, theirs = _blob_bytes(placed_at, size), bytes(BASE_IMAGE[at:at + size])
+        ours, theirs = read(placed_at, size), bytes(BASE_IMAGE[at:at + size])
         if relocation:
             walked.add(at)
             expected = _relocated_value(at, placed_at, relocation)
@@ -347,6 +378,14 @@ def assert_transcribed(region, *, relocated=None):
         at += size
     missed = sorted(set(relocated) - walked)
     assert not missed, f"relocation(s) at {', '.join(f'${at:x}' for at in missed)} fall inside another word of the walk"
+
+
+def _laid_bytes(laid, address, size):
+    """The `size` bytes the product of a region pinned where it is LAID holds at `address` — refused outside it."""
+    base, held = laid.blob()
+    assert base <= address and address + size <= base + len(held), (
+        f"[{address:#x}, {address + size:#x}) lies outside the laid product [{base:#x}, {base + len(held):#x})")
+    return bytes(held[address - base:address - base + size])
 
 
 def assert_the_shipped_blob_holds_the_same(region):

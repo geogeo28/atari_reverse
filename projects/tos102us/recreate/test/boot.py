@@ -68,6 +68,11 @@ RESET_SSP, RESET_PC = struct.unpack_from(">2I", BASE_IMAGE, ROM_BASE)
 RESET_SR = 0x2700
 
 # ---- WHAT THE BOOT TESTS, READ OFF ITS OWN OPERANDS ----------------------------------------------------------------------
+# TWO SPELLINGS, KEPT ON PURPOSE (review RB1's F5): `MEMVALID_CHECK`, `CARTRIDGE` and `RESET_SR` here are also spelt in
+# `include/boot/head.h` (`ROM_MEMVALID_CHECK`, `CARTRIDGE_PORT`, `HEAD_SR_MASKED`), which the head's `.S` assembles from.
+# This harness reads the ROM it drives and must not take its premises from the code it is the instrument for; each
+# spelling is pinned to the ROM independently — these by `test_boot_harness.py` (the reset vector, the `cmpi.l`s read
+# off $fc0688), head.h's by `test_boot_head.py` (the byte pin and the relocations derived from the ROM's text).
 CMPI_L_D16_A5, BNE_S, JMP_A6 = 0x0cad, 0x66, 0x4ed6         # `cmpi.l #imm,d16(a5)`, `bne.s`, `jmp (a6)`
 BEQ_W = 0x6700
 MEMVALID_CHECK = 0xfc0688               # `suba.l a5,a5`, then a cmpi.l + bne.s per magic, then `jmp (a6)`: Z set = valid
@@ -211,6 +216,46 @@ def entered_at(machine, pc, **registers):
     return machine._replace(registers={**machine.registers, "pc": pc, **registers})
 
 
+# ---- AN OVERLAY — OUR CODE LAID OVER A COPY OF THE ROM WINDOW (boot B1) ------------------------------------------------------
+# THE USER'S RULING (2026-10-29), "ROM-window overlay": code of ours that must run where the boot's own stores cannot
+# reach it (the head clears RAM under itself) is laid INSIDE THE ROM WINDOW over a copy of the image — the oracle serves
+# RAM and the ROM window and answers 0 everywhere else (`shim.c`'s read callbacks), so code laid anywhere else executes
+# zeros, and the zeros slide into the ROM's own head: the false green the guard below refuses by name.
+ROM_WINDOW = (ROM_BASE, ROM_BASE + addrs.ROM_BYTES)
+THE_ROM_S_HEAD = (RESET_PC, HEAD_ENDS)
+Overlay = namedtuple("Overlay", "at code label")
+OVERLAY_LABEL = ("OVERLAY — A LABELLED STAGING (ruling \"ROM-window overlay\"): LAID, our code over {length} bytes of a copy "
+                 "of the image's ROM window at {at:#x}; REAL, every other byte of the image, the machine's RAM and "
+                 "registers as its own label says")
+
+
+def overlaid(at, code):
+    """AN OVERLAY — A LABELLED STAGING (ruling "ROM-window overlay"). LAID: `code` over a copy of the image's ROM bytes
+    at `at` — and nothing else: the machine's RAM and registers are the machine's, the rest of the ROM the image's.
+    Refused by name: a span outside the ROM window (it would read 0 and execute nothing of ours), an odd address, and
+    one over the ROM's own head (a run of the ROM's head over it would run ours). That the ROM's own runs neither read
+    nor execute the span is each battery's to hold, by running the ROM's shore with and without it."""
+    end = at + len(code)
+    if not (ROM_WINDOW[0] <= at and end <= ROM_WINDOW[1]):
+        raise Refused(f"an overlay at [{at:#x}, {end:#x}) lies outside the ROM window [{ROM_WINDOW[0]:#x}, "
+                      f"{ROM_WINDOW[1]:#x}): the oracle answers 0 there, and code laid there never runs")
+    if at % WORD_BYTES:
+        raise Refused(f"an overlay at the odd address {at:#x}: no 68000 instruction lies there")
+    if at < THE_ROM_S_HEAD[1] and THE_ROM_S_HEAD[0] < end:
+        raise Refused(f"an overlay at [{at:#x}, {end:#x}) lies over the ROM's own head "
+                      f"[{THE_ROM_S_HEAD[0]:#x}, {THE_ROM_S_HEAD[1]:#x})")
+    return Overlay(at, bytes(code), OVERLAY_LABEL.format(length=len(code), at=at))
+
+
+def _vet_kept_off_the_rom_s_head(machine, laid):
+    """A RUN OF OURS NEVER EXECUTES THE ROM'S OWN HEAD (the user's ruling): read off the run's profile, REFUSED BY NAME
+    — code of ours that fell into the ROM's head would be measured equal on the ROM's own instructions."""
+    spent = emu.prof_cycles(*THE_ROM_S_HEAD)
+    if spent:
+        raise Refused(f"{machine.label}, {laid.label}: the run executed the ROM's own head "
+                      f"[{THE_ROM_S_HEAD[0]:#x}, {THE_ROM_S_HEAD[1]:#x}) — {spent} cycles of it")
+
+
 # ---- THE RUNNER ------------------------------------------------------------------------------------------------------------
 SLICE_INSNS = 4_000_000                 # a slice's default budget: the warm head is ~105,000; the cold arm's ~209,000
 Slice = namedtuple("Slice", "machine stop instructions cycles stored hardware_writes io_reads hardware_reads psg_events "
@@ -222,17 +267,23 @@ ledgers `hardware_writes` `(address, width, value)`, `io_reads` (declared I/O, `
 `hardware_reads` `(address, value)` and `psg_events`, in order, and the bus-error `faults` taken (`{SP: frame}`)."""
 
 
-def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed=None, faults=()):
+def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed=None, faults=(), laid=None):
     """THE ROM'S CODE RUN FROM `machine` (from its PC, with its whole register file) TO ITS FIRST ARRIVAL AT ANY ADDRESS
     OF `until` — a `Slice`, or REFUSED BY NAME (the module's docstring). `io_seed`, `hw_seed`, `psg_seed`: what the case
     declares the hardware held (the kit's own declarations, refused by the kit where read and undeclared); `faults`:
-    the `bus_error.Fault`s the case declares."""
+    the `bus_error.Fault`s the case declares. `laid`: an `Overlay` (`overlaid`) — our code over a copy of the ROM
+    window for this run; such a run is PROFILED, refused by name if it executed the ROM's own head, and leaves its
+    profile for the caller to read (`emu.prof_cycles`)."""
     stops, declared = frozenset(until), bus_error.stops_of(faults)
     if not stops:
         raise Refused("a slice names no stop: it would run for its whole budget")
     armed, entry = stops | set(declared), machine.registers["pc"]
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = machine.ram
+    if laid:
+        memory[laid.at:laid.at + len(laid.code)] = laid.code
+        emu.prof_enable(True)
+        emu.prof_reset()
     pushed = {}
     emu.install_chip_seeds(psg_seed=psg_seed, hw_seed=hw_seed)
     try:
@@ -258,7 +309,11 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
         ledgers = (tuple(emu.hw_writes()), tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.psg_events()))
     finally:
         emu.bench_abort()
+        if laid:
+            emu.prof_enable(False)
     _vetted(machine, stops)
+    if laid:
+        _vet_kept_off_the_rom_s_head(machine, laid)
     if truncated:
         raise Refused(f"{machine.label}: the run's write ledger saturated — what it stored is not known")
     stored = set(writes)                # (the kit's ledger holds RAM alone: a store off the machine is dropped)

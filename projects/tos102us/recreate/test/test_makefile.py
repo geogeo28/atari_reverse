@@ -371,6 +371,25 @@ def test_the_suites_have_the_mid_boot_capture_and_gates_holds_its_mask():
     assert not any(MIDBOOT in dropped[suite][0] for suite in THE_SUITES)
 
 
+BOOTHEAD = "build/boothead/head.bin"     # (boot B1, the user's ruling "Own link rule": the head linked where it is laid)
+
+
+def test_the_suites_and_the_table_have_the_boot_head_and_no_blob_links_its_source():
+    """boot B1: `test`, `guarded`, `gates` and the table need the head's own product; its source lies one directory
+    below kit.mk's `src/*/*.S` sweep (neither Tier 3 blob links it — none of their symbols moves); and its link address
+    is read off `include/boot/head.h`, the one spelling. RED: the suites' line dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert all(BOOTHEAD in rules[target][0] for target in (*THE_SUITES, "build/bench/tier3.txt"))
+    source = RECREATE / "src" / "boot" / "head" / "head.S"
+    assert source.is_file() and not list((RECREATE / "src").glob("*/head.S")) and not (RECREATE / "src" / "head.S").exists()
+    assert "include/boot/head.h" in _definitions([makefile])["BOOTHEAD_LAID_AT"]
+    line = "test guarded gates: $(BOOTHEAD_BIN)"
+    assert makefile.count(line) == 1
+    dropped = rules_of([makefile.replace(line, ""), kit])
+    assert not any(BOOTHEAD in dropped[suite][0] for suite in THE_SUITES)
+
+
 def capture_key_lacks(texts):
     """What the captures' key does not read, over makefile `texts`: of the workspace modules a capture tool imports (a
     file of this project's tools/ or the workspace's), the oracle and the Hatari — each named by the key's own list or

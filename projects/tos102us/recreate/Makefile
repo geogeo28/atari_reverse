@@ -380,6 +380,31 @@ $(SHIPPED_ELF): $(BENCH_SRC) $(SHIPPED_GLUE) $(PROJECT_HEADERS) \
 $(SHIPPED_BIN): $(SHIPPED_ELF)
 	m68k-elf-objcopy -O binary $(SHIPPED_ELF) $(SHIPPED_BIN)
 
+# THE BOOT'S HEAD (boot B1; rulings D7 "Byte-transcribed .S" and "Own link rule", 2026-10-29) — `[$fc0030, $fc02cc)`,
+# hand 68000 that runs before any RAM is its own, so it cannot lie in RAM: it is LAID over a copy of the image's ROM
+# window at `HEAD_LAID_AT` (`include/boot/head.h`, the one spelling; ruling "ROM-window overlay") and LINKED THERE, by
+# this rule alone. Its source is `src/boot/head/head.S`, one directory below kit.mk's `src/*/*.S` sweep, so neither
+# blob above links it and no symbol of theirs moves. `test/boot_head.py` reads the flat bytes and the ELF's symbols.
+BOOTHEAD_DIR     := build/boothead
+BOOTHEAD_ELF     := $(BOOTHEAD_DIR)/head.elf
+BOOTHEAD_BIN     := $(BOOTHEAD_DIR)/head.bin
+BOOTHEAD_SRC     := src/boot/head/head.S
+BOOTHEAD_LAID_AT := $(shell sed -n 's/^\#define HEAD_LAID_AT[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' include/boot/head.h)
+ifeq ($(BOOTHEAD_LAID_AT),)
+$(error include/boot/head.h defines no HEAD_LAID_AT — the boot head's link address is read from there and nowhere else)
+endif
+
+$(BOOTHEAD_ELF): $(BOOTHEAD_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTHEAD_DIR)
+	m68k-elf-gcc $(BENCH_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTHEAD_LAID_AT) $(BOOTHEAD_SRC) -o $@
+
+$(BOOTHEAD_BIN): $(BOOTHEAD_ELF)
+	m68k-elf-objcopy -O binary $(BOOTHEAD_ELF) $(BOOTHEAD_BIN)
+
+.PHONY: boothead
+boothead: $(BOOTHEAD_BIN)
+test guarded gates: $(BOOTHEAD_BIN)
+
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
@@ -395,7 +420,7 @@ derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
 # process writes, line for line.
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTHEAD_BIN) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench

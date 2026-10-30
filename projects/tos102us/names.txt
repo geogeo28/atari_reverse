@@ -259,8 +259,20 @@ fn 0xfee8c2 linef_handler
 cmt 0xfee8c2 GEM Line-F call handler, copied into a Malloc'd buffer and installed into $2c by the AES init at 0xfd9f4a. An EVEN $fXXX word is a one-word call through the 658-entry table at 0xfee900 (index = the low 12 bits as a byte offset); an ODD one is a return (unlk a6; rts, plus a movem mask of (op & 0x0ffe) * 4).
 fn 0xfd9eca gem_entry
 cmt 0xfd9eca gem_entry (the GEM entry point the memory-usage parameter block at 0xfefff4 names; entered by the BIOS as a program, never called, never returns): USP := $898e; Mshrink(basepage, text+data+bss+256); Super(sp) — the same stack the supervisor's, top $8994; $c924 := p_env; $8904..$890c laid; $2c's high byte non-zero -> Malloc(100), the Line-F handler and 38 bytes of its table ($fee8c2..$fee925) copied, $2c := the copy; jsr rom_rsc_init ($fee4de); $8992 := 1; $97fe := 0; LOOP $fd9f72: jsr size_theglo ($fee800), THEGLO cleared (move.w d1,(a0)+ / dbmi d0), justretf -> $947a, the tick glue -> $947e, ub_trampoline -> $8c32, A6 := UDA0's stack top, UDA+62 := A6, SP := A6, jsr gem_main ($fda062), bra LOOP. On target: src/aes/gemstart.S (byte-pinned but seven relocated operands). THE $2c TEST IS MADE ONCE: the loop's bra ($fd9fc4) goes back to $fd9f72, past it — its skip arm is taken by no pass of a session (no machine; held by the pin and a labelled craft). VERIFIED AT ITS CHECKPOINTS ON THE OUR-BOOT MACHINE (band 5 wave 4, slice B: the blob laid at the pre-init stop and entered here — its own instructions' cycles the ROM's, 98,920)
-fn 0xfc0688 memory_size_probe   # ctx
-cmt 0xfc0688 Called from the reset path at 0xfc0050/0xfc00e8 through the a6 return-address convention (lea ret,a6 / bra sub / jmp (a6)) rather than by bsr.
+fn 0xfc0688 memvalid_check
+cmt 0xfc0688 Memory valid? suba.l a5,a5, then $420==$752019f3, $43a==$237698aa, $51a==$5555aaaa (bne.s out at the first miss); returns Z set = valid through jmp (a6). Called by the head at 0xfc0050 and 0xfc00e8 (lea ret(pc),a6 / bra.w). Reached in place by src/boot/head/head.S.
+fn 0xfc0672 bank_test
+cmt 0xfc0672 The cold arm's bank test: a0 += d1 (the bank), compare the $fa54-step pattern over 252 words from a0; Z set = found (the bank's size by where); returns through jmp (a5). Called 3x per bank from 0xfc0126/0xfc0134/0xfc0142. Reached in place by head.S.
+fn 0xfc0e1a sync_wait
+cmt 0xfc0e1a Waits for display sync on MFP Timer B (event count mode, $fffa21 read back to 1, then 616 equal reads); returns through jmp (a6). Called by the head's PAL arm (0xfc00aa, US header: never taken) and the mono switch (0xfc0404).
+cmt 0xfc004c Head: memory valid? (memvalid_check via a6) — warm only: restore memctrl $424 -> $ffff8001.
+cmt 0xfc0060 Head: reset-resident hook ($426 == $31415926, $42a even, top byte 0) entered with a6 = here (D12 open: no machine of the harness takes it).
+cmt 0xfc0084 Head: YM2149 ports outputs/mixer off ($c0), port A := 7 (drives deselected); os_conf bit 0 (PAL) -> sync_wait + 50 Hz.
+cmt 0xfc00b6 Head: boot palette (0xfc06a8) -> $ffff8240, screen base $010000.
+cmt 0xfc00da Head slice H1|H2 cut: memctrl/phystop into d6/d5, memvalid_check again; beq.w 0xfc0206 = the warm arm.
+cmt 0xfc00f0 Head: THE COLD ARM — memctrl $0a, pattern at $8..$200 and $200008.., bank_test per 2 MB bank, RAM probe in 128 KB steps (vector 2 := 0xfc019e), screen at phystop-32K, clear $400..phystop, store memctrl/phystop/the three magics.
+cmt 0xfc019e Head: the RAM probe's end (also its bus-error handler on a machine): phystop := last step that held.
+cmt 0xfc0206 Head slice H2|H3 cut, both arms join: clear $980..$10000 (the cold stack at $8000 with it), v_bas_ad := phystop-32K, clear the screen, end_os/exec_os from GEM's MUPB or the header, hdv/prv/scr_dump vectors, _memtop/_membot, lea $755a,sp (0xfc02c6: where the transcribed head ends, D7).
 
 # ---------------------------------------------------------------------------
 # Dispatch tables and the data blocks the handlers name.

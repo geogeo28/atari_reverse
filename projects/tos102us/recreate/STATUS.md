@@ -9,7 +9,7 @@ counts in this file against its rows.
 
 | component | Tier 1 (functions verified) | Tier 2 (conformance ledger) | Tier 3 (cycle ratio) | state |
 |---|---|---|---|---|
-| boot | 0 | — | — | NOT STARTED — **B0 HARNESS DONE** (2026-10-29, the `## Harness` table's boot row): no row yet; B1 (the head, a byte-transcribed `.S`) is next |
+| boot | 3 | — | 1.00x, the head's six slices (H1 / H2 / H3 x WARM / COLD) each on its own cycles (`make bench`) | STARTED — **B1: THE HEAD `[$fc0030, $fc02cc)` SHIPS AS THE ROM'S BYTES** (2026-10-29, `## Verified — boot`); B2 ($68 / $70) is next |
 | bios | 20 | — | 0.88–3.84x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): one row shown under the bar, the buffer flush at 1.01, is 1.13 on its own cycles behind the BIOS's.** 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
@@ -59,6 +59,43 @@ acceptance, or the leaf rule extended to (V) rows (aes_bell's +52 and dos_lseek'
 any reading). NOTHING IS ACCEPTED. Until the ruling, the ratio cells of those twenty-four rows — and every summary above
 that says "within the bar" — quote the table's whole-run pricing and must be read with this block. The full
 measurement is the wave log's entry 16 (K5) and `scratchpad/b4w2_fix_YZ.md`.
+
+## Verified — boot (3)
+
+THE BOOT'S HEAD (boot B1, 2026-10-29) — `src/boot/head/head.S`, `[$fc0030, $fc02cc)` from the reset to `lea $755a,sp`,
+BYTE-TRANSCRIBED. The user's rulings, quoted: D7 "Byte-transcribed .S" (hand 68000, compared slice by slice against
+the ROM, C takes over after `lea $755a,sp`); "ROM-window overlay" (our head is laid inside the ROM window over a copy of
+the image — a NEW LABELLED STAGING, `boot.overlaid`: LAID our 668 bytes at `$fc6000`, REAL every other byte of the
+image and the machine's RAM and registers; no kit edit; ANY RUN OF OURS THAT EXECUTES THE ROM'S OWN HEAD IS REFUSED BY
+NAME, read off the run's profile); "Own link rule" (`build/boothead/`, the Makefile's own rule links it at its laid
+address; its source lies one directory below kit.mk's sweep, so neither Tier 3 blob links it and none of their symbols
+moves); D9 (each slice priced as a stretch row on its own cycles). THE ORCHESTRATOR'S CALLS: the three out-of-range
+code targets (the memory-valid check `$fc0688`, the bank test `$fc0672`, the PAL sync wait `$fc0e1a`) and the four
+data reads (os_conf `$fc001d`, the palette `$fc06a8`, os_magic `$fc0014`, the header as a MUPB `$fc0008`) are reached
+or read WHERE THEY LIE (`transcription.Relocated(..., in_place=True)`, each word derived from the ROM's text and pinned
+to its exact displacement from where the head is laid) — no thunk, instruction counts held equal; each data read an
+obligation in `test_boot_rom_data.py` (D11 open); A6, the return link, compared by offset like the PC.
+
+A ROW IS A SLICE'S ENTRY ADDRESS, each slice run on both arms: ours and the ROM's from THE ROM'S OWN MACHINE at the
+slice's start (the WARM or COLD machine, `test/boot.py`; each A LABELLED STAGING), held equal on the stop, the whole
+register file (the PC and A6 by offset), the megabyte, the addresses stored, every ordered ledger, the faults, the
+instructions and the cycles (`boot_head.differences`, each surface's negative in `test_boot_head.py`). The costs are
+the ROM's (= ours).
+
+OPEN, NAMED WHERE THEY BITE — ON NO SURFACE BUT THE BYTE PIN: `reset`'s effect on the chips (D6: Musashi's no-op — a
+`nop` in its place differs on cycles alone, `test_reset_is_on_the_count_and_the_byte_alone`); the diagnostic
+cartridge's arm (D2) and the reset-resident hook's run (D12) — byte-pinned, no machine takes them; the PAL header's
+sync arm (this ROM's header is US). D1: the cold arm sizes the oracle's FLAT megabyte (1 MB, memctrl $08 — not an ST's
+answer, `test_the_cold_arm_sizes_the_oracle_s_flat_megabyte_d1`), so the bank-size aliases ($208 / $408) and the bank
+span are seen by the byte pin alone (the mutation sweep's measure). B1 DOES NOT TOUCH THE BIOS's "NO BUILD STORES AN
+ENTRY IN ITS VECTOR" GAP ($68 / $70 / $114 / $118: the head stores only the disk, printer and screen-dump vectors, as
+the ROM's own code addresses — CODE obligations in the census): that store is B2's.
+
+| Addr (ROM) | Name | Cases | Cost (insns / cycles) | Tier 3 (recreate / original) | Status | Verification |
+|---|---|---|---|---|---|---|
+| `0xfc0030` | `boot_head` H1 (`src/boot/head/head.S`: the reset to `$fc00da`) | 2 (WARM, COLD) | 63 / 940 WARM, 59 / 860 COLD | **1.00** WARM, **1.00** COLD (own cycles: 838 / 812; the memory-valid check both run in place, held equal) | ✅ verified | the byte pin over `[$fc0030, $fc02cc)`, ten words in place; WARM restores memctrl, COLD does not (the first memory-valid check's Z); the PSG ledger (ports out, drives deselected), the 16 palette words and the first screen base in order; the ROM's own shore unchanged with the overlay laid |
+| `0xfc00da` | `boot_head` H2 (to `$fc0206`: the warm arm's skip, the cold arm's sizing) | 2 (WARM, COLD) | 14 / 204 WARM, 103,804 / 2,929,248 COLD | **1.00** WARM, **1.00** COLD (own: 102 / 2,918,204; the bank test both run, 11,044) | ✅ verified | WARM: fourteen instructions to the warm arm; COLD (D1: flat memory): the patterns, three bank tests a bank, memctrl $08, the RAM probe with vector 2 borrowed and given back, the screen base, `$400..phystop` cleared under the `$8000` stack (`stored` compared, not only the RAM), memctrl / phystop / the three magics stored |
+| `0xfc0206` | `boot_head` H3 (to `$fc02cc`, after `lea $755a,sp`: both arms) | 2 (WARM, COLD) | 104,925 / 876,630 | **1.00** WARM, **1.00** COLD | ✅ verified | `$980..$10000` and the 32 KB screen cleared, v_bas_ad and the shifter's base, end_os / exec_os from GEM's MUPB, the ten vectors by value, _memtop / _membot, ISP `$755a`. Mutation over the head and the harness's extensions: 42 of 43 KILLED, the one left EQUIVALENT (HEAD_LAID_AT moved inside reach: the choice is a staging's, re-proved by the overlay premise at any address) — its first run left three survivors in the comparator (`stored` and a ledger dropped from its list, the price's equal-rest check), killed by the surface list pinned literally and the price's own negative; review RB1's M3 (the false-green guard watching only [$fc0030, $fc0038)) survived until the guard's negative ran over the reset, the warm arm and `lea $755a,sp` |
 
 ## Verified — xbios (29)
 
@@ -1763,6 +1800,7 @@ arrival — no row, no verdict.
 | shared record-and-refuse hook (`test/address_hook.py`) | **DONE** 2026-09-25: one `AddressHook` class per `.so` door (`recreate_call_vector`, `recreate_call_routine`, `recreate_call_gemdos_handler`, `recreate_call_disk_vector`), bound through `bind_pointer`: dispatch by key, a pass that opens and CLOSES around each candidate run, first-pass-only `calls`, the `CALLS_MAX` cap, and `staged()` — the one lifecycle, which refuses and REPORTS anything unstaged or outside a pass. Every guarantee pinned by `test/test_address_hook.py` (15/15 mutations killed). A new door is a new instance, never a copy. Since 2026-10-07 (AES band 4 wave 2) it records WHATEVER an effect raises — a `pytest.fail` / `pytest.skip` inside a hook raises a `BaseException` that is no `Exception`, which a ctypes callback prints and drops: the case passed GREEN with the effect's work done and its refusal lost — answers it as a refused call, and `staged()` fails the case by the effect's own words (three RED tests) |
 
 | **BOOT harness (boot B0, 2026-10-29)** | **DONE**: `test/boot.py` runs the ROM's own boot in SLICES — from where a machine stands to its first arrival at a stop (every arrival a stop), handing back the machine left, the ordered I/O ledgers, the stores, instructions and cycles, refused by name (no arrival within the budget, with the PC it stands at). THE USER'S RULINGS (2026-10-29), quoted: D8 "Approve all three" — a WARM-reset machine built from the post-boot snapshot, a COLD machine, and a new Hatari capture stopped mid-boot at $fc047a, each a LABELLED STAGING, the capture held like the existing kept set (`boot.warm_machine` / `cold_machine` / `midboot_machine`; `tools/midboot_snapshot.py`, `make midboot`, `make midboot-twice` under `gates`, the seventh capture in the store and under FRESH, its MASK measured over 30 captures in 15 `--twice` pairs; the noise rule, `test_boot_harness.py::test_the_capture_s_masked_bytes_are_read_by_no_run_from_it`, reaches only the first floppy call — B4 carries it to `gem_entry`); D5 "Harness-local" — bus errors as a case facility (`test/bus_error.py`: a `Fault` declared on a case, the frame taken as a 68000 takes it; `aes_boot`'s blitter probe is one declaration of it, behaviour-neutral; NO KIT EDIT); D9 "Stretch rows" — boot's slices priced as band 5's our-boot stretch kind (B1's on); D7 "Byte-transcribed .S" for the head [$fc0030, $fc02cc) (B1's: compared slice by slice on this runner; its PC-relative code targets $fc0688 / $fc0672 / $fc0e1a relocated as `transcription.Relocated` relocates them — the orchestrator's call under D7 — its data operands, the palette $fc06a8 and the header reads $fc0014 / $fc0008, waiting on D11). OPEN, the user's, named where they bite: D1 (the cold arm on the oracle's FLAT memory sizes 1 MB and writes `memctrl` $08 where the snapshot holds $05 — `test_the_cold_arm_sizes_the_oracle_s_flat_memory_and_answers_its_own_memctrl`), D2 (the cartridge port reads 0: no-cartridge arms only), D3 (no interrupt inside a run: the ACSI probe's `_hz_200` wait at $fc062a spins for ever), D4 (FDC/DMA), D6 (`reset` is Musashi's no-op: on no surface but the count and the byte pin), D10, D11, D12 (a WARM machine with a reset-resident hook is refused). THE SMOKE (`test_boot_harness.py`), nothing declared: from the reset vector on WARM the boot arrives at $fc00da, $fc0206, $fc02cc and $fc03b6, then never arrives at $fc03e0 — the hardware init's timer programmer spins on Timer C's data read-back ($fc260e), B3's declarations. `test_boot_harness.py` (51 tests) and `test_makefile.py`'s mid-boot test hold it all; after review RB0's fix pass (a slice that took a fault reported the frame's address as its stop; a fault's handler that is a stop was stepped over; 11 untested arms; a no-progress guard added) the mutation sweep over the harness kills 26 of 27 — the one left, `left <= 0` as `< 0` in the budget check, is EQUIVALENT (a resume exhausts its budget before a door at the same count: measured) |
+| **BOOT head (boot B1, 2026-10-29)** | **DONE**: two harness extensions, each with tests and negatives — `boot.run(..., laid=)` (an `Overlay` over a copy of the ROM window: refused outside it, at an odd address or over the ROM's head; the run PROFILED and REFUSED BY NAME if it executed `[$fc0030, $fc02cc)` — the false green measured: code laid above $400000 executes the oracle's zeros, which slide into the ROM's own head) and `transcription.pinned_region(..., laid=Laid(at, blob))` with `Relocated(..., in_place=True)` (a region pinned where it is LAID; its references only to the ROM in place, refused into a pinned region or off the ROM). `make boothead` (`build/boothead/`, under `test` / `guarded` / `gates` and the table, `test_makefile.py`); `m68k_encodings.h` gains `M68K_SUB_L_IMMEDIATE` |
 
 ### Harness — gate speed (2026-10-15/16: parts 1 and 2, the review, the snapshot-flake investigation, the fix pass)
 
@@ -3175,7 +3213,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       over REAL GEMDOS in place — no replay — and their ratio is the own-cycle one, the whole run's printed
       beside). SIXTEEN STRETCHES AND gem_gemdos_call's SIX `.S` ROWS; the registry's import reads the DESKTOP.INF
       capture for them (`REGISTRY_READS` gained it: `test_makefile.py` said so).
-      THE TABLE against `2925660`'s (5,678 lines → 9,354) — the length TODAY, which `test_status` holds this sentence to
+      THE TABLE against `2925660`'s (5,678 lines → 9,366) — the length TODAY, which `test_status` holds this sentence to
       (5,777 at this slice; +64 at band 6's slice B0, its re-derived rows): 22 rows and their 76 lines under them, one line of
       legend; NO EXISTING LINE MOVED. NO ROW IS OVER 1.00 — the highest the reader's 0.98 (0.98 with thunks):
       gem_main 0.59 / 0.58 (the first pass, without and with a DESKTOP.INF; whole run 0.74), 0.57 the teardown,
@@ -3403,7 +3441,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     routine, no new `.S`, no kit edit, no cartridge (W4-R12); the Line-F table behind `$2c` is the ROM's, so the
     desk's turns stay foreign windows and "ours booted" still reads to deskmain's entry and no further (W4-R3);
     accessory machines stay door takeovers (W4-R2); NO SHIPPED OBJECT CHANGED. THE TABLE against `f0985a1`'s (5,777
-    lines → 9,354) — the length today, held by `test_status` (5,777 at the flip; +64 at band 6's slice B0, +520 at its slice F1, +400 at its slice F2's stage 1, +508 at its stage 2, +60 at its slice F2b, +237 at its slice F2c, +491 at its slice F3's stage 1, +6 at its fix pass, +381 at its stage 2, +28 at its stage 2's third fix pass, +47 at its slice P7, +56 at its slice F3's stage 3, +9 at its fix pass, +150 at its slice F4, +124 at its W3a's stage 1, +94 at its stage 2, +332 at its stage 3, +70 at its W3b's flip): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
+    lines → 9,366) — the length today, held by `test_status` (5,777 at the flip; +64 at band 6's slice B0, +520 at its slice F1, +400 at its slice F2's stage 1, +508 at its stage 2, +60 at its slice F2b, +237 at its slice F2c, +491 at its slice F3's stage 1, +6 at its fix pass, +381 at its stage 2, +28 at its stage 2's third fix pass, +47 at its slice P7, +56 at its slice F3's stage 3, +9 at its fix pass, +150 at its slice F4, +124 at its W3a's stage 1, +94 at its stage 2, +332 at its stage 3, +70 at its W3b's flip, +12 at boot B1's head): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
     turn, no class line (`scratchpad/b5/W4/F/tdiff_final.txt`, against `scratchpad/final36/tier3.txt`).
     - **(a) THE WORD, AND ITS REDS.** With the one word turned and nothing else, the slice's batteries (every
       `test_aes_*.py`, `test_tier3.py`, `test_status.py`, `test_transcribed.py`, `test_derived.py`,
@@ -3483,7 +3521,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       baseline's but the legend — so every figure over 1.00 that it prints is one AWAITING (20) and (22) list
       already (the accessory turns net of the Line-F handler 1.02 .. 1.22; the stretches' 1.06 .. 1.28 and the
       screen manager's first turn 1.11), none over 1.10 by the table's convention, none new, none moved.
-    - **(e) WHO RAN, PER ROW CLASS** (`probe/p4_rows.py`: every row of the registry's 3,198 rows measured on the
+    - **(e) WHO RAN, PER ROW CLASS** (`probe/p4_rows.py`: every row of the registry's 3,204 rows measured on the
       shipped blob, once on a copy of `f0985a1`'s harness and once on this tree's — `p4_head.json`, `p4_flip.json`,
       `p4_summary.out`; A PROBE'S CENSUS, ONE PASS, HELD BY NO TEST — how often the pool makes a session decides the
       totals; THE RULE is held on every kit call of every row's own test, `vet_who_ran_the_selector_switch`):
@@ -3728,7 +3766,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     other chain), the userdef stack 438 of 1,024 (PD0 re-read since band 6 W3a's diet landed opn_appl's chain: 1,460 at
     this wave, File > Open). THE TABLE IS 658 ENTRIES: 84 native (65 routines), 570 through 531
     thunks, 4 the ROM's; 391 THUNKS ENTERED THROUGH IT, 140 UNENTERED BY NAME; 52 NATIVE ROUTINES ENTERED, 13 NOT,
-    BY NAME. THE PRE-INIT CAPTURES ARE five. THE READ GUARD: 3,198 rows in 32 chunks, 16 NOT HELD BY NAME.
+    BY NAME. THE PRE-INIT CAPTURES ARE five. THE READ GUARD: 3,204 rows in 32 chunks, 16 NOT HELD BY NAME.
     - **SLICE W — THE WINDOW** (`project.toml`, `test/staging.py`, `test/gemdos_fs.py`, `test/test_window.py` and the
       order assertions of five batteries). The declared staging band moved `$60000` → `$75000`, DIRECTLY UNDER the VDI's
       and the AES's staged windows (`$76000..$7e000`, not moved); the file system's window `[$68000, $75000)` →
@@ -8594,10 +8632,25 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (BOOT B0's FIX PASS, the last suite run; `make guarded` collects the same ids — the gate
-is the orchestrator's): **34,531 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make test` (BOOT B1's FIX PASS, re-summed over B1's run; `make guarded` collects the same ids — the gate
+is the orchestrator's): **34,589 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BOOT B1's FIX PASS AFTER REVIEW RB1 (2026-10-29, alone in the shared tree): RE-SUMMED, not re-run whole (the
+  from-empty gate is the orchestrator's): +3 `test_boot_head.py` (the false-green guard's negative over the reset,
+  the warm arm and `lea $755a,sp` — RB1's M3, the guard's span shrunk to [$fc0030, $fc0038), SURVIVED before and
+  is killed), +1 (an `in_place` reference outside a laid region refused by name) — 34,597 collected, **34,589**;
+  the B1 battery and `test_makefile.py` green (`-n 8`). NOTED, NOT CHANGED: `derived.PROJECT_INPUTS` globs
+  `src/*/*.S`, so `src/boot/head/head.S` is outside the derivation key — harmless while no derivation reads the
+  head (none does: they are the ROM's runs); widening the key would re-derive every answer for no reason today.
+  NOTED: `test/boot.py` keeps its own spellings of the memory-valid check, the cartridge port and the reset SR
+  beside `include/boot/head.h`'s on purpose (the instrument does not take its premises from the code it
+  measures); each is pinned to the ROM independently.
+- BOOT B1, THE HEAD (2026-10-29, alone in the shared tree): `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so`,
+  `build/bench*`, `build/boothead` and every `__pycache__` moved aside first: 34,593 collected, **34,585 pass** against this text
+  (17 m 48 s of pytest; against the tree's STATUS the `test_status` pins of the new rows fail, as every wave's do). RE-SUMMED against B0's fix
+  pass's 34,539: +44 `test_boot_head.py`, +3 `test_boot_rom_data.py`, +1 `test_makefile.py`,
+  +6 `test_tier3.py` (a row each) — 34,593, the suite's own count.
 - BOOT B0's FIX PASS AFTER REVIEW RB0 (2026-10-29, alone in the shared tree): `make test` (`PYTEST_ARGS="-n 8"`),
   `build/*.so`, `build/bench*` and every `__pycache__` moved aside first: 34,539 collected, **34,531 pass**, rc 0
   (17 m 56 s of pytest); tier3.txt `f72ea6c3`, `libtos102us.so` and both blobs byte-identical to the set-aside build

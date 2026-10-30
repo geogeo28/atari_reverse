@@ -1542,6 +1542,57 @@ bus_error.Fault(what, at, words, access, handler)                  # one declare
   declarations (not a test) it reaches `$fc0452` and the floppy boot; the floppy driver's count-down waits time out
   (~9.4 M instructions) and the ACSI probe's `_hz_200` wait (`$fc062a`) spins for ever (D3).
 
+### THE HEAD — `[$fc0030, $fc02cc)` as the ROM's own bytes (`src/boot/head/head.S`, `test/boot_head.py`, boot B1)
+
+The user's rulings (2026-10-29): **D7** "Byte-transcribed .S"; **"ROM-window overlay"** (our head is laid inside the
+ROM window over a copy of the image, a NEW LABELLED STAGING, no kit edit, and any run of ours that executes the ROM's
+own head is refused by name); **"Own link rule"** (a separate Makefile rule links `head.S` at its laid address into
+`build/boothead/`; the existing blobs and their symbols do not move); **D9** (each slice a stretch row on its own
+cycles). Open and not decided here: D1, D2, D6, D11, D12.
+
+```
+make boothead         # build/boothead/head.{elf,bin} — the head linked at HEAD_LAID_AT ($fc6000, include/boot/head.h)
+```
+
+```python
+boot.overlaid(at, code)                       # Overlay(at, code, label): LAID over a copy of the ROM window; refused outside it,
+                                              #   at an odd address, or over the ROM's own head
+boot.run(machine, until, ..., laid=overlay)   # the run profiled; REFUSED BY NAME if it executed [$fc0030, $fc02cc)
+boot_head.SLICES                              # {name: HeadSlice(cut, arm)}: H1/H2/H3 x WARM/COLD
+boot_head.the_rom_s(s) / boot_head.our_side(s) / boot_head.differences(rom, ours) / boot_head.priced(s)
+transcription.pinned_region(lo, hi, anchor, laid=Laid(at, blob))   # a region pinned where it is LAID
+transcription.Relocated(PC_RELATIVE, None, why, in_place=True)     # a reference to the ROM's own bytes where they lie
+```
+
+- **Why the ROM window.** The oracle serves RAM (1 MB) and the ROM window `[$fc0000, $ff0000)` and answers 0 at every
+  other address (`shim.c`'s read callbacks; `emu.run_bench` re-installs the window every run). Code laid above
+  `$400000` executes those zeros, which slide into the ROM's own head: a run that "arrives" having run the ROM's
+  instructions (measured; the guard above refuses it, held over its whole span: a jump into the reset, the warm arm
+  or `lea $755a,sp`). The head cannot lie in RAM either: the cold arm clears
+  `$400..phystop` under it, and both arms clear `$980..$10000`. It is laid at `$fc6000`, a span no slice of the ROM's
+  reads or runs (`test_the_rom_s_own_shore_neither_reads_nor_runs_the_span_the_head_is_laid_over`, every slice,
+  with and without it), and within a 16-bit displacement of every ROM address the head reaches pc-relative, so every
+  operand keeps the ROM's length.
+- **The spelling.** `IN_PLACE(rom)` = `boot_head + (rom - HEAD_LAID_AT)`, a difference inside the section that gas
+  resolves to the displacement. Ten words differ from the ROM's: the memory-valid check ×2, the bank test ×3, the PAL
+  sync wait (code reached in place, returning through the link in A6 / A5) and os_conf, the palette, os_magic and the
+  header-as-MUPB (data read in place, D11's obligations: `test_boot_rom_data.py`). Each is DERIVED from the ROM's text
+  and pinned to its exact value. Two GAS encodings spelt as the ROM's words (`m68k_encodings.h`): `add.w #imm,d0`
+  ($d07c) and `sub.l #imm,Dn` ($90bc, new: `M68K_SUB_L_IMMEDIATE`).
+- **The comparison.** Each slice runs from THE ROM'S OWN MACHINE at its start (reset for H1, else where the ROM's
+  previous slice left it), ours entered at our instruction by offset with its links mapped; held equal on the stop, the
+  whole register file (the PC and A6 by offset), the megabyte, the addresses stored, every ordered ledger, the faults,
+  instructions and cycles (`boot_head.differences`; each surface's negative in `test_boot_head.py`). Measured:
+  WARM H1 63 / 940, H2 14 / 204, H3 104,925 / 876,630; COLD H1 59 / 860, H2 103,804 / 2,929,248 (sizing 1 MB,
+  memctrl $08: D1), H3 = WARM's.
+- **What no surface reaches, named**: `reset`'s effect on the chips (D6: a `nop` in its place differs on cycles alone);
+  the diagnostic cartridge's and the reset-resident hook's arms (D2, D12) and the PAL sync arm — byte-pinned only; the
+  bank-size aliases on an ST's memory (D1: on the flat megabyte the alias offsets `$208`/`$408` and the bank span are
+  seen by the byte pin alone — the mutation sweep's measure).
+- **Tier 3** (D9): six rows `BOOT head (.S)` / `LABELLED STAGING (ROM-window overlay): Hn [lo, hi), the ARM machine` —
+  costs each shore's whole instructions and OWN cycles (the head's PCs), the ROM's code both run in place (memory-valid
+  check, bank test) and the entry held equal and printed below; all six 1.00.
+
 ## Writing a case
 
 ```python
@@ -3358,6 +3409,11 @@ holds the staged callers, the transcription relation's runs and rows, the pinned
 parsed table and the m68k call graph, and a routine of any component is named by one rule (`test/routines.py`:
 `AES_ROM_X` is transcribed as `aes_rom_x`, its C core `aes_x`, its `.S` rows labelled `AES x (.S)`).
 
+A region may be pinned WHERE IT IS LAID (`pinned_region(..., laid=Laid(at, blob))`, boot B1): a product no Tier 3 blob
+links, its references measured from its laid address and allowed only to reach the ROM in place
+(`Relocated(..., in_place=True)`, refused for a target any battery byte-pins or outside the ROM, and refused by name
+in a region NOT pinned where it is laid).
+
 * **Tier 3's mechanism (T)**: a TRANSCRIBED routine's C rows may be over the bar only while EVERY one
   of its `.S` rows is at or under it, or `own` by (T←) below — verdict `transcribed`, read off the
   measurements, with no per-row entry. Delete a `.S` row, or let one drift over the bar, and the C rows
@@ -4338,6 +4394,9 @@ recreate/
 │                       `src/desk/`: the desk's units written and linked — units O and D (`deskleaf.c`,
 │                       `deskbind.c`) FLIPPED since band 6 slice F1, the rest NOT BOUND — with `include/desk/`, and
 │                       `trp13.S`, the BIOS door, a row of the transcribed table since F1)
+│                       `src/boot/head/head.S` with `include/boot/head.h`: the boot's head [$fc0030,$fc02cc),
+│                       byte-transcribed, below kit.mk's sweep — linked by the Makefile's own rule into
+│                       `build/boothead/` at HEAD_LAID_AT)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -4372,6 +4431,8 @@ recreate/
 │                       `boot.py` / `test_boot_harness.py` (THE BOOT HARNESS: slices of the ROM's own boot on the
 │                       warm, cold and mid-boot machines), `bus_error.py` (declared bus errors) and
 │                       `stopped_cpu.py` (Musashi's register accessors and the step-off rule)
+│                       `boot_head.py` / `test_boot_head.py` (THE HEAD on both shores: slices, comparator, price)
+│                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),
 │                       flipped_depths.py (W6-R4's PD0 gate on a private flipped build),

@@ -115,6 +115,8 @@ import aes_desk                                            # noqa: E402
 # ...and THE BUILD'S OWN START-UP (band 5 wave 4, slice B): gem_main, the `#E` reader, sh_main and sh_cmd are priced as
 # STRETCHES of the our-boot machine's runs beside the ROM's own (`aes_ourboot.STRETCHES`, registered by its battery).
 import aes_ourboot                                         # noqa: E402
+# ...and THE BOOT'S HEAD (boot B1, ruling D9): its slices priced as stretches, each on its own cycles (`boot_head`).
+import boot_head                                           # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1657,13 +1659,34 @@ def is_a_stretch(row):
     return row.registered in aes_ourboot.STRETCHES
 
 
+# A SLICE OF THE BOOT'S HEAD (boot B1; rulings D7, D9, "ROM-window overlay"): `src/boot/head/head.S` and the ROM's own
+# head run from one machine (the ROM's at the slice's start: WARM or COLD, each A LABELLED STAGING), ours laid over the
+# ROM window (A LABELLED STAGING too), and the row is the run between two cuts both arrive at — priced on each shore's
+# OWN cycles (the head's PCs on each), the ROM's code both run in place (the memory-valid check, the bank test) held
+# equal and in neither column. No call, no frame, no pokes; the head is no row of the transcribed table (no C twin).
+BOOT_SLICE_FUNCTION = "BOOT head (.S)"
+BOOT_SLICE_CASE = "LABELLED STAGING (ROM-window overlay): {cut} [${start:x}, ${stop:x}), the {arm} machine"
+
+
+def _boot_slice_row(name, head_slice):
+    cut = head_slice.cut
+    return Row(BOOT_SLICE_FUNCTION, BOOT_SLICE_CASE.format(cut=cut.name, start=cut.start, stop=cut.stop, arm=head_slice.arm),
+               cut.start, boot_head.SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, cut.start, registered=name)
+
+
+def is_a_boot_slice(row):
+    """Is `row` a slice of the boot's head — both shores from one machine, on their own cycles?"""
+    return row.registered in boot_head.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
         + tuple(_transcription_row(case) for case in trap.CASES + tuple(gemdos.TRANSCRIPTIONS))
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
         + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS)
-        + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items()))
+        + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items())
+        + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4108,6 +4131,24 @@ def stretch_on(blob, who, stretch):
     return measured
 
 
+def boot_slice_on(name):
+    """ONE SLICE OF THE BOOT'S HEAD'S `Measurement` (above): both shores held equal on every surface
+    (`boot_head.priced`, refused by name otherwise); the costs each shore's whole instruction count and its OWN
+    cycles; what the two runs spent beside them (`boot_rest`) printed under the row. WHO RAN, for the general guard:
+    our run's cycles in the AES's own ROM text, read off its profile (none)."""
+    price = boot_head.priced(boot_head.SLICES[name])
+    OUR_RUN.append(OurRun(boot_head.SYMBOL, _cycles_in(AES_OWN_SPANS), False, 0))
+    ours, the_rom_s = price.own
+    measured = Measurement((price.the_rom_s.instructions, the_rom_s), (price.ours.instructions, ours), (0, 0))
+    measured.boot_rest = price.rest
+    return measured
+
+
+BOOT_SLICE_LINE = ("{indent}  a slice of the boot's head on its own cycles (the head's PCs on each shore); instructions the "
+                   "whole run's, held equal; the ROM's code both run in place (memory-valid check, bank test) and the "
+                   "entry {rest} cycles, held equal, in neither column; every surface held equal (`boot_head.differences`)")
+
+
 STRETCH_LINE_F = ("{indent}  net of the ROM's Line-F handler ({line_f} of its {the_rom_s}, {share:.0%}): {net:.2f} — printed, part of "
                   "no rule: the bar is the table's convention's")
 WHERE_THE_STRETCH_ENDS = "left out of the compare of the two machines where the stretch ends"
@@ -5183,6 +5224,8 @@ def _measured_on_its_path(row, bench):
         return idle_to_idle_on(shipped_bench(), row.registered, aes_ctlmgr.ROWS[row.registered])
     if is_a_stretch(row):
         return stretch_on(shipped_bench(), row.registered, aes_ourboot.STRETCHES[row.registered])
+    if is_a_boot_slice(row):
+        return boot_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5701,6 +5744,9 @@ def table(bench, jobs=SERIAL):
         # ...and a stretch of the build's own start-up: its ratio net of the ROM's Line-F handler, its live classes.
         if is_a_stretch(row):
             lines += _stretch_lines(aes_ourboot.STRETCHES[row.registered], m, name_width + ADDRESS_WIDTH)
+        # ...and a slice of the boot's head: what each shore's run spent beside its own cycles.
+        if is_a_boot_slice(row):
+            lines.append(BOOT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

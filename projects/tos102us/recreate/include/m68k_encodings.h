@@ -64,6 +64,8 @@
 #define M68K_MOVE_B_TO_D16(dn, an) (0x1140 + ((an) << M68K_DATA_REGISTER_SHIFT) + (dn))
 /* `sub.w #<imm>,Dn` in the register form, AND's and ADD's family: the sprite's clip ($fcffd8, $fd0002) */
 #define M68K_SUB_W_IMMEDIATE(dn)   (0x907c + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* ...and `sub.l #<imm>,Dn` the same way: the boot head's bank count and screen base ($fc014c, $fc01aa) */
+#define M68K_SUB_L_IMMEDIATE(dn)   (0x90bc + ((dn) << M68K_DATA_REGISTER_SHIFT))
 /* `move.l <d16>(An),Dn` and `tst.l <d16>(An)` at 0: $a00e's reads of an MFDB's base ($fd0394, $fd04f6) */
 #define M68K_MOVE_L_D16(an, dn)    (0x2028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))
 #define M68K_TST_L_D16(an)         (0x4aa8 + (an))
