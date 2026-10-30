@@ -50,7 +50,7 @@ WHAT THE ORACLE MUST SERVE for that run, MEASURED (a boot that meets anything el
      bus-error vector at its own tail and touches `$ffff8a00`: on an ST there is no blitter and the access FAULTS.
      The oracle's CPU takes no bus error, and the read is of an I/O byte no model serves — which refuses the run.
      So the run is stopped AT that one instruction and the exception is taken there as a 68000 takes it
-     (`_bus_error`): the fourteen-byte group-0 frame pushed on the supervisor stack, the PC loaded from vector 2 as
+     (`bus_error.taken`): the fourteen-byte group-0 frame pushed on the supervisor stack, the PC loaded from vector 2 as
      the machine holds it at that instant, no register but SP and PC touched. WHAT THAT BUYS IS THE MACHINE'S OWN
      PATH THROUGH THE PROBE — the instructions run, the stack the frame is pushed on — and NOT the probe's answer:
      this call discards it (measured: the booted machine is the same with D0 forced to "a blitter"). The frame is
@@ -143,7 +143,6 @@ besides (`derived.tree_key`). Neither answer runs the host library, so a process
 project's own (where `derived` keeps nothing) loses nothing by it.
 """
 import contextlib
-import ctypes
 import functools
 import hashlib
 import operator
@@ -163,10 +162,12 @@ import st_build
 import aes
 import aes_event
 import aes_switch
+import bus_error
 import case
 import fs_pexec
 import routines
 import staging
+import stopped_cpu
 import test_bios_bconout as bconout
 import transcription
 
@@ -176,42 +177,15 @@ BUS = aes.OS_BUS_ADDR_MASK
 LONG_MASK = aes.LONG_MASK
 
 # ---- THE CPU, WHERE A RUN STANDS STOPPED ------------------------------------------------------------------------------
-# The kit's door can set D0, PC and SP at a stop and wrecks the scratch registers as a C call does
-# (`emu.bench_door_return`): right for a callback, wrong for both things done here — entering a machine with its WHOLE
-# register file and its status register, and taking an exception that touches no data register. Musashi's own
-# accessors are exported by the oracle's library and are what the kit's door is written with; they are read here,
-# the kit's files untouched. (Named for the orchestrator: `emu` could offer this pair.)
-M68K_REGISTER = {**{f"d{n}": n for n in range(8)}, **{f"a{n}": 8 + n for n in range(8)},
-                 "pc": 16, "sr": 17, "usp": 19, "isp": 20}          # m68k.h's `m68k_register_t`
-_CPU = emu._LIB
-_CPU.m68k_set_reg.argtypes, _CPU.m68k_set_reg.restype = (ctypes.c_int, ctypes.c_uint), None
-_CPU.m68k_get_reg.argtypes, _CPU.m68k_get_reg.restype = (ctypes.c_void_p, ctypes.c_int), ctypes.c_uint
-_CPU.m68k_set_irq.argtypes, _CPU.m68k_set_irq.restype = (ctypes.c_uint,), None
+# Musashi's own accessors: `stopped_cpu.py` (moved there unchanged, boot B0 — the bus-error facility and the boot
+# harness use them too). Every name this module had is kept.
+M68K_REGISTER, _CPU = stopped_cpu.M68K_REGISTER, stopped_cpu.CPU
 HBL_LEVEL, NO_INTERRUPT = 2, 0          # the horizontal blank's priority; the line let go
-REGISTER_NAMES = preinit_snapshot.REGISTER_NAMES
-SR_SUPERVISOR = preinit_snapshot.SR_SUPERVISOR
-SR_TRACE = 0x8000
-
-
-def _register(name):
-    return _CPU.m68k_get_reg(None, M68K_REGISTER[name])
-
-
-def _set_register(name, value):
-    _CPU.m68k_set_reg(M68K_REGISTER[name], value & LONG_MASK)
-
-
-def _enter(registers):
-    """The stopped CPU given the whole register file of `registers`. THE STATUS REGISTER FIRST: it says which stack
-    pointer A7 is, and each of the two is then set by its own name."""
-    _set_register("sr", registers["sr"])
-    for name in REGISTER_NAMES:
-        if name != "sr":
-            _set_register(name, registers[name])
-
-
-def _registers_now():
-    return {name: _register(name) for name in REGISTER_NAMES}
+REGISTER_NAMES = stopped_cpu.REGISTER_NAMES
+SR_SUPERVISOR = stopped_cpu.SR_SUPERVISOR
+SR_TRACE = stopped_cpu.SR_TRACE
+_register, _set_register = stopped_cpu.register, stopped_cpu.set_register
+_enter, _registers_now = stopped_cpu.enter, stopped_cpu.registers_now
 
 
 def registers_at_the_stop(names):
@@ -232,7 +206,7 @@ BLITTER_REGISTERS = 0xffff8a00          # the address the access drives, as the 
 FLOPPY_GETBPB_RECORD_LOAD = 0xfc0fea    # the driver's `adda.l #<its BPB records>,a5`, the drive number * 32 in A5
 FLOPPY_BPB_RECORD_BYTES = 32            # ($fc0fe4 `asl.w #5`)
 ADDA_L_IMMEDIATE_A5 = 0xdbfc
-VECTOR_BUS_ERROR = 0x008
+VECTOR_BUS_ERROR = bus_error.VECTOR_BUS_ERROR
 DRIVE_A = 0
 FIRST_ACCESSORY_BASEPAGE = 0x9724       # long: where sndcli parks the FIRST accessory's basepage ($fe4358)
 SNDCLI, SNDCLI_END = 0xfe42e8, 0xfe4394
@@ -247,37 +221,15 @@ ACCESSORY_UDA_BYTES = 1866              # ...its UDA: from the PD's end to the C
 BASEPAGE_BYTES = 0x100
 
 # ---- THE BUS ERROR A 68000 TAKES --------------------------------------------------------------------------------------
-# Group 0: (special status, access address, instruction register, SR, PC), fourteen bytes, pushed on the supervisor
-# stack. The status word's low five bits are R/W, I/N and the function code; its upper eleven are, on a 68000, the
-# instruction register's (the manual leaves them undefined) — Hatari's own choice for them is not consulted, and the
-# probe reads none of the frame: it reloads SP from A2. The PC stacked is the instruction's own advanced past its
-# extension word (the 68000 has prefetched it when the data access faults).
-_BUS_ERROR_FRAME = struct.Struct(">HIHHI")
-BUS_ERROR_FRAME_BYTES = _BUS_ERROR_FRAME.size
-STATUS_READ, STATUS_SUPERVISOR_DATA = 0x10, 0x5
-STATUS_FROM_THE_INSTRUCTION = 0xffe0
-
-
-class Refused(RuntimeError):
-    """The boot met something the device model does not serve: said by name, never answered by a guess."""
-
-
-def _bus_error(memory, access):
-    """THE STOPPED CPU TAKES A BUS ERROR at the data access of the instruction it stands at: the frame pushed, SP
-    lowered, the trace bit cleared, the PC loaded from the vector the machine holds. Answers the frame's bytes by
-    address (the harness's store: the CPU would have made it)."""
-    status, pc, sp = _register("sr"), _register("pc"), _register("a7")
-    if not status & SR_SUPERVISOR:
-        raise Refused(f"a bus error at {pc:#x} taken in user mode: the model pushes on the stack the CPU stands on")
-    opcode, extension = case.word_in(memory, pc), WORD_BYTES
-    frame = _BUS_ERROR_FRAME.pack(opcode & STATUS_FROM_THE_INSTRUCTION | STATUS_READ | STATUS_SUPERVISOR_DATA,
-                                  access & LONG_MASK, opcode, status, pc + WORD_BYTES + extension)
-    sp -= BUS_ERROR_FRAME_BYTES
-    memory[sp:sp + BUS_ERROR_FRAME_BYTES] = frame
-    _set_register("a7", sp)
-    _set_register("sr", status & ~SR_TRACE)
-    _set_register("pc", case.long_in(memory, VECTOR_BUS_ERROR) & BUS)
-    return {sp: frame}
+# The facility is `bus_error.py`'s (boot B0, ruling D5: harness-local); the blitter probe is ONE DECLARATION of it. The
+# probe reads none of the frame: it reloads SP from A2.
+_BUS_ERROR_FRAME = bus_error.FRAME
+BUS_ERROR_FRAME_BYTES = bus_error.FRAME_BYTES
+STATUS_READ, STATUS_SUPERVISOR_DATA = bus_error.STATUS_READ, bus_error.STATUS_SUPERVISOR_DATA
+STATUS_FROM_THE_INSTRUCTION = bus_error.STATUS_FROM_THE_INSTRUCTION
+Refused = bus_error.Refused             # the boot met something the device model does not serve: by name
+THE_BLITTER_PROBE = bus_error.Fault("the blitter probe's touch", BLITTER_PROBE_TOUCH, BLITTER_PROBE_TOUCH_WORDS,
+                                    BLITTER_REGISTERS, BLITTER_PROBE_FAULTED)
 
 
 # ---- THE FLOPPY, AT THE DRIVER'S ENTRIES -----------------------------------------------------------------------------------
@@ -761,7 +713,7 @@ def _return_from_the_driver(answer, to, sp):
 # I/O page and the ROM, where the oracle drops a store as the bus does. The run's stacks are the capture's.
 OFF_THE_MACHINE = 0x200000
 BOOT_INSNS = 4_000_000                  # measured: 718,522 with two quiet accessories, 592,893 with none
-ONE_INSTRUCTION = 1                     # the segment a run leaves a stop by (`_Run._stepped_off`)
+ONE_INSTRUCTION = stopped_cpu.ONE_INSTRUCTION      # the segment a run leaves a stop by (`_Run._stepped_off`)
 THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
                           "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed served "
@@ -818,33 +770,7 @@ def io_seed_of(machine):
     return _io_seed(machine.io)
 
 
-def _runs(addresses):
-    """Sorted addresses as `(start, length)` runs."""
-    runs = []
-    for at in addresses:
-        if runs and at == runs[-1][0] + runs[-1][1]:
-            runs[-1][1] += 1
-        else:
-            runs.append([at, 1])
-    return tuple((start, length) for start, length in runs)
-
-
-def _vet_the_probe(memory):
-    words = struct.unpack_from(">2H", memory, BLITTER_PROBE_TOUCH)
-    if words != BLITTER_PROBE_TOUCH_WORDS or case.long_in(memory, VECTOR_BUS_ERROR) & BUS != BLITTER_PROBE_FAULTED:
-        raise Refused(f"the run stands at {BLITTER_PROBE_TOUCH:#x} and it is not the blitter probe's touch with the "
-                      f"bus-error vector at its tail: no other access of this machine is known to fault")
-    if _register("a0"):
-        raise Refused("the blitter probe's touch with A0 not 0: it would not reach the blitter's registers")
-
-
-def _the_frame_the_handler_is_entered_over(memory):
-    """The CPU stands at the probe's tail, the exception taken: the fourteen bytes at ITS stack pointer, read out of
-    the machine — what the 68000 pushed, wherever the model put it."""
-    pc, sp = _register("pc"), _register("a7")
-    if pc != BLITTER_PROBE_FAULTED:
-        raise Refused(f"the bus error entered {pc:#x}, not the probe's tail")
-    return {sp: bytes(memory[sp:sp + BUS_ERROR_FRAME_BYTES])}
+_runs = stopped_cpu.address_runs        # sorted addresses as `(start, length)` runs
 
 
 # ---- THE TAKEOVER: A BOOT WHOSE SCREEN MANAGER — AND, HANDED A DOOR, WHOSE TRAP DOOR — IS OURS ------------------------------
@@ -1440,22 +1366,7 @@ class _Run:
             if self._stopped(emu.bench_door_pc(), emu.bench_door_sp()):
                 return result
 
-    @staticmethod
-    def _stepped_off(stops):
-        """The run, standing BEFORE the instruction at one of `stops`, taken ONE INSTRUCTION on with that PC alone
-        disarmed — then every stop armed (the class's note). Where it stands at none of them (a driver's call
-        answered, the bus error taken: the PC moved) nothing is run."""
-        at = _register("pc")
-        if at in stops:
-            emu.bench_door_arm(stops - {at})
-            _CPU.osh_bench_resume(ONE_INSTRUCTION, (ctypes.c_uint32 * len(emu.REPORTED_REGS))())
-            # THE RUN'S FIRST RESUMED SEGMENT RUNS NO INSTRUCTION (measured: the oracle counts one and the PC and A7
-            # stand where the registers were laid). A run ENTERED AT A STOP — a machine continued from its idle's
-            # poll — would stand there still, be stopped at once, and have its entry counted as an arrival: so that
-            # one segment is taken again. (Slice L's finding; `test_a_run_entered_at_a_stop_does_not_count_its_entry`.)
-            if _CPU.osh_num_insns() == ONE_INSTRUCTION and _register("pc") == at:
-                _CPU.osh_bench_resume(ONE_INSTRUCTION, (ctypes.c_uint32 * len(emu.REPORTED_REGS))())
-        emu.bench_door_arm(stops)
+    _stepped_off = staticmethod(stopped_cpu.stepped_off)     # (moved there unchanged, boot B0: the boot harness's too)
 
     def _resumed(self, left):
         """The run continued to its next stop — or REFUSED BY NAME where `left` instructions do not reach one: a
@@ -1481,9 +1392,8 @@ class _Run:
             self.printed.append(case.word_in(memory, sp + PRINTER_CHARACTER_AT) & aes.BYTE_MASK)
             _return_from_the_driver(addrs.PRINTER_SENT, case.long_in(memory, sp) & BUS, sp)
         elif pc == BLITTER_PROBE_TOUCH:
-            _vet_the_probe(memory)
-            self.pushed = _bus_error(memory, BLITTER_REGISTERS)
-            self.frame = _the_frame_the_handler_is_entered_over(memory)
+            self.pushed = bus_error.taken(memory, THE_BLITTER_PROBE)
+            self.frame = bus_error.entered_over(memory)
         elif pc == self._until:
             return True
         elif pc == IDLE_LOOP:

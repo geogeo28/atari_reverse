@@ -233,9 +233,49 @@ test guarded gates: $(PREINIT_FILES)
 preinit-twice: $(FILES_DISK)
 # ---- END band 6 wave 0, slice H -----------------------------------------------------------------------------------------------
 
+# ---- BEGIN boot B0: THE MID-BOOT MACHINE (ruling D8) — a SEVENTH capture ----------------------------------------------------
+# The same machine and blank floppy as the snapshot's, stopped at the BIOS's `tst.w _cmdload` ($fc047a,
+# tools/midboot_snapshot.py): the start of the boot's last slice, [$fc047a, gem_entry), whose end is the pre-init machine
+# (test/boot.py). Its own scratch directory, a few seconds of Hatari, once; kept and served like the others, made again
+# under FRESH. NOT among REGISTRY_READS: no registered row is made from it, so only the suites ask for it.
+# ITS OWN CONTENT STAMP: the pre-init constants (the method's: preinit_snapshot is imported) and ROM_BASE, which this
+# tool reads to find its stop's instruction in the ROM image.
+MIDBOOT := build/midboot.bin
+MIDBOOT_INPUTS := build/midboot_inputs.txt
+MIDBOOT_CONSTANTS := $(PREINIT_CONSTANTS) ROM_BASE
+MIDBOOT_TOOL := tools/midboot_snapshot.py $(PREINIT_TOOL)
+
+.PHONY: midboot-inputs
+midboot-inputs:
+	@mkdir -p $(dir $(MIDBOOT_INPUTS))
+	@$(PY) tools/addrs.py $(MIDBOOT_CONSTANTS) > $(MIDBOOT_INPUTS).new
+	@cmp -s $(MIDBOOT_INPUTS).new $(MIDBOOT_INPUTS) \
+	  && rm -f $(MIDBOOT_INPUTS).new \
+	  || mv $(MIDBOOT_INPUTS).new $(MIDBOOT_INPUTS)
+
+$(MIDBOOT_INPUTS): midboot-inputs ;
+
+$(MIDBOOT): $(MIDBOOT_TOOL) $(MIDBOOT_INPUTS) $(ROM_IMAGE)
+	@$(FROM_THE_STORE) || $(PY) tools/midboot_snapshot.py --work build/midboot_snapshot --out $@
+	@$(INTO_THE_STORE)
+
+# ITS MASK HELD TO TWO FRESH CAPTURES (`make midboot-twice`, a prerequisite of `gates` as preinit-twice is): into a
+# directory of its own, never over the capture the suites read; `--twice` exits non-zero and names every unmasked byte.
+MIDBOOT_TWICE_DIR := build/midboot_twice
+
+.PHONY: midboot midboot-twice
+midboot: $(MIDBOOT)
+midboot-twice: $(MIDBOOT_TOOL) $(MIDBOOT_INPUTS) $(ROM_IMAGE)
+	@mkdir -p $(MIDBOOT_TWICE_DIR)
+	$(PY) tools/midboot_snapshot.py --twice --work $(MIDBOOT_TWICE_DIR)/work --out $(MIDBOOT_TWICE_DIR)/midboot.bin
+
+test guarded gates: $(MIDBOOT)
+gates: midboot-twice
+# ---- END boot B0 --------------------------------------------------------------------------------------------------------------
+
 # EVERY HATARI CAPTURE, made again under FRESH whatever build/ holds (THE STORE, above): phony then, so make runs each
 # recipe, and the recipe serves nothing.
-HATARI_CAPTURES = $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF) $(PREINIT_FILES)
+HATARI_CAPTURES = $(SNAPSHOT) $(PREINIT) $(PREINIT_ACC) $(PREINIT_ACC7) $(PREINIT_INF) $(PREINIT_FILES) $(MIDBOOT)
 ifneq ($(FRESH_RUN),)
 .PHONY: $(HATARI_CAPTURES)
 endif

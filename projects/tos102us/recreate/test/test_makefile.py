@@ -56,7 +56,8 @@ THE_SUITES = ("test", "guarded", "gates")
 CAPTURE_TOOL, ROM_IMAGE = "tools/preinit_snapshot.py", "../../../tools/hatari/TOS102US.img"
 TWICE = "preinit-twice"
 # The scripts that MAKE the captures (and the stamp of the constants they read): run before any capture exists.
-MAKE_THE_CAPTURES = {"tools/addrs.py", "tools/boot_snapshot.py", "tools/preinit_snapshot.py", "tools/accessory_disk.py"}
+MAKE_THE_CAPTURES = {"tools/addrs.py", "tools/boot_snapshot.py", "tools/preinit_snapshot.py", "tools/accessory_disk.py",
+                     "tools/midboot_snapshot.py"}
 # THE SCRIPT THAT VETS A FRESH SNAPSHOT before it is kept: it imports test modules but not the registry, and reads the
 # capture it is handed and the one pre-init machine the ROM's own boot is run from (measured: `aes_boot.CAPTURES_READ`
 # after a vet) — `{script: what its rule must have}`.
@@ -314,8 +315,9 @@ def test_the_gate_runs_the_guarded_suite_alone_on_gate_workers_unless_its_argume
 
 
 # ---- THE STORE: CAPTURES AND DERIVATIONS KEPT ACROSS FROM-EMPTY BUILDS (the user's ruling (b), 2026-10-15) ------------
-THE_HATARI_CAPTURES = (SNAPSHOT, *PREINIT_CAPTURES)
-CAPTURE_TOOLS = ("tools/boot_snapshot.py", CAPTURE_TOOL)
+MIDBOOT = "build/midboot.bin"           # (boot B0, ruling D8: THE SEVENTH — the boot stopped at $fc047a, `make midboot`)
+THE_HATARI_CAPTURES = (SNAPSHOT, *PREINIT_CAPTURES, MIDBOOT)
+CAPTURE_TOOLS = ("tools/boot_snapshot.py", CAPTURE_TOOL, "tools/midboot_snapshot.py")
 WORKSPACE_TOOLS = RECREATE.parents[2] / "tools"
 
 
@@ -352,6 +354,21 @@ def test_every_hatari_capture_is_served_from_the_store_and_kept_into_it():
     assert makefile.count(snapshot_rule) == 1
     unvetted = makefile.replace(snapshot_rule, "@$(FROM_THE_STORE) || ($(CAPTURE_VETTED))")
     assert captures_not_through_the_store([unvetted, kit]) == [SNAPSHOT]
+
+
+def test_the_suites_have_the_mid_boot_capture_and_gates_holds_its_mask():
+    """boot B0 (ruling D8): `test`, `guarded` and `gates` need the mid-boot capture, and `gates` runs `midboot-twice`,
+    whose recipe captures `--twice` into a directory of its own, never over the capture the suites read. RED: the
+    suites' line dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert all(MIDBOOT in rules[suite][0] for suite in THE_SUITES) and "midboot-twice" in rules["gates"][0]
+    twice, = [line for line in rules["midboot-twice"][1] if "tools/midboot_snapshot.py" in line]
+    assert "--twice" in twice and f"--out {MIDBOOT}" not in twice
+    line = "test guarded gates: $(MIDBOOT)"
+    assert makefile.count(line) == 1
+    dropped = rules_of([makefile.replace(line, ""), kit])
+    assert not any(MIDBOOT in dropped[suite][0] for suite in THE_SUITES)
 
 
 def capture_key_lacks(texts):

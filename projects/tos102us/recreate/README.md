@@ -1475,6 +1475,73 @@ tier3.idle_to_idle_on(blob, name, woken)                           # both shores
   has a test of its arithmetic on numbers made by hand and a test that a real measurement ASKS it. Do the same for
   the next guard: the sweep of FLIP 4 found both this way.
 
+## The boot harness — slices of the ROM's own boot on named machines (`test/boot.py`, boot B0)
+
+The user's rulings of 2026-10-29 it stands on: **D8** "Approve all three" (a WARM machine from the post-boot snapshot,
+a COLD machine, a Hatari capture stopped at `$fc047a` — each a LABELLED STAGING, the capture kept like the others);
+**D5** "Harness-local" (bus errors as a case facility, no kit edit); **D9** "Stretch rows" (a slice priced as band 5's
+our-boot stretch kind, on its own cycles beside the ROM's own run); **D7** "Byte-transcribed .S" for the head (B1's).
+Open and NOT decided by the harness: D1 (cold sizing on flat memory), D2 (cartridge), D3 (interrupts inside a run),
+D4 (FDC/DMA), D6 (`reset`), D10 (Tier 2), D11 (ROM tables), D12 (foreign code).
+
+```
+make midboot          # build/midboot.bin — the snapshot's machine stopped at $fc047a (`tst.w _cmdload`)   (~4 s)
+make midboot-twice    # two fresh captures into build/midboot_twice/, held equal outside the mask (`gates` runs it)
+```
+
+```python
+boot.warm_machine(); boot.cold_machine(); boot.midboot_machine()   # BootMachine(name, ram, registers, io, label)
+boot.entered_at(machine, pc, **registers)                          # the same machine, its run starting elsewhere
+boot.run(machine, until, budget=, io_seed=, hw_seed=, psg_seed=, faults=())   # -> Slice
+boot.run_through(machine, stops, final=)                           # slice by slice: (slices, refusal or None)
+bus_error.Fault(what, at, words, access, handler)                  # one declared bus error (aes_boot.THE_BLITTER_PROBE)
+```
+
+- **A slice** is the ROM's code run from where a machine stands (its PC, its whole register file) to its first arrival
+  at any stop named; every arrival is a stop — a declared fault's handler too (`stopped_cpu.stepped_off`, shared with
+  `aes_boot._Run`). `Slice`: the machine left
+  (the next slice's start), the stop, instructions and cycles, the RAM stored (runs), the ordered hardware writes,
+  declared I/O reads, modelled hardware reads and PSG accesses, and the bus-error frames taken. Refused by name: no
+  arrival within the budget (`NeverArrived`, with the PC it stands at), leaving the machine, NO PROGRESS (a run standing
+  at a stop that its step-off did not move), a saturated write ledger, and anything the kit's own vet refuses. The
+  case's declarations (`io_seed`, `hw_seed`, `psg_seed`) reach the run and its ledgers (held, each with its negative). No interrupt is delivered and no time passes (D3); `reset` is Musashi's
+  no-op (D6); `$fa0000` reads the image's zero (no-cartridge arms only, D2).
+- **The machines.** WARM = the post-boot snapshot entered at the reset vector (PC and SSP read off the ROM's first two
+  longwords, SR `$2700`, every other register LAID zero), vetted memory-valid (the three magics read off `$fc0688`'s
+  own `cmpi.l`s) with no reset-resident hook. COLD = WARM with the three magics zeroed; every other byte LAID (the
+  snapshot's). MID-BOOT = the `$fc047a` capture. Their premises are held by the ROM's own branch: WARM arrives at the
+  warm arm `$fc0206`, COLD (and WARM with any one magic broken) at the cold arm `$fc00f0`.
+- **D1 bites (measured)**: the cold arm on the oracle's flat megabyte sizes 1 MB and writes `memctrl` `$08` (the
+  snapshot's machine holds `$05`).
+- **Bus errors** (`test/bus_error.py`): a case declares each fault — the instruction's address and words, the address
+  it drives (computed from its effective address over the registers at the stop: `(An)`, `d16(An)`, abs.W, abs.L;
+  any other mode refused), and where vector 2 must lead; the fault is taken as a 68000 takes it (group-0 frame, SP,
+  SR's trace bit, PC from vector 2). A machine standing AT a declared fault takes it before anything runs; a fault
+  whose handler is itself a declared fault is refused (it would fault for ever). An
+  undeclared address does not fault: the kit answers the read 0 and refuses the run by name. `aes_boot`'s blitter
+  probe is one declaration of it (behaviour-neutral). `test/stopped_cpu.py` holds Musashi's register accessors,
+  the step-off rule and `address_runs` (moved out of `aes_boot`, every name kept there).
+- **The mid-boot capture** (`tools/midboot_snapshot.py`): `preinit_snapshot.py`'s method and machine, `b pc = $fc047a`,
+  refused unless the ROM holds `tst.w $482` there and the capture stands there in supervisor mode with ISP `$755a`.
+  Its own file magic; `preinit_snapshot.py` / `boot_snapshot.py` NOT edited (their content keys the five pre-init
+  captures). MASK: the clocks, the floppy VBL words, the timer-C divider, GEMDOS's accumulator / time of day /
+  milliseconds, GEMDOS's stack and the BIOS's stack to its top — measured over 30 captures in 15 `--twice` pairs, all
+  agreeing outside it (registers SR `$2314`, ISP `$755a` and palette identical in all); a region at a pre-init
+  field's address is that field's width (held). In the store and under FRESH as the other
+  six; its own content stamp `build/midboot_inputs.txt` (the pre-init constants and ROM_BASE). Held by
+  `test_boot_harness.py`: the stop, the stack's top read off the ROM's `lea`, nothing stored under the mask's floor,
+  the tool's vets (another PC / user mode / another ISP / a ROM without `tst.w $482` / a missing file), `--twice`'s
+  verdict (`disagreements`: RAM outside the mask, each register, the shifter bytes), and NOISE in every masked byte
+  changes nothing of the ROM's road to the floppy driver (AUTO runner, its process, Getbpb) — instructions,
+  registers, the machine outside the mask; noise outside the mask is seen. THAT NOISE RULE REACHES ONLY THE FIRST
+  FLOPPY CALL (this runner has no floppy device), shorter than the pre-init rule's (to the idle): B4 carries it to
+  `gem_entry` with `aes_boot`'s device model.
+- **The smoke (today's reach)**: from the reset vector on WARM, nothing declared, the boot arrives at `$fc00da`,
+  `$fc0206`, `$fc02cc` and `$fc03b6` with no refusal, then never arrives at `$fc03e0`: the BIOS hardware init's timer
+  programmer spins on the Timer C data register's read-back (`$fc260e`), which nothing declares (B3's). With ad-hoc
+  declarations (not a test) it reaches `$fc0452` and the floppy boot; the floppy driver's count-down waits time out
+  (~9.4 M instructions) and the ACSI probe's `_hz_200` wait (`$fc062a`) spins for ever (D3).
+
 ## Writing a case
 
 ```python
@@ -4154,7 +4221,7 @@ Measured from an EMPTY build/ (10 cores, 32 GB, alone on the machine):
 
 `kept/` lies beside build/ and is gitignored; moving build/ aside or `make clean` leaves it (remove it by hand). It
 keeps:
-- **Each Hatari capture** (`kept/captures/<key>/`, the snapshot and the five pre-init machines), with its digest beside
+- **Each Hatari capture** (`kept/captures/<key>/`, the snapshot, the five pre-init machines and the mid-boot machine), with its digest beside
   it (`.sha256`). The KEY is the digest of the CONTENT of the capture rule's prerequisites, the capture tools' workspace
   imports, the emulator itself (the binary Homebrew's `hatari` script execs), the user's `hatari.cfg` (which no capture
   tool overrides) and the kit's oracle: a `touch` is served, an edit is captured again. The key is read ONCE, before
@@ -4168,7 +4235,7 @@ leaves it — `test_aes_takeover`'s premise). Hatari's floppy makes each boot's 
 leave another start-up's residue in a dead slot of the screen manager's live frames; such a capture is captured again
 (up to four times, then the build stops and nothing is kept), and a refused served entry is replaced.
 
-`FRESH=1` makes every Hatari capture again WHATEVER build/ HOLDS (the six are phony then), each replacing its kept entry,
+`FRESH=1` makes every Hatari capture again WHATEVER build/ HOLDS (the seven are phony then), each replacing its kept entry,
 and derives into `build/derived/`, under a tree no run made before (no two captures are bit-identical). `FRESH=0` is
 not FRESH. WHAT A DEFAULT GATE NO LONGER PROVES: that the suite holds over FRESH captures (preinit-twice still boots the
 five pre-init machines twice and holds the mask to them), nor that every kept answer is made from nothing (each process
@@ -4302,9 +4369,13 @@ recreate/
 │                       differential over every priced row)
 │                       `aes_desk_w3b.py` / `test_desk_w3b.py` (deskmain's prep: names, declaration, door,
 │                       arrivals, U1's label)
+│                       `boot.py` / `test_boot_harness.py` (THE BOOT HARNESS: slices of the ROM's own boot on the
+│                       warm, cold and mid-boot machines), `bus_error.py` (declared bus errors) and
+│                       `stopped_cpu.py` (Musashi's register accessors and the step-off rule)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),
-│                       flipped_depths.py (W6-R4's PD0 gate on a private flipped build)
+│                       flipped_depths.py (W6-R4's PD0 gate on a private flipped build),
+│                       midboot_snapshot.py (the mid-boot machine, stopped at `$fc047a`)
 ├── build/              gitignored: the candidate .so, the RAM snapshot (the ROM's own data),
 │                       bench/ — the cross-compiled blob and the Tier 3 table — and bench_shipped/,
 │                       the shipped configuration's blob and its generated glue; gates/ (`make gates`' logs),
