@@ -1700,6 +1700,55 @@ boot_hwinit.priced(arm, kind)
   **0.72** (731 / 9,090 against 955 / 12,706) and **1.00** (104,788 / 1,535,140 against 105,002 / 1,538,630; the hooks'
   58 cycles both run, held equal).
 
+### THE BOOT'S LAST SLICE — the AUTO runner `$fc0c4a` / `$fc0cae` and the launch `[$fc047a, gem_entry)` (`src/boot/launch/`, `test/boot_launch.py`, boot B4)
+
+The user's rulings: **D8** (the MID-BOOT machine), **D9** (each row on its own cycles), **"ROM-window overlay"**,
+**"Own link rule"** (2026-10-29); **R-B4-1 "Byte-transcribed .S"**, **R-B4-2 "Answer it at its entry"**, **R-B4-3
+"Accept all three"** (2026-10-31). The orchestrator's standing calls: GEMDOS's init and the GEM entry stay the ROM's on
+both shores; the strings the slice hands GEMDOS are read where they lie (TABLE obligations, `test_boot_rom_data.py`).
+
+```
+make bootlaunch       # build/bootlaunch/launch.{elf,bin} — the .S at LAUNCH_LAID_AT ($fc3200)
+                      # build/bootlaunch/twin.{elf,bin}   — its C twin at LAUNCH_TWIN_LAID_AT ($fcc000)
+```
+
+```python
+boot_launch.SLICES                                   # {"boot launch B4, <disk>" | "boot AUTO runner B4, <disk>": SliceOf(kind, disk)}
+boot_launch.the_rom_s(s) / our_side(s, which=SHIPPED | TWIN)
+boot_launch.differences(rom, ours, kind, linked(kind, which), which)   # [] = held
+boot_launch.against_the_capture(launch, capture)     # the END surface: the pre-init capture of the same disk
+boot_launch.continued(machine, disk) / noised(...)   # the ROM's own launch on to gem_entry: the dead classes' proof
+boot_launch.priced(s)                                # the .S's Priced(the_rom_s, ours, own, rest)
+```
+
+- **What ships: the ROM's bytes** (R-B4-1). `launch.S` lays `[$fc047a, $fc0518)` and `[$fc0c4a, $fc0d50)` as the ROM
+  lays them, the bytes between FILLED (both `bsr`s to the runner stay the ROM's words), over Prtblk's text at `$fc3200`
+  (run by nothing of the slice; every string within a word displacement). Pinned where it is laid
+  (`transcription.pinned_region`, three regions): eleven words differ, each a string reached IN PLACE, and one longword
+  the pins leave out — the process's text the runner stores, our linked entry. Tier 3: 1.00 on all nine rows.
+- **Its C twin** (`launch.c` + `launch_entry.S`, the `src/bios/isr.S` precedent) is held on every row and surface;
+  priced by nothing (its own cycles ~1.3x: why the .S ships). Its rule fixes D3-D7/A3-A6 (the BIOS frames exactly those
+  at `savptr` on GEMDOS's disk calls); its glue traps the two Pexec(4) at the ROM's depth (GEMDOS keeps a caller's
+  D0/A3-A6 and frame address in the calling process's basepage, and both survive into the pre-init machine). Empty off
+  target: `test_aes_event.py`'s host call graph compiles every `src/**/*.c`.
+- **Not in RAM**: an AUTO program's Pexec(0) clears the whole TPA (`$ca00..$f8000`, measured); never over the AES's
+  text either (Tier 3's AES_OWN_SPANS guard refused a first lay at `$fe0000`).
+- **Two device classes** (each labelled): DRIVE A: NEVER LOGGED IN (R-B4-3; `NeverLoggedIn`: at `$fc047a` drive A:'s
+  record is zero, so the first Getbpb logs in the disk in the drive — the DESKTOP.INF and files disks reach their own
+  captures); THE CLOCK (R-B4-2; `AnsweringTheClock`: the RP5C15 probe `$fc4c0c` answered at its entry, carry set — what
+  the ROM's own probe returns on the capture's plain ST — asked once where a program runs).
+- **Rows**: the launch on five disks (blank, DESKTOP.INF, files, `\AUTO\X.PRG`, `\AUTO\BAD.PRG`); the AUTO runner on
+  four arms (no folder, no program, one program, Pexec failing).
+- **Held** (`differences`): stop; registers (the twin's runner rows but D1/D7/A0/A1/A2, each proved dead); the megabyte
+  outside the pre-init MASK with linked longwords mapped back; the AUTO frame pointer (the twin's 14/18 deeper, pinned);
+  stores; floppy calls and disk; THE GEMDOS TRAPS IN ORDER with arguments; blanks; clock answers; every ledger; own
+  cost. END: every register equal to the capture's; the RAM differs only in `[$a04, $a54)`, the floppy lower driver's
+  state, exactly as the ROM's own oracle run (23 / 23 / 22 bytes, pinned — R-B4-3). Two cases on a case's own pokes
+  (R-B4-3): `_bootdev` → the letter (its high byte, a ROM bug kept); the runner with `_drvbits` 0.
+- **Unpinned by name**: the `_cmdload` arm (a boot sector, a reset-resident program — D12 — or a poke of the capture).
+  **Open carry (B6's)**: A3, A4, A6 at `$fc047a` reach the pre-init machine (the BIOS process's basepage +$6c/+$70/+$78);
+  the capture's A3 is `$fc25a0`, which B3's C does not leave.
+
 ## Writing a case
 
 ```python
@@ -4509,7 +4558,11 @@ recreate/
 │                       `src/boot/sysvars.c` + `sysvars_entry.S` with `include/boot/sysvars.h`: boot B2,
 │                       [$fc02cc,$fc03b6) and $fc0eba in C, in the ordinary sweep (the bench blob);
 │                       `src/boot/hwinit.c` + `hwinit_entry.S` with `include/boot/hwinit.h`: boot B3, the BIOS's
-│                       hardware init $fc2408 and [$fc03b6,$fc03e0) in C, in the ordinary sweep)
+│                       hardware init $fc2408 and [$fc03b6,$fc03e0) in C, in the ordinary sweep;
+│                       `src/boot/launch/launch.S` with `include/boot/launch.h`: boot B4, the AUTO runner and the
+│                       launch [$fc047a, gem_entry) AS THE ROM'S BYTES — `build/bootlaunch/launch.bin` at
+│                       LAUNCH_LAID_AT; its C twin `launch.c` + `launch_entry.S` (`twin.bin`, D3-D7/A3-A6 fixed);
+│                       both one directory below the sweep, each linked by its own rule)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -4547,6 +4600,8 @@ recreate/
 │                       `boot_head.py` / `test_boot_head.py` (THE HEAD on both shores: slices, comparator, price)
 │                       `boot_sysvars.py` / `test_boot_sysvars.py` (B2) and `boot_hwinit.py` / `test_boot_hwinit.py`
 │                       (B3: the function and the stretch on both shores)
+│                       `boot_launch.py` / `test_boot_launch.py` (BOOT B4: the .S and its twin from the mid-boot
+│                       machine, END = the pre-init capture); `acc/autoprg.S` (the AUTO disks' Pterm0 program)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),

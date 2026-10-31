@@ -390,6 +390,24 @@ def test_the_suites_and_the_table_have_the_boot_head_and_no_blob_links_its_sourc
     assert not any(BOOTHEAD in dropped[suite][0] for suite in THE_SUITES)
 
 
+BOOTLAUNCH = "build/bootlaunch/launch.bin"         # (boot B4: the shipped .S, linked where it is laid)
+BOOTLAUNCH_TWIN = "build/bootlaunch/twin.bin"     # ...and its C twin, held by the battery, priced by nothing
+TABLE = "build/bench/tier3.txt"
+
+
+def test_the_table_has_what_the_boot_launch_rows_run_and_the_suites_both_products():
+    """boot B4: the table's rows run the shipped `.S` from the MID-BOOT capture, so the table needs both — a table made
+    from empty asks `make midboot` (served from the store) before it measures (the gate went red without it); the
+    suites need both products, the twin's battery among them. RED: the table's `$(MIDBOOT)` dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert {MIDBOOT, BOOTLAUNCH} <= set(rules[TABLE][0])
+    assert all({BOOTLAUNCH, BOOTLAUNCH_TWIN, MIDBOOT} <= set(rules[suite][0]) for suite in THE_SUITES)
+    line = "$(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND)"
+    assert makefile.count(line) == 1
+    assert MIDBOOT not in rules_of([makefile.replace(line, "$(BOOTLAUNCH_BIN) $(CAND)"), kit])[TABLE][0]
+
+
 def capture_key_lacks(texts):
     """What the captures' key does not read, over makefile `texts`: of the workspace modules a capture tool imports (a
     file of this project's tools/ or the workspace's), the oracle and the Hatari — each named by the key's own list or

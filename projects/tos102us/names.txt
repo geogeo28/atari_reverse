@@ -2859,3 +2859,20 @@ var 0xfc25a0 ROM_RS232_HANDLER_TABLE
 cmt 0xfc25a0 Four longwords: the MFP channel 9..12 handlers (0xfc281c, 0xfc2794, 0xfc27fa, 0xfc26f6), installed from the last down.
 var 0xfc053a ROM_IKBD_RESET_COMMAND
 cmt 0xfc03b6 Boot B3 (C: src/boot/hwinit_entry.S boot_hardware_init_called_entry): bsr 0xfc2408; Ikbdws $80 $01 (0xfc053a); 32,768 x bsr to the rts at 0xfc0556 (the 6301's pause, a FLOOR); cartridge hooks d0=2 (0xfc0646, the ROM's). Ends at 0xfc03e0 (resolution read, B5).
+cmt 0xfc047a Boot B4 (SHIPS as the ROM's bytes: src/boot/launch/launch.S boot_launch_entry, laid at $fc3200, build/bootlaunch/launch.bin; C twin launch.c + launch_entry.S at $fcc000): _cmdload tested BEFORE the AUTO runner; both arms bsr 0xfc0c4a then _sysbase := $fc0000. Set: Pexec(0,"COMMAND.PRG","",""). Clear: env "PATH=\0A:\\\0\0" at $840 (letter from _bootdev's HIGH byte, a ROM bug), Pexec(5,"","",$840) (adda.w #14: a stray word, ROM bug), p_tbase := exec_os, Pexec(4,"",bp,$840) -> gem_entry. jmp 0xfc0030 if it returns.
+fn 0xfc0c4a auto_runner
+cmt 0xfc0c4a The AUTO runner: return kept at $980, path ptrs $984/$988 (0xfc0c36 / 0xfc0c3c); boot drive not in _drvbits -> return. Else Pexec(5,"","","") a basepage, its p_tbase := 0xfc0cae, Pexec(4,a3,bp,a3) (A3 unset: a ROM bug, mode 4 reads neither). Never returns through Pexec: the process returns via $980 on the BIOS stack ($755a). .S: launch.S boot_auto_runner_entry; C twin boot_auto_runner (boot B4).
+fn 0xfc0cae auto_process
+cmt 0xfc0cae The AUTO process (user mode, basepage at 4(sp)): Super(0) (old SSP kept in A4), A5 := basepage, sp := basepage+256; Mshrink(0,bp,256); Fsetdta($98c); Fsfirst("\AUTO\*.PRG",7); for each: "\AUTO\"+name at $9b8, Pexec(0,$9b8,"",""), Fsetdta, Fsnext (d7 = 8/2: its stack-cleanup trick). Ends lea $755a,sp / rts via $980 - the process is never terminated (still p_run when GEM is launched). .S: launch.S boot_auto_process_entry; C twin boot_auto_process (boot B4).
+var 0xfc0518 ROM_ENVIRONMENT_TEMPLATE
+var 0xfc0524 ROM_COMMAND_PRG
+var 0xfc0537 ROM_EMPTY_STRING
+cmt 0xfc0537 The NUL ending "GEM.PRG" (0xfc0530): every empty name, tail and environment the boot hands Pexec.
+var 0xfc0c36 ROM_AUTO_PATH
+var 0xfc0c3c ROM_AUTO_PATTERN
+var 0x0840 boot_environment
+var 0x0980 auto_return
+var 0x0984 auto_path
+var 0x0988 auto_pattern
+var 0x098c auto_dta
+var 0x09b8 auto_program_name

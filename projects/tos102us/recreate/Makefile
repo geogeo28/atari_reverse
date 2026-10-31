@@ -389,7 +389,9 @@ BOOTHEAD_DIR     := build/boothead
 BOOTHEAD_ELF     := $(BOOTHEAD_DIR)/head.elf
 BOOTHEAD_BIN     := $(BOOTHEAD_DIR)/head.bin
 BOOTHEAD_SRC     := src/boot/head/head.S
-BOOTHEAD_LAID_AT := $(shell sed -n 's/^\#define HEAD_LAID_AT[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' include/boot/head.h)
+# A link address read out of its header — `#define <name> 0x...` — by the one `sed` the boot's own link rules share.
+laid_at = $(shell sed -n 's/^\#define $(1)[[:space:]]*\(0x[0-9a-fA-F]*\).*/\1/p' $(2))
+BOOTHEAD_LAID_AT := $(call laid_at,HEAD_LAID_AT,include/boot/head.h)
 ifeq ($(BOOTHEAD_LAID_AT),)
 $(error include/boot/head.h defines no HEAD_LAID_AT — the boot head's link address is read from there and nowhere else)
 endif
@@ -405,6 +407,47 @@ $(BOOTHEAD_BIN): $(BOOTHEAD_ELF)
 boothead: $(BOOTHEAD_BIN)
 test guarded gates: $(BOOTHEAD_BIN)
 
+# THE BOOT'S LAST SLICE (boot B4; rulings R-B4-1 "Byte-transcribed .S", "ROM-window overlay" and "Own link rule") — the
+# launch and the AUTO runner, [$fc047a, gem_entry). WHAT SHIPS is `src/boot/launch/launch.S`, the ROM's own bytes, LAID
+# over a copy of the image's ROM window at `LAUNCH_LAID_AT` and LINKED THERE; ITS C TWIN (`launch.c` + `launch_entry.S`,
+# the `src/bios/isr.S` precedent) is linked at `LAUNCH_TWIN_LAID_AT` (`include/boot/launch.h`, the one spelling of both)
+# and held against the ROM, priced by nothing. Neither can lie in RAM: an AUTO program's Pexec(0) clears the whole TPA
+# while the runner that called it still runs. Both lie one directory below kit.mk's `src/*/*` sweeps, so no blob above
+# links either and no symbol of theirs moves. THE TWIN'S OWN FLAGS: BENCH_CFLAGS with D3-D7 and A3-A6 FIXED — the BIOS
+# frames those registers in RAM on every disk call GEMDOS makes for its traps, so the C must hold them as the ROM's
+# leaves them (`launch.c`'s header). `test/boot_launch.py` reads the flat bytes and the ELFs' symbols.
+BOOTLAUNCH_DIR      := build/bootlaunch
+BOOTLAUNCH_ELF      := $(BOOTLAUNCH_DIR)/launch.elf
+BOOTLAUNCH_BIN      := $(BOOTLAUNCH_DIR)/launch.bin
+BOOTLAUNCH_SRC      := src/boot/launch/launch.S
+BOOTLAUNCH_TWIN_ELF := $(BOOTLAUNCH_DIR)/twin.elf
+BOOTLAUNCH_TWIN_BIN := $(BOOTLAUNCH_DIR)/twin.bin
+BOOTLAUNCH_TWIN_SRC := src/boot/launch/launch_entry.S src/boot/launch/launch.c
+BOOTLAUNCH_TWIN_CFLAGS := $(BENCH_CFLAGS) $(foreach register,d3 d4 d5 d6 d7 a3 a4 a5 a6,-ffixed-$(register))
+BOOTLAUNCH_LAID_AT      := $(call laid_at,LAUNCH_LAID_AT,include/boot/launch.h)
+BOOTLAUNCH_TWIN_LAID_AT := $(call laid_at,LAUNCH_TWIN_LAID_AT,include/boot/launch.h)
+ifeq ($(BOOTLAUNCH_LAID_AT),)
+$(error include/boot/launch.h defines no LAUNCH_LAID_AT — the boot launch's link address is read from there and nowhere else)
+endif
+ifeq ($(BOOTLAUNCH_TWIN_LAID_AT),)
+$(error include/boot/launch.h defines no LAUNCH_TWIN_LAID_AT — the C twin's link address is read from there and nowhere else)
+endif
+
+$(BOOTLAUNCH_ELF): $(BOOTLAUNCH_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTLAUNCH_DIR)
+	m68k-elf-gcc $(BENCH_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTLAUNCH_LAID_AT) $(BOOTLAUNCH_SRC) -o $@
+
+$(BOOTLAUNCH_TWIN_ELF): $(BOOTLAUNCH_TWIN_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTLAUNCH_DIR)
+	m68k-elf-gcc $(BOOTLAUNCH_TWIN_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTLAUNCH_TWIN_LAID_AT) $(BOOTLAUNCH_TWIN_SRC) -o $@
+
+$(BOOTLAUNCH_DIR)/%.bin: $(BOOTLAUNCH_DIR)/%.elf
+	m68k-elf-objcopy -O binary $< $@
+
+.PHONY: bootlaunch
+bootlaunch: $(BOOTLAUNCH_BIN) $(BOOTLAUNCH_TWIN_BIN)
+test guarded gates: $(BOOTLAUNCH_BIN) $(BOOTLAUNCH_TWIN_BIN)
+
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
@@ -419,8 +462,9 @@ derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 	@$(PY) test/derived.py
 
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
-# process writes, line for line.
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTHEAD_BIN) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
+# process writes, line for line. Boot B4's rows run the shipped launch (`$(BOOTLAUNCH_BIN)`) from the mid-boot capture
+# (`$(MIDBOOT)`, served from the store like every capture); the C twin is priced by nothing, so the table reads no twin.
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTHEAD_BIN) $(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench

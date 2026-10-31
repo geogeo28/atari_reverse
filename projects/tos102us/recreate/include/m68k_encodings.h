@@ -51,6 +51,8 @@
 #define M68K_AND_L_IMMEDIATE(dn)   (0xc0bc + ((dn) << M68K_DATA_REGISTER_SHIFT))
 /* `and.b #<imm>,Dn`, the same family at byte width: the vertical blank's resolution mask ($fc0700) */
 #define M68K_AND_B_IMMEDIATE(dn)   (0xc03c + ((dn) << M68K_DATA_REGISTER_SHIFT))
+/* ...and `add.b #<imm>,Dn`, ADD's byte form (opmode 000): the boot's environment letter ($fc04ca) */
+#define M68K_ADD_B_IMMEDIATE(dn)   (0xd03c + ((dn) << M68K_DATA_REGISTER_SHIFT))
 
 /* `move.w <d16>(An),Dn` and `movea.l <d16>(An),Am`, for the displacement of 0 gas would drop */
 #define M68K_MOVE_W_D16(an, dn)    (0x3028 + ((dn) << M68K_DATA_REGISTER_SHIFT) + (an))

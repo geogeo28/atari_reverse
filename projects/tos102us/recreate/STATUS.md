@@ -9,7 +9,7 @@ counts in this file against its rows.
 
 | component | Tier 1 (functions verified) | Tier 2 (conformance ledger) | Tier 3 (cycle ratio) | state |
 |---|---|---|---|---|
-| boot | 7 | — | 1.00x, the head's six slices (H1 / H2 / H3 x WARM / COLD) each on its own cycles; 0.74x B2's two slices in C; 0.32x `$fc0eba`; 0.72x `$fc2408` and 1.00x B3's stretch, each x WARM / COLD (`make bench`) | STARTED — **B1: THE HEAD `[$fc0030, $fc02cc)` SHIPS AS THE ROM'S BYTES** (2026-10-29); **B2: THE SYSTEM VARIABLES AND THE VECTORS `[$fc02cc, $fc03b6)` + `$fc0eba` IN C, `$68` / `$70` STORED WITH OUR ENTRIES** (2026-10-30); **B3: THE BIOS's HARDWARE INIT `$fc2408` + `[$fc03b6, $fc03e0)` IN C, `$114` / `$118` STORED WITH OUR ENTRIES** (2026-10-31, `## Verified — boot`); B4 (AUTO + launch) is next |
+| boot | 9 | — | 1.00x, the head's six slices (H1 / H2 / H3 x WARM / COLD) each on its own cycles; 0.74x B2's two slices in C; 0.32x `$fc0eba`; 0.72x `$fc2408` and 1.00x B3's stretch, each x WARM / COLD; 1.00x B4's launch (five disks) and AUTO runner (four arms), the ROM's bytes in `.S` (`make bench`) | STARTED — **B1: THE HEAD `[$fc0030, $fc02cc)` SHIPS AS THE ROM'S BYTES** (2026-10-29); **B2: THE SYSTEM VARIABLES AND THE VECTORS `[$fc02cc, $fc03b6)` + `$fc0eba` IN C, `$68` / `$70` STORED WITH OUR ENTRIES** (2026-10-30); **B3: THE BIOS's HARDWARE INIT `$fc2408` + `[$fc03b6, $fc03e0)` IN C, `$114` / `$118` STORED WITH OUR ENTRIES** (2026-10-31); **B4: THE AUTO RUNNER AND THE LAUNCH `[$fc047a, gem_entry)` SHIP AS THE ROM'S BYTES, THEIR C TWIN HELD** (2026-10-31, `## Verified — boot`); B5 (display + Line-A) is next |
 | bios | 20 | — | 0.88–3.84x, every ✅ row priced (`make bench`); one ACIA-chain routine unpriced (`acia_take_byte`, which no case enters directly) | STARTED |
 | xbios | 29 | — | 0.23–2.03x, every ✅ row priced; the shared timer programmer unpriced (register arguments), and Scrdmp (entered only through the VBL and v_hardcopy's `trap #14`) | STARTED |
 | gemdos | 109 | — | **KNOWN PRICING GAP (the block under this table; the user's ruling pending): one row shown under the bar, the buffer flush at 1.01, is 1.13 on its own cycles behind the BIOS's.** 0.35–1.79x, every ✅ row priced; the three terminators verified and unpriced (they stop at a CHECKPOINT, so there is no second column) | STARTED |
@@ -60,7 +60,7 @@ any reading). NOTHING IS ACCEPTED. Until the ruling, the ratio cells of those tw
 that says "within the bar" — quote the table's whole-run pricing and must be read with this block. The full
 measurement is the wave log's entry 16 (K5) and `scratchpad/b4w2_fix_YZ.md`.
 
-## Verified — boot (7)
+## Verified — boot (9)
 
 THE BOOT'S HEAD (boot B1, 2026-10-29) — `src/boot/head/head.S`, `[$fc0030, $fc02cc)` from the reset to `lea $755a,sp`,
 BYTE-TRANSCRIBED. The user's rulings, quoted: D7 "Byte-transcribed .S" (hand 68000, compared slice by slice against
@@ -156,6 +156,62 @@ A KNOWN HOLE OUTSIDE B3, predating it: Ikbdws's settle one pass short (`rts_dela
 SNAPSHOT's: through the standard table path the target's linked entries at `$114` / `$118` are an image difference the
 kit's vet refuses (measured); the boot comparator maps them back.
 
+
+THE BOOT'S LAST SLICE (boot B4, 2026-10-31) — the launch `[$fc047a, gem_entry)` with the AUTO runner `$fc0c4a` and the
+process it launches `$fc0cae`. THE USER'S RULINGS (2026-10-31), quoted: R-B4-1 "Byte-transcribed .S" (the launch and
+the AUTO runner ship as the ROM's own bytes in `.S` — the C-first rule's exception over the 1.10 bar, verified like the
+head; the C stays as their C TWIN, the `src/bios/isr.S` precedent: built, differentially tested, priced by nothing);
+R-B4-2 "Answer it at its entry" (the clock-chip probe `$fc4c0c` answered at its entry on both shores, labelled, like
+the floppy at the driver's entries; the one-program arm a held row); R-B4-3 "Accept all three" (the device case DRIVE
+A: NEVER LOGGED IN, from the `$fc047a` capture; the floppy lower driver's state `[$a04, $a54)` pinned EXACTLY at the
+end, not masked; the two labelled function-level cases on a case's own pokes). WHAT SHIPS: `src/boot/launch/launch.S`,
+laid over a copy of the ROM window at `$fc3200` (Prtblk's text: unported, run by nothing of the slice; every string it
+reaches in place within a word displacement) and linked there by its own rule (`build/bootlaunch/launch.bin`) — the
+ROM's `[$fc047a, $fc0518)` and `[$fc0c4a, $fc0d50)` laid as the ROM lays them, the bytes between FILLED so both `bsr`s
+to the runner are the ROM's words; pinned where it is laid (`transcription.pinned_region`, three regions,
+`assert_transcribed`): ELEVEN words differ, each the ROM's string reached IN PLACE (derived from the ROM's text), and
+ONE LONGWORD the pins leave out, the process's text the runner stores — our linked entry (held: it is the symbol, and
+the ROM's holds `$fc0cae`). Not in RAM: an AUTO program's Pexec(0) clears the whole TPA (`$ca00..$f8000`, measured).
+THE C TWIN (`launch.c` + `launch_entry.S`, `build/bootlaunch/twin.bin` at `$fcc000`, the VDI's text; D3-D7/A3-A6 FIXED
+by its rule — the BIOS frames exactly those at `savptr` on GEMDOS's disk calls; EMPTY OFF TARGET, the orchestrator's
+acknowledged arrangement on `src/desk/deskins.c`'s precedent (the user's R3, ruling O1: compiled for the target alone,
+no host twin) — the host's call-graph sweep compiles every `src/**/*.c`) is held on every row and surface the `.S` is; its own cycles about a third over the ROM's (the reason for R-B4-1), pinned exactly.
+THE DEVICES: `aes_boot`'s model and two classes, each labelled where it bites — DRIVE A: NEVER LOGGED IN (R-B4-3: at
+`$fc047a` the driver's record for drive A: is zero, held; the first Getbpb logs in the disk in the drive, so the
+DESKTOP.INF and files disks reach THEIR OWN pre-init captures from the blank disk's mid-boot machine) and THE CLOCK
+(R-B4-2: the probe answered carry set — no clock — what the ROM's own probe returns on the capture machine, a plain ST
+(`--machine st`): its read-back misses the pattern, `$fc4c3e ori #1,ccr`; its scratch not laid, read by neither caller
+past its `bcs`; asked once where a program runs, never elsewhere; answered "present", the ROM takes another road).
+MEASURED (review RB4, `scratchpad/RB4/exp/clock_probe.py`): Hatari with the capture's own machine (`--machine st`) and
+the ONE PROGRAM disk, booted to gem_entry, hits the probe's absent arm `$fc4c3e` ("no clock") and never its present
+arm `$fc4c2a`.
+
+HELD (`boot_launch.differences`, each surface's negative in `test_boot_launch.py`), THE LAUNCH on the blank, DESKTOP.INF
+and files disks, one program (`\AUTO\X.PRG`, Pterm0) and a program Pexec cannot load (`\AUTO\BAD.PRG`); THE AUTO
+RUNNER (its `bsr` to its return) with no `\AUTO`, a folder with no program, one program, and that failing program —
+both products: the stop; every register (the twin's runner rows but D1/D7/A0/A1/A2, EXACTLY the ones that differ, each
+proved dead by noise through the ROM's run to gem_entry); the megabyte outside the PRE-INIT MASK (no new mask) with our
+linked longwords mapped back (`$980`, the AUTO process's text; at the runner's return Pexec's copy of it and Super's
+return PC on the process's stack, gone where a program ran); the AUTO process's frame pointer, the `.S`'s the ROM's,
+the twin's 14 / 18 bytes deeper (pinned); the stores; the floppy's calls and the disk; THE GEMDOS TRAPS IN ORDER with
+their arguments; the blanks; the clock's answers; every ledger; our own cost (the `.S`: the ROM's instructions and
+cycles exactly). THE END SURFACE (R-B4-3): our launch's machine against the pre-init capture of its disk — every
+register equal; outside the mask the RAM differs in the floppy lower driver's own state `[$a04, $a54)` ALONE, exactly
+where and as much as the ROM's own oracle run does (23 / 23 / 22 bytes, pinned). THE TWO CASES ON A CASE'S OWN POKES
+(R-B4-3): the environment's letter from `_bootdev`'s HIGH byte (a ROM bug, kept: `$0001` 'A', `$0100` 'B') and the
+runner with `_drvbits` 0 (no GEMDOS call) — nothing else poked, but THE TWIN'S environment case's own call frame
+("A CASE'S POKES: the call's frame": the return address and the image base laid under the stack top for
+`environment_laid`). THE GEMDOS LEDGER'S ARGUMENT WIDTHS are the ROM's own frames less the function word (Pexec 14,
+Mshrink 10, Fsfirst 6, Fsnext 0, Fsetdta 4, Super 4; Pterm0 0, the AUTO program's own), read off the ROM listing
+(review RB4's R1: its "Pexec 14 -> 10" mutant now KILLED). UNPINNED, NAMED (RB4's R2): the twin's `btst` bit modulus
+(`& BTST_REGISTER_BIT_MASK`, 31) — the mid-boot `_bootdev` is 0, and a 16..31 value with its `_drvbits` bit would be a
+new poke, the user's (the .S's `btst d1,d0` is the ROM's byte-pinned word). B0's mask-noise rule carried to gem_entry. UNPINNED BY NAME: THE `_cmdload`
+ARM, not run — reached only through a boot sector, a reset-resident program (D12) or a poke of the capture, a staging
+beyond the ruled machines. OPEN CARRY (B6's): A3, A4 and A6 as the boot stands at `$fc047a` reach the pre-init machine
+(the BIOS process's basepage +$6c/+$70/+$78, through the runner's Pexec(4)); D3 and the rest do not — the capture's A3
+is `$fc25a0`, what the ROM's `$fc2408` leaves, where B3's C keeps its caller's: whether `[$fc0452, $fc047a)` rewrites
+it is B6's span (pinned: `test_which_mid_boot_registers_reach_the_pre_init_machine`).
+
 | Addr (ROM) | Name | Cases | Cost (insns / cycles) | Tier 3 (recreate / original) | Status | Verification |
 |---|---|---|---|---|---|---|
 | `0xfc0030` | `boot_head` H1 (`src/boot/head/head.S`: the reset to `$fc00da`) | 2 (WARM, COLD) | 63 / 940 WARM, 59 / 860 COLD | **1.00** WARM, **1.00** COLD (own cycles: 838 / 812; the memory-valid check both run in place, held equal) | ✅ verified | the byte pin over `[$fc0030, $fc02cc)`, ten words in place; WARM restores memctrl, COLD does not (the first memory-valid check's Z); the PSG ledger (ports out, drives deselected), the 16 palette words and the first screen base in order; the ROM's own shore unchanged with the overlay laid |
@@ -165,6 +221,8 @@ kit's vet refuses (measured); the boot comparator maps them back.
 | `0xfc0eba` | `boot_os_header_to_ram` (`src/boot/sysvars.c`) | 1 | 106 / 1,820 | **0.32** (40 / 606) | ✅ verified | the header's 48 bytes to `$940`, `jmp <reset>.l` at `$93a` (the two template words behind the ROM's `rts`), the copy's `bra.s` back to it, its os_conf := the word after it, _sysbase := `$940`; the host differential poisoned; inside B2's slice on both shores too |
 | `0xfc2408` | `bios_hardware_init` B3 (`src/boot/hwinit.c` + `hwinit_entry.S`'s `bios_hardware_init_entry`: to its return `$fc03ba`) | 2 (WARM, COLD) + the host differential | 955 / 12,706 | **0.72** WARM, **0.72** COLD (731 / 9,090) | ✅ verified | the MFP cleared by three `movep.l`, VR $48, the AER's CTS edge; timer C 200 Hz and timer D 9600 baud through the programmer; seven handlers through `Mfpint`'s body, timer C's and the ACIAs' OURS on target (`$114` / `$118`, mapped back), the RS232's five the ROM's; the USART; port A's DTR and RTS dropped and the strobe raised; the three IOREC records, KBDVECS' nine, conterm, the key repeat, the sound list, Bioskeys; the two 6850s reset and configured — every ledger in order, and the ROM's own against `mfp.Chip` composed from the disassembly; our own cost pinned exactly (it holds `$fc28ae`'s IPL bracket, unpinned by behaviour: D3). Mutation: 42 of 42 KILLED with the stretch's (C, header, entry, `rts_delay` and the comparator: the SR mask, the scratch, the residue, the false-green guard, the noise, the join, the AER's latch) — the one first-run survivor, the join dropping the second leg's ledgers on both shores, killed by `test_the_joined_stretch_carries_both_legs_ledgers`; review RB3's four survivors (the bracket dropped, the pause one pass short and one long, a 64-byte deeper frame) KILLED by the fix pass's pins |
 | `0xfc03b6` | `boot_hardware_init_called_entry` B3 (`src/boot/hwinit_entry.S` + `boot_ikbd_reset`: to `$fc03e0`, the resolution read) | 2 (WARM, COLD) | 105,002 / 1,538,688 | **1.00** WARM, **1.00** COLD (ours 104,788 / 1,535,140 on the blob's cycles, the ROM's 1,538,630 but the hooks' 58, held equal) | ✅ verified | the init's call, Ikbdws over `$80 $01` (two polls, two bytes to `$fffc02`), the 6301's pause — 32,768 passes of a `bsr` to an `rts`, COUNTED on both shores, the leg ours + 126 cycles exactly, a FLOOR — and the cartridge's hook 2, the ROM's (D2: no cartridge). Two runs, joined, cut at the init's return (the 6850's two registers at one address; ORCHESTRATOR'S INTERIM CALL, the user may override) |
+| `0xfc047a` | `boot_launch_entry` B4 (`src/boot/launch/launch.S`, the ROM's bytes; C twin `launch.c` + `launch_entry.S`: to gem_entry) | 5 (BLANK, DESKTOP.INF, FILES, ONE PROGRAM, PEXEC FAILS) x 2 products | 9,661 / 1,776 BLANK .. 65,630 / 2,412 ONE PROGRAM (own) | **1.00** BLANK, DESKTOP.INF, FILES, ONE PROGRAM, PEXEC FAILS (the ROM's instructions and own cycles exactly; the twin's own cycles 2,352 against 1,776 on BLANK, priced by nothing) | ✅ verified | `_cmdload` tested before the AUTO runner; `_sysbase`; the environment `PATH=` / `A:\` (the letter from `_bootdev`'s high byte); Pexec(5), the shell's text exec_os, Pexec(4) a word low (the ROM's stray word) — the GEMDOS traps in order with their arguments, the END the pre-init capture of each captured disk but the driver's own state (pinned). Mutation: the `.S`'s 9 and the clock's 5 KILLED (a sixth, a default no caller passed, removed from the code); the twin's 33 (31 killed, 2 equivalent: a word against a long test of GEMDOS's sign-extended answers; the stack drop after a Pexec(4) that never returns); the twin's `btst` modulus UNPINNED (`_bootdev` 0 only) |
+| `0xfc04a0` | `boot_auto_runner_entry` B4 (`launch.S`'s $fc0c4a / $fc0cae; the twin's `boot_auto_runner` / `boot_auto_process`: the `bsr` to its return) | 4 (BLANK, NO PROGRAM, ONE PROGRAM, PEXEC FAILS) x 2 products + the drive missing | 6,354 / 870 BLANK .. 62,344 / 1,506 ONE PROGRAM (own) | **1.00** BLANK, NO PROGRAM, ONE PROGRAM, PEXEC FAILS | ✅ verified | its return kept at `$980`; Pexec(5) a basepage, its text our process entry, Pexec(4) (A3 as name and environment, a ROM bug kept); the process: Super, its basepage's top its stack, Mshrink, Fsetdta / Fsfirst / Fsnext over `\AUTO\*.PRG`, each found Pexec(0)'d (the clock answered where it runs), back through `$980` on the BIOS's stack — never terminated |
 
 ## Verified — xbios (29)
 
@@ -3283,7 +3341,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       over REAL GEMDOS in place — no replay — and their ratio is the own-cycle one, the whole run's printed
       beside). SIXTEEN STRETCHES AND gem_gemdos_call's SIX `.S` ROWS; the registry's import reads the DESKTOP.INF
       capture for them (`REGISTRY_READS` gained it: `test_makefile.py` said so).
-      THE TABLE against `2925660`'s (5,678 lines → 9,379) — the length TODAY, which `test_status` holds this sentence to
+      THE TABLE against `2925660`'s (5,678 lines → 9,397) — the length TODAY, which `test_status` holds this sentence to
       (5,777 at this slice; +64 at band 6's slice B0, its re-derived rows): 22 rows and their 76 lines under them, one line of
       legend; NO EXISTING LINE MOVED. NO ROW IS OVER 1.00 — the highest the reader's 0.98 (0.98 with thunks):
       gem_main 0.59 / 0.58 (the first pass, without and with a DESKTOP.INF; whole run 0.74), 0.57 the teardown,
@@ -3511,7 +3569,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     routine, no new `.S`, no kit edit, no cartridge (W4-R12); the Line-F table behind `$2c` is the ROM's, so the
     desk's turns stay foreign windows and "ours booted" still reads to deskmain's entry and no further (W4-R3);
     accessory machines stay door takeovers (W4-R2); NO SHIPPED OBJECT CHANGED. THE TABLE against `f0985a1`'s (5,777
-    lines → 9,379) — the length today, held by `test_status` (5,777 at the flip; +64 at band 6's slice B0, +520 at its slice F1, +400 at its slice F2's stage 1, +508 at its stage 2, +60 at its slice F2b, +237 at its slice F2c, +491 at its slice F3's stage 1, +6 at its fix pass, +381 at its stage 2, +28 at its stage 2's third fix pass, +47 at its slice P7, +56 at its slice F3's stage 3, +9 at its fix pass, +150 at its slice F4, +124 at its W3a's stage 1, +94 at its stage 2, +332 at its stage 3, +70 at its W3b's flip, +12 at boot B1's head, +5 at boot B2, +8 at boot B3): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
+    lines → 9,397) — the length today, held by `test_status` (5,777 at the flip; +64 at band 6's slice B0, +520 at its slice F1, +400 at its slice F2's stage 1, +508 at its stage 2, +60 at its slice F2b, +237 at its slice F2c, +491 at its slice F3's stage 1, +6 at its fix pass, +381 at its stage 2, +28 at its stage 2's third fix pass, +47 at its slice P7, +56 at its slice F3's stage 3, +9 at its fix pass, +150 at its slice F4, +124 at its W3a's stage 1, +94 at its stage 2, +332 at its stage 3, +70 at its W3b's flip, +12 at boot B1's head, +5 at boot B2, +8 at boot B3, +18 at boot B4): ONE LINE MOVED, the `net` legend's (it now says who runs the trap) — no cost, no own column, no
     turn, no class line (`scratchpad/b5/W4/F/tdiff_final.txt`, against `scratchpad/final36/tier3.txt`).
     - **(a) THE WORD, AND ITS REDS.** With the one word turned and nothing else, the slice's batteries (every
       `test_aes_*.py`, `test_tier3.py`, `test_status.py`, `test_transcribed.py`, `test_derived.py`,
@@ -3591,7 +3649,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
       baseline's but the legend — so every figure over 1.00 that it prints is one AWAITING (20) and (22) list
       already (the accessory turns net of the Line-F handler 1.02 .. 1.22; the stretches' 1.06 .. 1.28 and the
       screen manager's first turn 1.11), none over 1.10 by the table's convention, none new, none moved.
-    - **(e) WHO RAN, PER ROW CLASS** (`probe/p4_rows.py`: every row of the registry's 3,211 rows measured on the
+    - **(e) WHO RAN, PER ROW CLASS** (`probe/p4_rows.py`: every row of the registry's 3,220 rows measured on the
       shipped blob, once on a copy of `f0985a1`'s harness and once on this tree's — `p4_head.json`, `p4_flip.json`,
       `p4_summary.out`; A PROBE'S CENSUS, ONE PASS, HELD BY NO TEST — how often the pool makes a session decides the
       totals; THE RULE is held on every kit call of every row's own test, `vet_who_ran_the_selector_switch`):
@@ -3836,7 +3894,7 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
     other chain), the userdef stack 438 of 1,024 (PD0 re-read since band 6 W3a's diet landed opn_appl's chain: 1,460 at
     this wave, File > Open). THE TABLE IS 658 ENTRIES: 84 native (65 routines), 570 through 531
     thunks, 4 the ROM's; 391 THUNKS ENTERED THROUGH IT, 140 UNENTERED BY NAME; 52 NATIVE ROUTINES ENTERED, 13 NOT,
-    BY NAME. THE PRE-INIT CAPTURES ARE five. THE READ GUARD: 3,211 rows in 32 chunks, 16 NOT HELD BY NAME.
+    BY NAME. THE PRE-INIT CAPTURES ARE five. THE READ GUARD: 3,220 rows in 32 chunks, 16 NOT HELD BY NAME.
     - **SLICE W — THE WINDOW** (`project.toml`, `test/staging.py`, `test/gemdos_fs.py`, `test/test_window.py` and the
       order assertions of five batteries). The declared staging band moved `$60000` → `$75000`, DIRECTLY UNDER the VDI's
       and the AES's staged windows (`$76000..$7e000`, not moved); the file system's window `[$68000, $75000)` →
@@ -8702,10 +8760,23 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make test` (BOOT B3, alone in the shared tree; `make guarded` collects the same ids — the gate
-is the orchestrator's): **34,692 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make gates` (BOOT B4, the orchestrator's from-empty gate, build/ and every `__pycache__` moved aside; `make guarded`
+collects the same ids): **34,910 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
+- BOOT B4, THE AUTO RUNNER AND THE LAUNCH (2026-10-31, alone in the shared tree; rulings R-B4-1..3):
+  `make test` (`PYTEST_ARGS="-n 8"`), `build/*.so`, `build/bench*`, `build/boothead`, `build/bootlaunch` and every
+  `__pycache__` (the kit's two among them) moved aside first: 34,916 collected, 34,902 passed, 4 failed, 2 errors,
+  8 skipped (17 m 52 s): the four `test_status` pins this text clears; the two errors `test_aes_event.py`'s host
+  call graph, which compiles every `src/**/*.c` on the host and met the twin's target-only C — fixed (the file
+  is empty off target; the twin's object byte-identical), both and the B4 battery green after (212). RE-SUMMED
+  against B3's 34,700: +207 `test_boot_launch.py`, +9 `test_tier3.py` (a row each) — 34,916, the suite's own
+  count; **34,908** passing. tier3.txt: the eighteen added lines alone; no product moved.
+  B4's FIX PASS AFTER REVIEW RB4 (2026-10-31): `test_boot_launch.py` 207 -> 208 (the GEMDOS ledger's widths read
+  off the ROM) — 34,917 collected, **34,909**; no product and no tier3 line moved.
+  B4's GATE FIX (2026-10-31): the orchestrator's first from-empty gate died at `build/bench/tier3.txt` — the B4 rows
+  read the mid-boot machine, which the table did not name (`$(MIDBOOT)` added; `test_makefile.py` +1 pins the table's
+  and the suites' prerequisites) — 34,918 collected, **34,910**, measured by the second gate; products and tier3 unmoved.
 - BOOT B3's FIX PASS AFTER REVIEW RB3 (2026-10-31): RE-SUMMED, not re-run whole (the from-empty gate is the
   orchestrator's): `test_boot_hwinit.py` 61 -> 64 (the pause counted on both shores, the ROM's loop where the counter
   reads it, our function row's own cost pinned; the floor test folded into the count) — 34,700 collected,

@@ -121,6 +121,8 @@ import boot_head                                           # noqa: E402
 import boot_sysvars                                        # noqa: E402
 # ...and THE BIOS's HARDWARE INIT AND THE STRETCH AROUND ITS CALL (boot B3): priced the same way (`boot_hwinit`).
 import boot_hwinit                                         # noqa: E402
+# ...and THE BOOT'S LAST SLICE — the AUTO runner and the launch of the shell (boot B4): priced the same way (`boot_launch`).
+import boot_launch                                         # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1732,6 +1734,34 @@ def is_a_boot_hwinit_slice(row):
     return row.registered in boot_hwinit.SLICES
 
 
+# THE BOOT'S LAST SLICE (boot B4; rulings D8, D9, "ROM-window overlay", "Own link rule", R-B4-1 "Byte-transcribed .S"):
+# `src/boot/launch/launch.S` — the ROM's own bytes, what ships (its C twin is held, priced by nothing) — laid over the
+# ROM window (A LABELLED STAGING), both shores from the MID-BOOT machine with a disk in the drive (drive A: never
+# logged in: its first Getbpb logs the disk in) — THE LAUNCH ($fc047a to gem_entry) and THE AUTO RUNNER (its `bsr` to
+# its return, from the ROM's own machine there) — each on each shore's OWN cycles (ours the overlay's, the ROM's the
+# launch's text and the runner's), GEMDOS, the BIOS and the floppy model's answers both run and held equal, every
+# observable surface held (`boot_launch.differences`).
+BOOT_LAUNCH_SLICE_FUNCTION = {boot_launch.LAUNCH: "BOOT launch (.S)", boot_launch.AUTO_RUNNER_KIND: "BOOT AUTO runner (.S)"}
+BOOT_LAUNCH_SLICE_CASE = {
+    boot_launch.LAUNCH: "LABELLED STAGING (ROM-window overlay): B4 [${start:x}, gem_entry ${stop:x}), the MID-BOOT machine, {disk}",
+    boot_launch.AUTO_RUNNER_KIND: ("LABELLED STAGING (ROM-window overlay): B4 the AUTO runner ${start:x} to its return ${stop:x}, "
+                                   "the MID-BOOT machine, {disk}"),
+}
+
+
+def _boot_launch_slice_row(name, the_slice):
+    start = boot_launch.start_pc(the_slice)
+    stop = boot_launch.stop_of(the_slice, ours=False)
+    return Row(BOOT_LAUNCH_SLICE_FUNCTION[the_slice.kind],
+               BOOT_LAUNCH_SLICE_CASE[the_slice.kind].format(start=start, stop=stop, disk=the_slice.disk), start,
+               boot_launch.ENTRY_SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_launch_slice(row):
+    """Is `row` the boot's launch or its AUTO runner — both shores from the mid-boot machine, on their own cycles?"""
+    return row.registered in boot_launch.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1741,7 +1771,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items())
         + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items())
         + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items())
-        + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items()))
+        + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items())
+        + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4219,6 +4250,21 @@ def boot_hwinit_slice_on(name):
     return _boot_measurement(boot_hwinit.priced(arm, kind), boot_hwinit.ENTRY_SYMBOL[kind])
 
 
+def boot_launch_slice_on(name):
+    """THE BOOT'S LAUNCH's or ITS AUTO RUNNER's `Measurement`: every held surface equal (`boot_launch.priced`, refused by
+    name otherwise), each shore on its own cycles; GEMDOS, the BIOS and the floppy model both run (`boot_rest`) under
+    the row."""
+    return _boot_measurement(boot_launch.priced(boot_launch.SLICES[name]), boot_launch.ENTRY_SYMBOL)
+
+
+BOOT_LAUNCH_SLICE_LINE = ("{indent}  a slice of the boot as the ROM's bytes on its own cycles (the overlay's on ours, the launch's text and "
+                          "the AUTO runner's on the ROM's); instructions each run's whole; GEMDOS, the BIOS and the "
+                          "floppy model (the clock answered at its probe's entry) both run {rest} cycles, held equal, in "
+                          "neither column; held: every register, the megabyte outside the pre-init mask with our "
+                          "linked addresses mapped back, the stores, the GEMDOS traps, the floppy's calls, every ledger "
+                          "(`boot_launch.differences`)")
+
+
 BOOT_HWINIT_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the blob's on ours, the ROM's run but the "
                           "cartridge hooks on its); instructions each run's whole; the hooks both run {rest} cycles, held "
                           "equal, in neither column; held: the registers but the scratch, the megabyte outside the stack "
@@ -5317,6 +5363,8 @@ def _measured_on_its_path(row, bench):
         return boot_c_slice_on(row.registered)
     if is_a_boot_hwinit_slice(row):
         return boot_hwinit_slice_on(row.registered)
+    if is_a_boot_launch_slice(row):
+        return boot_launch_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5842,6 +5890,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_C_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_hwinit_slice(row):
             lines.append(BOOT_HWINIT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_launch_slice(row):
+            lines.append(BOOT_LAUNCH_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:
