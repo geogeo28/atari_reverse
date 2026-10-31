@@ -2843,3 +2843,6 @@ fn 0xfdf11a desk_ins_disk
 cmt 0xfdf11a (anode): Options > Install Disk Drive. C: aes_desk_ins_disk (src/desk/deskins.c, NEW; W3a stage 1, target-only)
 fn 0xfdf3c8 desk_ins_app
 cmt 0xfdf3c8 (name, anode): Options > Install Application — the type's flags stored into a_flags ($fdf502..$fdf510: GEM 3, TOS 0, TOS-takes parameters 8). C: aes_desk_ins_app (src/desk/deskins.c, NEW; W3a stage 1, target-only)
+fn 0xfc0eba boot_os_header_to_ram
+cmt 0xfc0eba Copies the OS header's first 48 bytes to $940, lays `jmp <reset>.l` at $93a (the two template words behind its rts, 0xfc0eee/0xfc0ef4), makes the copy's first word a bra.s back to it, copy's +$1c := +$1e, _sysbase := $940. Called once by the boot at 0xfc0308. C: src/boot/sysvars.c.
+cmt 0xfc02cc Boot B2 (C: src/boot/sysvars.c boot_sysvars_and_vectors, entered by src/boot/sysvars_entry.S): nvbls 8, fverify $ff, seekrate 3, _dskbufp $16da, _dumpflg -1, _sysbase, savptr $93a, swv_vec rts, drvbits 0; bsr 0xfc0eba; vectors 2..63 the bombs (no diag cartridge), autovectors rte, HBL/VBL/trap #13/#14/Line-A handlers, etv_*, _vblqueue $4ce, xcon tables from 0xfc09ae. Ends at 0xfc03b6 (bsr 0xfc2408, B3).

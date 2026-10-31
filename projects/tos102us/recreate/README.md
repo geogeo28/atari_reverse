@@ -1593,6 +1593,53 @@ transcription.Relocated(PC_RELATIVE, None, why, in_place=True)     # a reference
   costs each shore's whole instructions and OWN cycles (the head's PCs), the ROM's code both run in place (memory-valid
   check, bank test) and the entry held equal and printed below; all six 1.00.
 
+### THE SYSTEM VARIABLES AND THE VECTORS IN C — `[$fc02cc, $fc03b6)` and `$fc0eba` (`src/boot/sysvars.c`, `test/boot_sysvars.py`, boot B2)
+
+The user's rulings (2026-10-29): **D7** (the head `.S`, C after `lea $755a,sp` — B2 is the first C), **D8** (WARM and
+COLD), **D9** (the slice a stretch row on its own cycles). The orchestrator's standing call on D11: the OS header and
+the device tables' defaults are read where they lie (TABLE obligations, `test_boot_rom_data.py`). Open, named where
+they bite: D2 (the diagnostic cartridge's arm skips the bombs — the image reads 0 at the port: unpinned).
+
+```python
+boot_sysvars.SLICES                                  # {"boot sysvars B2, WARM"|"..., COLD": arm}
+boot_sysvars.the_rom_s(arm) / our_side(arm)          # both from the ROM's own machine at $fc02cc, stopped at $fc03b6
+boot_sysvars.differences(rom, ours, symbols, residue, blob_span)   # [] = held; boot_sysvars.priced(arm)
+boot_sysvars.residue_class(arm) / continued(machine) / noised(...)  # the dead class and its proof
+```
+
+- **Where our code lies.** In the BENCH BLOB (the ordinary sweep: `src/boot/sysvars.c`, `src/boot/sysvars_entry.S`),
+  laid in RAM at its link address over the ROM's own machine at `$fc02cc` — A LABELLED STAGING. Not the head's own
+  link rule: the C stores the handlers THIS BUILD links (`isr_hbl_entry`, `isr_vbl_entry`, `bios_trap13`,
+  `xbios_trap14`, `linea_rom_dispatch`), so it is linked where they are. The clears that would erase it are the
+  head's, behind; held: the ROM's own slice is the same run with and without the blob (outside its span), and our run
+  is REFUSED BY NAME if its profile shows a cycle in the ROM's B2 spans (the false green: "ours" entered at `$fc02cc`).
+  The ROM's shore is compared over the machine WITHOUT the blob, so `room_poison` poisons its room as for every row.
+- **The entry** (`boot_sysvars_entry`): `pea 0.w / jsr boot_sysvars_and_vectors / addq.l #4,sp / jmp $fc03b6` — the
+  fall-through the head will make into C; the ROM's `bsr $fc2408` (B3's) goes on in place.
+- **THE STORES OF OUR LINKED ENTRIES** (`BOOT_LINKED_ENTRY`, `include/boot/sysvars.h`): on target `$68`, `$70`, `$b4`,
+  `$b8` and `$28` hold the build's own entries — CLOSING "NO BUILD STORES AN ENTRY IN ITS VECTOR" FOR `$68` / `$70`
+  (and the trap #13 / #14 and Line-A vectors with them); off target the ROM's addresses (the host links no entry). The
+  comparison maps each back (`LINKED`); unmapped, the megabyte differs at exactly those five longwords. `$114` / `$118`
+  stay B3's (`$fc2408` stores them). The bare `rte` / `rts`, the bombs handler and the critical-error default stay the
+  ROM's: CODE obligations in the census.
+- **What is held** (`differences`): the stop; every register but `NOT_HELD` (D0/D1/A0/A1, GCC's scratch; A3/A4, the
+  ROM's handles on its bare `rte` / `rts`); the megabyte outside the STACK RESIDUE and the blob's span, our handlers
+  mapped back; the addresses stored outside the residue; every ordered ledger; the faults. Instructions and cycles are
+  the price, not a surface.
+- **The dead classes, proved.** THE STACK RESIDUE is derived: the run of bytes the ROM's own hardware init stores that
+  ends at the stack top (`[$7522, $755a)`), run from the ROM's machine at `$fc03b6` to its return under the PROOF'S OWN
+  DECLARATIONS (the MFP as Xbtimer declares it, its AER written back, the PSG's mixer and port A — labelled, no row's).
+  Noise there and in the six registers leaves that run's machine, ledgers, instructions and cycles the same — all but
+  A4, which the hardware init carries untouched; the boot's own text after `$fc03ba` never names A3 or A4 (static,
+  `rom_data.instructions`). Beyond, into every routine the boot calls, A4 is UNPINNED (B3's and later's to carry).
+- **`$fc0eba`** is also a FUNCTION ROW (`boot_os_header_to_ram`, the standard host differential, poisoned; Tier 3
+  `BOOT OS header to RAM ($fc0eba)`), named in `addrs.h` (`BOOT_OS_HEADER_TO_RAM`) because a priced row's entry is.
+- **Tier 3** (D9): two rows `BOOT sysvars (C)` / `LABELLED STAGING (the bench blob laid in RAM): B2 [$fc02cc,
+  $fc03b6), the ARM machine` — ours the blob's cycles, the ROM's its B2 spans' (with `$fc0eba`); the entry's segment
+  held equal and printed below. Measured: 375 / 4,554 against 422 / 6,184 — **0.74** on both arms; the loops close on
+  `dbf` (`COUNT_BARRIER` / `CURSOR_BARRIER`: without them GCC compared a strength-reduced handler and indexed the
+  copies, 1.107, over the bar).
+
 ## Writing a case
 
 ```python
@@ -3546,7 +3593,9 @@ addresses of one region survives relocation as it is. `test/test_aes_rom_data.py
 whose operand NAMES AES code (a fork function, a walker's routine, a vector start-up installs) is listed with
 the routine that holds it and the band that ports it, and every pc-relative data reference of the text,
 including the three that read an instruction's own immediate and the Line-F handler's write of its own movem
-mask (CODE_BYTES); a new one reds.
+mask (CODE_BYTES); a new one reds. `test/test_boot_rom_data.py` holds `src/boot/` (B2): the OS header and the
+device tables' defaults TABLE, the bare `rte` / `rts`, the bombs handler, the critical-error default and the entry's
+`jmp $fc03b6` CODE, and the five linked handlers' ROM addresses CODE OFF TARGET ONLY.
 
 `test/test_transcribed.py` holds the table to all of it — the make lists, every `.globl` of the
 `.S` sources, the measured register sets, every core defined `TRANSCRIBED_CORE`, the list of C callers
@@ -4396,7 +4445,9 @@ recreate/
 │                       `trp13.S`, the BIOS door, a row of the transcribed table since F1)
 │                       `src/boot/head/head.S` with `include/boot/head.h`: the boot's head [$fc0030,$fc02cc),
 │                       byte-transcribed, below kit.mk's sweep — linked by the Makefile's own rule into
-│                       `build/boothead/` at HEAD_LAID_AT)
+│                       `build/boothead/` at HEAD_LAID_AT;
+│                       `src/boot/sysvars.c` + `sysvars_entry.S` with `include/boot/sysvars.h`: boot B2,
+│                       [$fc02cc,$fc03b6) and $fc0eba in C, in the ordinary sweep (the bench blob))
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs

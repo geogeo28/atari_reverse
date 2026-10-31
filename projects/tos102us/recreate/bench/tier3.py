@@ -117,6 +117,8 @@ import aes_desk                                            # noqa: E402
 import aes_ourboot                                         # noqa: E402
 # ...and THE BOOT'S HEAD (boot B1, ruling D9): its slices priced as stretches, each on its own cycles (`boot_head`).
 import boot_head                                           # noqa: E402
+# ...and THE BOOT'S SYSTEM VARIABLES AND VECTORS IN C (boot B2): the slice priced the same way (`boot_sysvars`).
+import boot_sysvars                                        # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -937,6 +939,8 @@ CALL = {
     "BIOS_KBSHIFT": Call((IMAGE, arg_word(0)), RETURNS_LONG),
     "BIOS_SETEXC": Call((IMAGE, arg_word(0), arg_long(2)), RETURNS_LONG),
     "BIOS_TICKCAL": Call((IMAGE,), RETURNS_LONG),
+    # ...and the boot's OS header copy (boot B2): nothing in, nothing answered (`src/boot/sysvars.c`).
+    "BOOT_OS_HEADER_TO_RAM": Call((IMAGE,), RETURNS_NOTHING),
     "XBIOS_BIOSKEYS": Call((IMAGE,), RETURNS_NOTHING),
     "XBIOS_CURSCONF": Call((IMAGE, ENTRY_D0, arg_word(0), arg_word(2)), RETURNS_LONG),
     # No image argument at all: this routine's whole effect is one declared I/O read (`getrez.c`).
@@ -1352,6 +1356,8 @@ UNNUMBERED_ROUTINE_ROLES = {
     "GEMDOS_OPEN": "GEMDOS open",
     # ...and the CREATE layer (`src/gemdos/fs_create.c`; Fcreate, Ddelete and Dcreate are dispatched by number).
     "GEMDOS_CREATE": "GEMDOS create",
+    # ...and the boot's own (boot B2, `src/boot/sysvars.c`), called by `bsr` out of the boot's span.
+    "BOOT_OS_HEADER_TO_RAM": "BOOT OS header to RAM",
 }
 
 # ---- the VDI's, DERIVED rather than listed, so a band adds one `addrs.h` pair and no line here ----
@@ -1679,6 +1685,26 @@ def is_a_boot_slice(row):
     return row.registered in boot_head.SLICES
 
 
+# A SLICE OF THE BOOT IN C (boot B2; rulings D7, D9): `src/boot/sysvars.c` entered by its glue on the bench blob laid in
+# RAM at its link address (A LABELLED STAGING), the ROM's own [$fc02cc, $fc03b6) on the same machine, both stopped at
+# $fc03b6 — priced on each shore's OWN cycles (ours the blob's, the ROM's its span's and $fc0eba's), every observable
+# surface held (`boot_sysvars.differences`: the registers but the named scratch, the megabyte outside the stack residue
+# with our linked handlers mapped back, the stores, the ledgers).
+BOOT_C_SLICE_FUNCTION = "BOOT sysvars (C)"
+BOOT_C_SLICE_CASE = ("LABELLED STAGING (the bench blob laid in RAM): B2 [${start:x}, ${stop:x}), the {arm} machine")
+
+
+def _boot_c_slice_row(name, arm):
+    start, stop = boot_sysvars.SPAN
+    return Row(BOOT_C_SLICE_FUNCTION, BOOT_C_SLICE_CASE.format(start=start, stop=stop, arm=arm), start,
+               boot_sysvars.ENTRY_SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_c_slice(row):
+    """Is `row` a slice of the boot in C — both shores from one machine, on their own cycles?"""
+    return row.registered in boot_sysvars.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1686,7 +1712,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_isr_transcription_row(case) for case in ISR_TRANSCRIPTION_CASES)
         + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS)
         + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items())
-        + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items()))
+        + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items())
+        + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4144,6 +4171,24 @@ def boot_slice_on(name):
     return measured
 
 
+def boot_c_slice_on(name):
+    """ONE SLICE OF THE BOOT IN C's `Measurement`: every held surface equal (`boot_sysvars.priced`, refused by name
+    otherwise); the costs each shore's whole instruction count and its OWN cycles; what the two runs spent beside them
+    (`boot_rest`) printed under the row. WHO RAN, for the general guard: our run's cycles in the AES's own ROM text."""
+    price = boot_sysvars.priced(boot_sysvars.SLICES[name])
+    OUR_RUN.append(OurRun(boot_sysvars.ENTRY_SYMBOL, _cycles_in(AES_OWN_SPANS), False, 0))
+    ours, the_rom_s = price.own
+    measured = Measurement((price.the_rom_s.instructions, the_rom_s), (price.ours.instructions, ours), (0, 0))
+    measured.boot_rest = price.rest
+    return measured
+
+
+BOOT_C_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the blob's on ours, the ROM's B2 spans on its); "
+                     "instructions each run's whole; the entry {rest} cycles, held equal, in neither column; held: the "
+                     "registers but the scratch, the megabyte outside the stack residue with our handlers mapped back, "
+                     "the stores, every ledger (`boot_sysvars.differences`)")
+
+
 BOOT_SLICE_LINE = ("{indent}  a slice of the boot's head on its own cycles (the head's PCs on each shore); instructions the "
                    "whole run's, held equal; the ROM's code both run in place (memory-valid check, bank test) and the "
                    "entry {rest} cycles, held equal, in neither column; every surface held equal (`boot_head.differences`)")
@@ -5226,6 +5271,8 @@ def _measured_on_its_path(row, bench):
         return stretch_on(shipped_bench(), row.registered, aes_ourboot.STRETCHES[row.registered])
     if is_a_boot_slice(row):
         return boot_slice_on(row.registered)
+    if is_a_boot_c_slice(row):
+        return boot_c_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5747,6 +5794,8 @@ def table(bench, jobs=SERIAL):
         # ...and a slice of the boot's head: what each shore's run spent beside its own cycles.
         if is_a_boot_slice(row):
             lines.append(BOOT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_c_slice(row):
+            lines.append(BOOT_C_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

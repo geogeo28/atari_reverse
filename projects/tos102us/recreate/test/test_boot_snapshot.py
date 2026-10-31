@@ -780,6 +780,8 @@ VERIFIED_CASES = (
      {addrs.SHIFTER_RESOLUTION: getrez.ST_HIGH}, ()),
     ("bios_drvmap", addrs.BIOS_DRVMAP, {"a5": 0}, {}, None, None, ()),
     ("bios_tickcal", addrs.BIOS_TICKCAL, {"a5": 0}, {}, None, None, ()),
+    # ...and the boot's OS header copy (boot B2, `test_boot_sysvars.py`): entered as the boot's `bsr` enters it.
+    ("boot_os_header_to_ram", addrs.BOOT_OS_HEADER_TO_RAM, {"a5": 0}, {}, None, None, ()),
     ("xbios_logbase", addrs.XBIOS_LOGBASE, {"a5": 0}, {}, None, None, ()),
     ("bios_kbshift, read", addrs.BIOS_KBSHIFT, {"a5": 0}, kbshift.argument_poke(-1), None, None, ()),
     ("bios_kbshift, write", addrs.BIOS_KBSHIFT, {"a5": 0},

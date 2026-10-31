@@ -986,8 +986,11 @@ AT_THE_FIRST_IDLE = {
                        ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 44, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
     "the shipped blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
                          ob.DISPATCHER_STACK: 143, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 164,
-                         ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 571, ob.PD0_PARKED: 1},
-}   # (1,001 / 1,018 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES)
+                         ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 569, ob.PD0_PARKED: 1},
+}   # (1,001 / 1,016 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES. The shipped blob's
+    # PD0_FRAMES 571 -> 569 at boot B2, LAYOUT, measured: `src/boot/` links before `src/desk/`, so the desk moved +$168;
+    # three return addresses in PD0's frames went $04ff7e -> $0500e6 and their middle byte now equals the ROM's $00 there
+    # (at $a1a4, $a1e2, $a210: -3), and one word went $000c -> $0174 and now differs at $a26e (+1) — net -2)
 
 
 def test_a_wait_s_parameter_is_the_parked_class_only_where_both_shores_name_pd0_s_stack():

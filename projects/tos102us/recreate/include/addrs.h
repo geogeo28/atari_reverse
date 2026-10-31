@@ -409,6 +409,10 @@
 #define AES_ROM_DESK_USERDEF      0xfde844   /* read: (parmblk) the desk's G_USERDEF draw code — the PARMBLK copied, clipped, drawn (band 6) */
 /* ---- end of slice T's block ---------------------------------------------------------------------------------- */
 
+/* ---- boot B2: a routine of the boot's in the BIOS's range (`src/boot/sysvars.c`; the rest of B2's names are
+ * `boot/sysvars.h`'s) — named here because a priced row's entry is an `addrs.h` name (`bench/tier3.py`). */
+#define BOOT_OS_HEADER_TO_RAM     0xfc0eba   /* the OS header copied to $940, `_sysbase` pointed at the copy */
+
 /* ================================================================================================
  * THE INTERRUPT HANDLERS (BIOS wave 2) — the every-tick code, entered through a LIVE VECTOR
  *
