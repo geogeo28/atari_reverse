@@ -421,4 +421,30 @@ static inline int16_t signed_field(const uint8_t *image, uint32_t record, uint32
     return (int16_t)bus_word(image, record + field);
 }
 
+/* A DELAY OF `dbf_count + 1` PASSES OF A `bsr` TO AN `rts` — what the ROM waits with where a chip is owed elapsed time
+ * (the IKBD's 6301: Ikbdws's settle between poll and store, `src/xbios/acia.c`; the boot's pause after the IKBD reset,
+ * `src/boot/hwinit.c`). Elapsed time is the whole of it — no memory, no I/O, no compared register — so the time is a
+ * FLOOR, and a counted C loop makes the passes cheaper than the chip is owed (measured on Ikbdws at 0.86 of the
+ * original). On target the ROM's own three instructions under `dbf`, 44 cycles a pass; the one `bra.s` over the `rts`
+ * runs once. Off target a counter, which nothing compares. `dbf_count` is the ROM's immediate: `dbf` exits at -1. */
+static inline void rts_delay(uint16_t dbf_count)
+{
+#ifdef __m68k__
+    uint16_t remaining;
+
+    __asm__ volatile ("      move.w  %[count],%[remaining]\n\t"
+                      "0:    bsr.s   1f\n\t"
+                      "      dbf     %[remaining],0b\n\t"
+                      "      bra.s   2f\n"
+                      "1:    rts\n"
+                      "2:"
+                      : [remaining] "=&d" (remaining)
+                      : [count] "g" (dbf_count)
+                      : "cc", "memory");
+#else
+    for (volatile uint32_t remaining = (uint32_t)dbf_count + 1; remaining != 0; remaining--)
+        ;
+#endif
+}
+
 #endif /* TOS102US_M68K_IDIOMS_H */

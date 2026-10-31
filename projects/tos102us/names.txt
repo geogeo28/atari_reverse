@@ -2846,3 +2846,16 @@ cmt 0xfdf3c8 (name, anode): Options > Install Application — the type's flags s
 fn 0xfc0eba boot_os_header_to_ram
 cmt 0xfc0eba Copies the OS header's first 48 bytes to $940, lays `jmp <reset>.l` at $93a (the two template words behind its rts, 0xfc0eee/0xfc0ef4), makes the copy's first word a bra.s back to it, copy's +$1c := +$1e, _sysbase := $940. Called once by the boot at 0xfc0308. C: src/boot/sysvars.c.
 cmt 0xfc02cc Boot B2 (C: src/boot/sysvars.c boot_sysvars_and_vectors, entered by src/boot/sysvars_entry.S): nvbls 8, fverify $ff, seekrate 3, _dskbufp $16da, _dumpflg -1, _sysbase, savptr $93a, swv_vec rts, drvbits 0; bsr 0xfc0eba; vectors 2..63 the bombs (no diag cartridge), autovectors rte, HBL/VBL/trap #13/#14/Line-A handlers, etv_*, _vblqueue $4ce, xcon tables from 0xfc09ae. Ends at 0xfc03b6 (bsr 0xfc2408, B3).
+fn 0xfc2408 bios_hardware_init
+cmt 0xfc2408 The BIOS's hardware init, called once by the boot (bsr at 0xfc03b6). MFP: movep.l 0 over GPIP..VR, VR $48, AER bit 2; timer C 200 Hz (0xfc25b0) + its handler on ch 5 ($114); timer D (9600 baud); movep.l SCR/UCR/RSR/TSR = 0/$88/1/1. Port A: DTR (0xfc2ed8) and RTS (0xfc28ae) dropped. IOREC templates to $c54/$d84/$c76; KBDVECS' nine; the MIDI and IKBD 6850s reset and configured ($95/$96); conterm 7; key repeat 15/2; printer strobe high; Bioskeys; handlers on ch 12..9 (table 0xfc25a0), 6 ($118), 2. C: src/boot/hwinit.c (boot B3).
+fn 0xfc255a hwinit_copy_template
+cmt 0xfc255a move.b (a1)+,(a0)+ under dbf d0: d0+1 bytes out of a ROM template. bios_hardware_init's three IOREC copies.
+fn 0xfc28ae rs232_rts_clear
+cmt 0xfc28ae Port A bit 3 (RTS) cleared by a direct PSG read-modify-write (select 14, read, store $ff8802) under an IPL-7 bracket; 0xfc28cc sets it again. Callers: bios_hardware_init, Bconin(AUX:)'s flow control. C: static in src/boot/hwinit.c.
+var 0xfc2562 ROM_IOREC_IKBD_TEMPLATE
+var 0xfc2570 ROM_IOREC_MIDI_TEMPLATE
+var 0xfc257e ROM_IOREC_RS232_TEMPLATE
+var 0xfc25a0 ROM_RS232_HANDLER_TABLE
+cmt 0xfc25a0 Four longwords: the MFP channel 9..12 handlers (0xfc281c, 0xfc2794, 0xfc27fa, 0xfc26f6), installed from the last down.
+var 0xfc053a ROM_IKBD_RESET_COMMAND
+cmt 0xfc03b6 Boot B3 (C: src/boot/hwinit_entry.S boot_hardware_init_called_entry): bsr 0xfc2408; Ikbdws $80 $01 (0xfc053a); 32,768 x bsr to the rts at 0xfc0556 (the 6301's pause, a FLOOR); cartridge hooks d0=2 (0xfc0646, the ROM's). Ends at 0xfc03e0 (resolution read, B5).

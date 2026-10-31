@@ -171,13 +171,12 @@ NOT_HELD = {
 # ---- THE STACK RESIDUE: A DEAD CLASS, proved by the ROM's own continuation ---------------------------------------------
 # THE PROOF'S DECLARATIONS — labelled, the proof's own and no row's (B3 owns the hardware init): the MFP as the
 # Xbtimer/Rsconf cases declare it, its active-edge register written back, the PSG's mixer and port A.
-MFP_AER = addrs.MFP_GPIP + 2            # the active-edge register: the MFP's registers lie on alternate (odd) bytes
 PROOF_PSG = {addrs.PSG_MIXER_REGISTER: addrs.PSG_MIXER_PORT_MASK, addrs.PSG_PORT_A: 0}
 
 
 def proof_io():
     declared = mfp.seed()
-    declared[MFP_AER] = emu.write_through(0)
+    declared.update(mfp.aer_latched(0))
     return declared
 
 

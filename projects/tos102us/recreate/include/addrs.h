@@ -412,6 +412,8 @@
 /* ---- boot B2: a routine of the boot's in the BIOS's range (`src/boot/sysvars.c`; the rest of B2's names are
  * `boot/sysvars.h`'s) — named here because a priced row's entry is an `addrs.h` name (`bench/tier3.py`). */
 #define BOOT_OS_HEADER_TO_RAM     0xfc0eba   /* the OS header copied to $940, `_sysbase` pointed at the copy */
+/* ...and boot B3's (`src/boot/hwinit.c`; the rest of B3's names are `boot/hwinit.h`'s), for the same reason. */
+#define BIOS_HARDWARE_INIT        0xfc2408   /* the BIOS's hardware init: MFP, ACIAs, PSG port A, IORECs, KBDVECS */
 
 /* ================================================================================================
  * THE INTERRUPT HANDLERS (BIOS wave 2) — the every-tick code, entered through a LIVE VECTOR
@@ -577,6 +579,8 @@
  * displacement. These are the 24-BIT BUS FORMS, which is what a reconstruction spells and what the
  * oracle decodes (`hw.h`: the untranslated `$fffffa01` is a refusal, not an alias). */
 /* `MFP_GPIP` ($fffa01) is the block's anchor and is already named above, with the VBL's own bits. */
+#define MFP_AER             0xfffa03   /* active edge: a GPIP line's bit set = it interrupts on its RISING edge */
+#define MFP_DDR             0xfffa05   /* data direction: a GPIP line's bit set = an output */
 #define MFP_IERA            0xfffa07   /* interrupt ENABLE, channels 8..15 */
 #define MFP_IERB            0xfffa09   /* ...and channels 0..7 */
 #define MFP_IPRA            0xfffa0b   /* interrupt PENDING */
@@ -584,6 +588,7 @@
 #define MFP_ISRA            0xfffa0f   /* interrupt IN-SERVICE — `MFP_ISRB` is named above */
 #define MFP_IMRA            0xfffa13   /* interrupt MASK */
 #define MFP_IMRB            0xfffa15
+#define MFP_VR              0xfffa17   /* vector register: the vector base (bits 7-4) and software end-of-interrupt */
 #define MFP_TACR            0xfffa19   /* timer A control — its own byte */
 #define MFP_TBCR            0xfffa1b   /* timer B control — its own byte */
 #define MFP_TCDCR           0xfffa1d   /* timers C and D SHARE this one: C bits 4-6, D bits 0-2 */

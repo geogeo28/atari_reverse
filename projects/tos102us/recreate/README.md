@@ -1640,6 +1640,66 @@ boot_sysvars.residue_class(arm) / continued(machine) / noised(...)  # the dead c
   `dbf` (`COUNT_BARRIER` / `CURSOR_BARRIER`: without them GCC compared a strength-reduced handler and indexed the
   copies, 1.107, over the bar).
 
+### THE BIOS's HARDWARE INIT IN C — `$fc2408` and `[$fc03b6, $fc03e0)` (`src/boot/hwinit.c`, `test/boot_hwinit.py`, boot B3)
+
+The user's rulings (2026-10-29): **D7**, **D8** (WARM and COLD), **D9** (each row on its own cycles). The orchestrator's
+standing calls: the IOREC templates, the RS232 handlers' table and the IKBD's reset command are read where they lie
+(TABLE obligations, `test_boot_rom_data.py`); D3 stays open and is not needed — the spin B0's smoke stood in at `$fc260e`
+is the timer programmer's write-and-read-back of the timer C data register, answered by the DECLARED MFP of the Xbtimer /
+Rsconf precedent (the register WRITE-THROUGH: a stopped timer's reload latch), read once on both shores. Open, named where
+they bite: D2 (the cartridge's hooks: the port reads 0).
+
+```python
+boot_hwinit.SLICES                                  # {"boot hardware init B3 <kind>, <arm>": (arm, kind)}, kind function | stretch
+boot_hwinit.the_rom_s(arm, kind) / our_side(arm, kind)       # both from the ROM's own machine (at $fc2408 / $fc03b6)
+boot_hwinit.differences(rom, ours, kind, symbols, residue, blob_span)   # B2's comparator, this row's mapping and scratch
+boot_hwinit.legs(machine, returned) / joined(first, second)  # the stretch as two runs (below)
+boot_hwinit.continued(machine) / noised(...)                 # the dead classes' proof, to the horizon $fc0452
+boot_hwinit.priced(arm, kind)
+```
+
+- **The C.** `bios_hardware_init` is `$fc2408` in the ROM's order: three `movep.l` clears (the four byte stores each is,
+  Rsconf's precedent), VR, the AER's `bset`, the two timers through `mfp_timer_program`, seven handlers through `Mfpint`'s
+  body, the USART's `movep.l`, port A's DTR (Offgibit's body) and RTS (`$fc28ae`, a direct PSG read-modify-write, now C),
+  the IOREC templates, KBDVECS, the two 6850s, Bioskeys. `boot_ikbd_reset` is the stretch after the init's return: Ikbdws
+  over `$80 $01`, then the 6301's pause — 32,768 passes of a `bsr` to an `rts` under `dbf`, `rts_delay` (`m68k_idioms.h`,
+  now shared with Ikbdws's settle: target code byte-identical). `src/boot/hwinit_entry.S`: `bios_hardware_init_entry` (the
+  ROM's calling convention) and `boot_hardware_init_called_entry` (the init's call, `boot_ikbd_reset`, the cartridge's
+  hooks — the ROM's `$fc0646`, CODE — and `jmp $fc03e0`). B2's entry still jumps to the ROM's `$fc03b6`: the two C slices
+  are compared from the ROM's own machines, not chained.
+- **THE GAP CLOSES FOR `$114` / `$118`**: on target the C stores `isr_timer_c_entry` / `isr_acia_entry` (`BOOT_LINKED_ENTRY`);
+  the comparison maps the two back and, unmapped, differs at exactly those two longwords. The RS232's five handlers, the
+  KBDVECS routines and the init's own `rts` (statvec / mousevec / joyvec) stay the ROM's (CODE obligations).
+- **Two rows' worth of runs**: THE FUNCTION from the ROM's machine at `$fc2408` (its `bsr` taken) to `$fc03ba`; THE STRETCH
+  from `$fc03b6` to `$fc03e0`. **A function row on the boot's machine, not the snapshot's**: priced through the standard
+  table path, the target's linked entries at `$114` / `$118` are an image difference the kit's vet refuses; the boot
+  comparator maps them back. Its host differential on the snapshot (poisoned) stands in Tier 1, and the ROM's own ledgers
+  are held against the sequence composed out of the disassembly (`mfp.Chip`).
+- **THE STRETCH IS TWO RUNS** (`legs` / `joined`; ORCHESTRATOR'S INTERIM CALL): the init writes the IKBD 6850's CONTROL register at `$fffc00` and Ikbdws
+  reads its STATUS register there; the kit's modelled slot is one byte an address and refuses the read of a byte the run
+  wrote (held: `test_the_stretch_in_one_run_is_refused_at_the_6850_s_shared_address`). Cut at the init's return on each
+  shore, the second run reads the slot's default — TDRE set, what a reset 6850 holds — and the two are joined.
+- **What is held**: the stop; every register but `NOT_HELD[kind]` — EXACTLY the ones that differ (function: D1/A0/A1, A2/A3
+  and SR's condition codes alone, which the return site's `move.l #imm,-(sp)` sets unread; stretch: D1/A1, D2/D3/A2/A3 — D0
+  and A0 held through the hook); the megabyte outside THE STACK RESIDUE (both shores' frames, ours the deeper: `[$74fe,
+  $7556)` / `[$74fe, $755a)`) and the blob; the stores; every ledger; the faults.
+- **The dead classes, proved TO A HORIZON**: noise in the residue and the scratch, through the ROM's own continuation to
+  `move #$2300,sr` (the proof's own labelled declarations: the rows' MFP and port A, the resolution ST low, GPIP 7 high, the
+  blitter probe's bus error) leaves the machine outside the residue, the ledgers, instructions and cycles the same; the
+  residue's bytes below `$754a` are NOT overwritten by then (below SP, never read before the horizon); CARRIED past it,
+  unpinned by name: A3 (both rows), D3 (the stretch), A4 (B2's). The boot's own text after `$fc03e0` never names D3, A3, A4.
+- **The pause is COUNTED** (`test_the_pause_after_the_ikbd_reset_is_the_rom_s_32768_passes_exactly`): its only surface is
+  cycles, so each shore's loop is read off its run's profile — 32,768 passes exactly on both — and the second leg is
+  pinned at ours = the ROM's + 126 (+18 Ikbdws's send loop, +108 our entry's call and `boot_ikbd_reset`'s frame and
+  `bra.s`), never fewer: the FLOOR the 6301 is owed.
+- **Pinned literally, like the scratch:** the residue (`[$74fe, $7556)` / `[$74fe, $755a)`: a deeper frame reds) and our
+  function row's own cost (731 / 9,090), which is all that holds `$fc28ae`'s interrupt bracket — UNPINNED BY BEHAVIOUR (D3).
+- **The two runs are the ORCHESTRATOR'S INTERIM CALL (the user may override):** within precedent, TDRE the kit's declared
+  default.
+- **Tier 3** (D9): four rows `BOOT BIOS hardware init (C)` (function) and `BOOT hardware init (C)` (stretch) × WARM / COLD:
+  **0.72** (731 / 9,090 against 955 / 12,706) and **1.00** (104,788 / 1,535,140 against 105,002 / 1,538,630; the hooks'
+  58 cycles both run, held equal).
+
 ## Writing a case
 
 ```python
@@ -4447,7 +4507,9 @@ recreate/
 │                       byte-transcribed, below kit.mk's sweep — linked by the Makefile's own rule into
 │                       `build/boothead/` at HEAD_LAID_AT;
 │                       `src/boot/sysvars.c` + `sysvars_entry.S` with `include/boot/sysvars.h`: boot B2,
-│                       [$fc02cc,$fc03b6) and $fc0eba in C, in the ordinary sweep (the bench blob))
+│                       [$fc02cc,$fc03b6) and $fc0eba in C, in the ordinary sweep (the bench blob);
+│                       `src/boot/hwinit.c` + `hwinit_entry.S` with `include/boot/hwinit.h`: boot B3, the BIOS's
+│                       hardware init $fc2408 and [$fc03b6,$fc03e0) in C, in the ordinary sweep)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -4483,6 +4545,8 @@ recreate/
 │                       warm, cold and mid-boot machines), `bus_error.py` (declared bus errors) and
 │                       `stopped_cpu.py` (Musashi's register accessors and the step-off rule)
 │                       `boot_head.py` / `test_boot_head.py` (THE HEAD on both shores: slices, comparator, price)
+│                       `boot_sysvars.py` / `test_boot_sysvars.py` (B2) and `boot_hwinit.py` / `test_boot_hwinit.py`
+│                       (B3: the function and the stretch on both shores)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),

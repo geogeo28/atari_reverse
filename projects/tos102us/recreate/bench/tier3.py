@@ -119,6 +119,8 @@ import aes_ourboot                                         # noqa: E402
 import boot_head                                           # noqa: E402
 # ...and THE BOOT'S SYSTEM VARIABLES AND VECTORS IN C (boot B2): the slice priced the same way (`boot_sysvars`).
 import boot_sysvars                                        # noqa: E402
+# ...and THE BIOS's HARDWARE INIT AND THE STRETCH AROUND ITS CALL (boot B3): priced the same way (`boot_hwinit`).
+import boot_hwinit                                         # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1705,6 +1707,31 @@ def is_a_boot_c_slice(row):
     return row.registered in boot_sysvars.SLICES
 
 
+# THE BIOS's HARDWARE INIT AND THE STRETCH AROUND ITS CALL (boot B3; rulings D7, D9): `src/boot/hwinit.c` entered by
+# `src/boot/hwinit_entry.S` on the bench blob laid as B2's — the FUNCTION ($fc2408 to its return $fc03ba, from the ROM's
+# machine at its entry) and the STRETCH ([$fc03b6, $fc03e0): the init's call, the IKBD reset, the pause, the cartridge's
+# hook 2) — each on each shore's OWN cycles (ours the blob's, the ROM's its run's but the hooks routine both run), every
+# observable surface held (`boot_hwinit.differences`). A function row on the boot's machine, not the snapshot's: the C
+# stores THIS BUILD's timer C and ACIA entries at $114 / $118, which only the boot comparator maps back.
+BOOT_HWINIT_SLICE_FUNCTION = {boot_hwinit.FUNCTION: "BOOT BIOS hardware init (C)", boot_hwinit.STRETCH_KIND: "BOOT hardware init (C)"}
+BOOT_HWINIT_SLICE_CASE = {
+    boot_hwinit.FUNCTION: "LABELLED STAGING (the bench blob laid in RAM): B3 ${start:x} to its return ${stop:x}, the {arm} machine",
+    boot_hwinit.STRETCH_KIND: "LABELLED STAGING (the bench blob laid in RAM): B3 [${start:x}, ${stop:x}), the {arm} machine",
+}
+
+
+def _boot_hwinit_slice_row(name, arm_and_kind):
+    arm, kind = arm_and_kind
+    start, stop = boot_hwinit.start_pc(kind), boot_hwinit.stop_of(kind)
+    return Row(BOOT_HWINIT_SLICE_FUNCTION[kind], BOOT_HWINIT_SLICE_CASE[kind].format(start=start, stop=stop, arm=arm), start,
+               boot_hwinit.ENTRY_SYMBOL[kind], (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_hwinit_slice(row):
+    """Is `row` the BIOS's hardware init or the stretch around it — both shores from one machine, on their own cycles?"""
+    return row.registered in boot_hwinit.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1713,7 +1740,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_table_transcription_row(case) for case in transcription.TRANSCRIPTIONS)
         + tuple(_stretch_row(name, stretch) for name, stretch in aes_ourboot.STRETCHES.items())
         + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items())
-        + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items()))
+        + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items())
+        + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4163,8 +4191,14 @@ def boot_slice_on(name):
     (`boot_head.priced`, refused by name otherwise); the costs each shore's whole instruction count and its OWN
     cycles; what the two runs spent beside them (`boot_rest`) printed under the row. WHO RAN, for the general guard:
     our run's cycles in the AES's own ROM text, read off its profile (none)."""
-    price = boot_head.priced(boot_head.SLICES[name])
-    OUR_RUN.append(OurRun(boot_head.SYMBOL, _cycles_in(AES_OWN_SPANS), False, 0))
+    return _boot_measurement(boot_head.priced(boot_head.SLICES[name]), boot_head.SYMBOL)
+
+
+def _boot_measurement(price, symbol):
+    """A boot slice's `Measurement` out of its price (`priced`: both shores held equal, each on its own cycles): the
+    costs each shore's whole instruction count and its OWN cycles, `boot_rest` what each run spent beside them. WHO RAN,
+    for the general guard: our run's cycles in the AES's own ROM text, read off its profile (none)."""
+    OUR_RUN.append(OurRun(symbol, _cycles_in(AES_OWN_SPANS), False, 0))
     ours, the_rom_s = price.own
     measured = Measurement((price.the_rom_s.instructions, the_rom_s), (price.ours.instructions, ours), (0, 0))
     measured.boot_rest = price.rest
@@ -4175,12 +4209,20 @@ def boot_c_slice_on(name):
     """ONE SLICE OF THE BOOT IN C's `Measurement`: every held surface equal (`boot_sysvars.priced`, refused by name
     otherwise); the costs each shore's whole instruction count and its OWN cycles; what the two runs spent beside them
     (`boot_rest`) printed under the row. WHO RAN, for the general guard: our run's cycles in the AES's own ROM text."""
-    price = boot_sysvars.priced(boot_sysvars.SLICES[name])
-    OUR_RUN.append(OurRun(boot_sysvars.ENTRY_SYMBOL, _cycles_in(AES_OWN_SPANS), False, 0))
-    ours, the_rom_s = price.own
-    measured = Measurement((price.the_rom_s.instructions, the_rom_s), (price.ours.instructions, ours), (0, 0))
-    measured.boot_rest = price.rest
-    return measured
+    return _boot_measurement(boot_sysvars.priced(boot_sysvars.SLICES[name]), boot_sysvars.ENTRY_SYMBOL)
+
+
+def boot_hwinit_slice_on(name):
+    """THE BIOS's HARDWARE INIT's or THE STRETCH AROUND IT's `Measurement`: every held surface equal (`boot_hwinit.priced`,
+    refused by name otherwise), each shore on its own cycles; the hooks routine both run (`boot_rest`) under the row."""
+    arm, kind = boot_hwinit.SLICES[name]
+    return _boot_measurement(boot_hwinit.priced(arm, kind), boot_hwinit.ENTRY_SYMBOL[kind])
+
+
+BOOT_HWINIT_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the blob's on ours, the ROM's run but the "
+                          "cartridge hooks on its); instructions each run's whole; the hooks both run {rest} cycles, held "
+                          "equal, in neither column; held: the registers but the scratch, the megabyte outside the stack "
+                          "residue with our handlers mapped back, the stores, every ledger (`boot_hwinit.differences`)")
 
 
 BOOT_C_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the blob's on ours, the ROM's B2 spans on its); "
@@ -5273,6 +5315,8 @@ def _measured_on_its_path(row, bench):
         return boot_slice_on(row.registered)
     if is_a_boot_c_slice(row):
         return boot_c_slice_on(row.registered)
+    if is_a_boot_hwinit_slice(row):
+        return boot_hwinit_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5796,6 +5840,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_c_slice(row):
             lines.append(BOOT_C_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_hwinit_slice(row):
+            lines.append(BOOT_HWINIT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

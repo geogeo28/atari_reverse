@@ -23,6 +23,9 @@ uint8_t xbios_giaccess(uint16_t data, uint16_t reg_and_flag);
 uint32_t xbios_ongibit(uint32_t entry_d0, uint16_t bits);
 uint32_t xbios_offgibit(uint32_t entry_d0, uint16_t bits);
 
+/* $fc305a — `Bioskeys`: the BIOS's hardware init ($fc2408, `src/boot/hwinit.c`) `bsr`s it. */
+void xbios_bioskeys(uint8_t *image);
+
 /* $fc2f28 — `Initmous`. The VDI's mouse_init ($fca86a) and mouse_off ($fca882) take it through the
  * machine's own `trap #14` on target (the helpers at the end); off target they call it directly
  * (`src/vdi/mouse.c`). */

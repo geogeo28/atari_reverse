@@ -1,8 +1,8 @@
-"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2).
+"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2, B3).
 
 The census, its KINDS and what each owes a rebuilt ROM are `rom_data.py`'s; this is the boot's table, over
 `src/boot/head/head.S` and `include/boot/` (the head lies one directory below kit.mk's sweep: the Makefile's own rule
-links it, `build/boothead/`) and over `src/boot/` (B2's C and its entry, in the sweep: the bench blob). D11 IS OPEN
+links it, `build/boothead/`) and over `src/boot/` (B2's and B3's C and their entries, in the sweep: the bench blob). D11 IS OPEN
 (ROM data by ROM address vs `data/`): each TABLE here is read where it lies, as the orchestrator's call has it, and
 stands as an obligation on a rebuilt ROM — nothing is extracted.
 
@@ -38,8 +38,23 @@ ROM_ADDRESSES_AS_DATA = {
         # entry, so its C stores the ROM's address; on target each vector holds the linked entry — no obligation left.
         "ISR_HBL": CODE, "ISR_VBL": CODE, "BIOS_TRAP13": CODE, "XBIOS_TRAP14": CODE, "LINEA_ROM_DISPATCH": CODE,
     },
-    # ...and its entry's way on: the ROM's `bsr $fc2408` (B3's: the BIOS's hardware init, unported).
+    # ...and its entry's way on: the ROM's `bsr $fc2408` (B3's C beside it in this build: `hwinit_entry.S`).
     "sysvars_entry.S": {"ROM_BOOT_HARDWARE_INIT_CALL": CODE},
+    # B3 (`src/boot/hwinit.c`): the IOREC templates, the RS232 handlers' table and the IKBD's reset command read in place
+    # (D11: obligations, nothing extracted); the ROM's code stored by value where this build links none — the RS232's CTS
+    # handler (the RS232 interrupt group, unported), KBDVECS' routines (their C twins are not ROM-ABI entries: the ACIA
+    # chain's error `rts`, midivec, midisys, ikbdsys; the clock packet, unported; the init's own `rts`).
+    "hwinit.c": {
+        "ROM_IOREC_RS232_TEMPLATE": TABLE, "ROM_IOREC_MIDI_TEMPLATE": TABLE, "ROM_IOREC_IKBD_TEMPLATE": TABLE,
+        "ROM_RS232_HANDLER_TABLE": TABLE, "ROM_IKBD_RESET_COMMAND": TABLE,
+        "ROM_RS232_CTS_HANDLER": CODE, "ACIA_SERVICE_RTS": CODE, "MIDI_QUEUE_BYTE": CODE, "MIDI_ACIA_SERVICE": CODE,
+        "IKBD_ACIA_SERVICE": CODE, "ROM_IKBD_CLOCK_PACKET": CODE, "ROM_HWINIT_RTS": CODE,
+        # ...and the two handlers this build DOES link, named OFF TARGET ONLY (`BOOT_LINKED_ENTRY`): on target $114 /
+        # $118 hold `src/bios/isr.S`'s entries — no obligation left.
+        "ISR_TIMER_C": CODE, "ISR_ACIA": CODE,
+    },
+    # ...and its entry's: the cartridge's application hooks (the boot's, unported: D2 open) and the way on (B5's).
+    "hwinit_entry.S": {"ROM_CARTRIDGE_HOOKS": CODE, "ROM_BOOT_IKBD_RESET_DONE": CODE},
 }
 
 
@@ -65,5 +80,6 @@ def test_a_table_s_kind_is_where_it_lies():
 
 def test_the_scope_is_the_boot_s_sources_and_headers():
     """The census reads the files it means — a scope one directory off would census nothing and pass."""
-    assert sorted(BOOT.scanned()) == ["boot/head.h", "boot/sysvars.h", "head.S"]
-    assert sorted(BOOT_C.scanned()) == ["boot/head.h", "boot/sysvars.h", "sysvars.c", "sysvars_entry.S"]
+    assert sorted(BOOT.scanned()) == ["boot/head.h", "boot/hwinit.h", "boot/sysvars.h", "head.S"]
+    assert sorted(BOOT_C.scanned()) == ["boot/head.h", "boot/hwinit.h", "boot/sysvars.h", "hwinit.c", "hwinit_entry.S",
+                                        "sysvars.c", "sysvars_entry.S"]

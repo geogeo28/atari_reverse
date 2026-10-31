@@ -982,15 +982,19 @@ def test_labelled_staging_the_machine_at_its_first_idle_differs_in_the_classes_a
 # `{blob: {class: the bytes the two machines differ in there}}` at the first idle, on both disks alike (measured, W3b's flip)
 AT_THE_FIRST_IDLE = {
     "the bench blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11, ob.CONDITION_CODES: 1,
-                       ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
+                       ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 27, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
                        ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 44, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
     "the shipped blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
                          ob.DISPATCHER_STACK: 143, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 164,
-                         ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 569, ob.PD0_PARKED: 1},
-}   # (1,001 / 1,016 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES. The shipped blob's
+                         ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
+}   # (1,000 / 1,019 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES. The shipped blob's
     # PD0_FRAMES 571 -> 569 at boot B2, LAYOUT, measured: `src/boot/` links before `src/desk/`, so the desk moved +$168;
     # three return addresses in PD0's frames went $04ff7e -> $0500e6 and their middle byte now equals the ROM's $00 there
-    # (at $a1a4, $a1e2, $a210: -3), and one word went $000c -> $0174 and now differs at $a26e (+1) — net -2)
+    # (at $a1a4, $a1e2, $a210: -3), and one word went $000c -> $0174 and now differs at $a26e (+1) — net -2. At boot B3,
+    # LAYOUT again, measured against a pre-B3 build of both blobs: `src/boot/hwinit.c` links before the desk. The shipped
+    # blob's desk moved +$294: the same three return addresses went $0500e6 -> $05037a, their middle byte $03 against the
+    # ROM's $00 again (+3: 569 -> 572); the bench blob's +$268: a code address in PD0's saved context went $04a002 ->
+    # $04a26a, its byte at $9c90 now the ROM's $a2 (-1: PD0_CONTEXT 28 -> 27))
 
 
 def test_a_wait_s_parameter_is_the_parked_class_only_where_both_shores_name_pd0_s_stack():

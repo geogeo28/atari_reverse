@@ -53,34 +53,17 @@
 #include "hw.h"
 #include "xbios/ikbd.h"
 #include "machine.h"
+#include "m68k_idioms.h"
 #include "addrs.h"
 
 /* `move.w #950,d2 / bsr .rts / dbf d2` — 951 iterations of nothing, between the IKBD's status poll
  * and its data store. See the header: it is a settling time the 6301 needs, spelt as the ROM's own
- * three instructions on target so the gap is the gap the machine got.
- *
- * `dbf` exits at -1, so the register holds one FEWER than the passes it makes — which is why the
- * immediate is `IKBD_SETTLE_ITERATIONS - 1` and not a second constant beside it. The `bsr` reaches
- * an `rts` the loop then has to jump over; that one `bra.s` is the only instruction here the ROM
- * does not make, and it runs once against the loop's 951 passes. */
+ * three instructions on target (`rts_delay`, shared with the boot's pause after the IKBD reset) so
+ * the gap is the gap the machine got. `dbf` exits at -1, so the immediate is one FEWER than the
+ * passes it makes: `IKBD_SETTLE_ITERATIONS - 1`, not a second constant beside it. */
 static void ikbd_settle(void)
 {
-#ifdef __m68k__
-    uint16_t remaining;
-
-    __asm__ volatile ("      move.w  %[count],%[remaining]\n\t"
-                      "0:    bsr.s   1f\n\t"
-                      "      dbf     %[remaining],0b\n\t"
-                      "      bra.s   2f\n"
-                      "1:    rts\n"
-                      "2:"
-                      : [remaining] "=&d" (remaining)
-                      : [count] "i" (IKBD_SETTLE_ITERATIONS - 1)
-                      : "cc", "memory");
-#else
-    for (volatile uint16_t remaining = IKBD_SETTLE_ITERATIONS; remaining != 0; remaining--)
-        ;
-#endif
+    rts_delay(IKBD_SETTLE_ITERATIONS - 1);
 }
 
 /* THE SPIN ENDS ON THE MODEL'S OWN ANSWER, not on a bound. A read the seeded model cannot serve

@@ -101,6 +101,15 @@ def seed(overrides=None):
             for address, byte in declared.items()}
 
 
+def aer_latched(entry_byte):
+    """THE ACTIVE-EDGE REGISTER DECLARED WRITE-THROUGH, `{MFP_AER: ...}` for an `io_seed`: on the 68901 it is a plain
+    read/write latch, so a read after a store is the byte stored. The BIOS's hardware init (`$fc2408`) re-reads it with
+    `bset #2` after its own `movep.l` cleared it — the one routine that reads it, which is why it is not in
+    `WRITE_THROUGH_REGISTERS` (a declaration is a claim about what a run READS). Spelt once for its two declarations:
+    `boot_hwinit.io_seed` (the B3 rows) and `boot_sysvars.proof_io` (B2's proof)."""
+    return {addrs.MFP_AER: emu.write_through(entry_byte)}
+
+
 def in_register_a(channel):
     """`move.b d0,d1 / cmpi.b #8,d1 / blt.s` — the ROM's `$fc26e6`, written independently.
 
