@@ -475,6 +475,36 @@ $(BOOTDISPLAY_BIN): $(BOOTDISPLAY_ELF)
 bootdisplay: $(BOOTDISPLAY_BIN)
 test guarded gates: $(BOOTDISPLAY_BIN)
 
+# THE BOOT'S LATE SLICE (boot B6; rulings "ROM-window overlay" and "Own link rule") — [$fc0452, $fc047a) in C,
+# `src/boot/late/late.c`, LAID over a copy of the image's ROM window at `LATE_LAID_AT` (`include/boot/late.h`, the one
+# spelling) and LINKED THERE, by this rule alone, as B5's display is. ITS OWN FLAGS: BENCH_CFLAGS with EVERY
+# CALLEE-SAVED REGISTER FIXED, D2-D7 and A2-A6 — the ROM's routines the slice calls clobber them, and the ROM's slice
+# hands its continuation what they leave (`late.c`'s header). AND NO NULL PAGE: the C reaches the system variables at
+# their own addresses (`late.c`'s `ram`), and GCC takes every constant address below its min-pagesize (4 KB) for an
+# offset off a null pointer (`-Wstringop-overflow`: "writing 4 bytes into a region of size 0" at `_bufl`, measured).
+# `test/boot_late.py` reads the flat bytes and the ELF's symbols.
+BOOTLATE_DIR    := build/bootlate
+BOOTLATE_ELF    := $(BOOTLATE_DIR)/late.elf
+BOOTLATE_BIN    := $(BOOTLATE_DIR)/late.bin
+BOOTLATE_SRC    := src/boot/late/late.c
+BOOTLATE_CFLAGS := $(BENCH_CFLAGS) $(foreach register,d2 d3 d4 d5 d6 d7 a2 a3 a4 a5 a6,-ffixed-$(register)) \
+                   --param=min-pagesize=0
+BOOTLATE_LAID_AT := $(call laid_at,LATE_LAID_AT,include/boot/late.h)
+ifeq ($(BOOTLATE_LAID_AT),)
+$(error include/boot/late.h defines no LATE_LAID_AT — the boot's late slice's link address is read from there and nowhere else)
+endif
+
+$(BOOTLATE_ELF): $(BOOTLATE_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTLATE_DIR)
+	m68k-elf-gcc $(BOOTLATE_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTLATE_LAID_AT) $(BOOTLATE_SRC) -o $@
+
+$(BOOTLATE_BIN): $(BOOTLATE_ELF)
+	m68k-elf-objcopy -O binary $(BOOTLATE_ELF) $(BOOTLATE_BIN)
+
+.PHONY: bootlate
+bootlate: $(BOOTLATE_BIN)
+test guarded gates: $(BOOTLATE_BIN)
+
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
@@ -491,8 +521,8 @@ derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
 # process writes, line for line. Boot B4's rows run the shipped launch (`$(BOOTLAUNCH_BIN)`) from the mid-boot capture
 # (`$(MIDBOOT)`, served from the store like every capture); the C twin is priced by nothing, so the table reads no twin.
-# Boot B5's rows run its C (`$(BOOTDISPLAY_BIN)`) from the WARM and COLD machines.
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) \
+# Boot B5's rows run its C (`$(BOOTDISPLAY_BIN)`) from the WARM and COLD machines; boot B6's theirs (`$(BOOTLATE_BIN)`).
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTLATE_BIN) \
                 $(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 

@@ -32,12 +32,14 @@ LONG_BYTES = bh.LONG_BYTES
 NOISE_SEEDS = (0, 1, 2)
 BAR = 1.10
 # THE SCRATCH, pinned literally (a name added to `NOT_HELD` would loosen the compare in silence).
-SCRATCH = {bh.FUNCTION: {"d1", "a0", "a1", "a2", "a3", "sr"}, bh.STRETCH_KIND: {"d1", "a1", "d2", "d3", "a2", "a3"}}
-# ...and what the noise leaves differing at the horizon: carried past `move #$2300,sr`, unpinned by name.
-CARRIED = {bh.FUNCTION: {"a3"}, bh.STRETCH_KIND: {"a3", "d3"}}
+SCRATCH = {bh.FUNCTION: {"d1", "a0", "a1", "a2", "sr"}, bh.STRETCH_KIND: {"d1", "a1", "d2", "a2"}}
+# ...and what the noise leaves differing at the horizon, carried past `move #$2300,sr`: NOTHING since review RB6's R2 (A3
+# and D3, carried before, are held: `hwinit_entry.S` leaves them as the ROM's code does).
+CARRIED = {bh.FUNCTION: set(), bh.STRETCH_KIND: set()}
 # The two read-modify-writes of port A the init calls, each entered where its constant lies.
 OFFGIBIT_CLEAR_BIT4 = 0xfc2ed8          # `moveq #-17,d2 / bra` into Offgibit's body (names.txt `offgibit_clear_bit4`)
 RS232_RTS_CLEAR, RS232_RTS_CLEAR_END = 0xfc28ae, 0xfc28cc   # `$fc28ae`, to the RTS-raising twin after it
+RS232_TABLE_LOADED = 0xfc2522           # the init's `movea.l #<the RS232 handlers' table>,a3`, the register it leaves
 ABSOLUTE_IO_PAGE = 0xff000000           # objdump's spelling of an `abs.l` I/O address: the 32-bit sign-extended form
 
 
@@ -241,6 +243,18 @@ def test_the_scratch_is_pinned_literally_and_is_what_differs(a_pair):
     assert (theirs["sr"] ^ mine["sr"]) & ~bh.CCR_SET_AT_THE_RETURN == 0
 
 
+def test_a3_and_d3_are_left_as_the_rom_s_code_leaves_them(a_pair):
+    """REVIEW RB6's R2: the ROM's init leaves A3 its RS232 table (`movea.l #$fc25a0,a3`) and the stretch D3 Ikbdws's count
+    run out ($0000ffff) — both handed on to `$fc047a`, A3 into the pre-init machine. Ours leaves them equal, each read
+    off the ROM's own text as well as its run."""
+    arm, kind, the_rom_s, ours = a_pair
+    assert texts(RS232_TABLE_LOADED, RS232_TABLE_LOADED + 6) == [f"moveal #{C['ROM_RS232_HANDLER_TABLE']},%a3"]
+    assert ours.machine.registers["a3"] == the_rom_s.machine.registers["a3"] == C["ROM_RS232_HANDLER_TABLE"]
+    if kind == bh.STRETCH_KIND:
+        assert texts(addrs.XBIOS_IKBDWS, addrs.XBIOS_IKBDWS + 2) == ["moveq #0,%d3"]
+        assert ours.machine.registers["d3"] == the_rom_s.machine.registers["d3"] == C["IKBDWS_COUNT_RUN_OUT"]
+
+
 def test_the_function_s_flags_are_set_by_its_return_site():
     """The return site `$fc03ba` is `move.l #imm,-(sp)` — N Z V C set, none read; X and the system byte are held."""
     assert struct.unpack_from(">H", BASE_IMAGE, bh.RETURNED)[0] == bh.MOVE_L_IMMEDIATE_TO_PREDECREMENT_SP
@@ -340,8 +354,9 @@ def test_the_joined_stretch_carries_both_legs_ledgers(arm):
 # ---- THE PAUSE: a FLOOR the 6301 is owed, on no surface but the cycles ------------------------------------------------------
 # Our second leg spends this many cycles more than the ROM's, measured: +18 the IKBD send loop's own (Ikbdws's row, 83,976
 # -> 83,994: the `bra.s` over each byte's settle `rts` and its loop's shape), +108 our entry's call into `boot_ikbd_reset`
-# (the image argument pushed and dropped), that C's own call frame for Ikbdws and its one `bra.s` over its pause's `rts`.
-PAUSE_LEG_OVERHEAD = 18 + 108
+# (the image argument pushed and dropped), that C's own call frame for Ikbdws and its one `bra.s` over its pause's `rts`;
+# +12 the entry's `move.l #$ffff,d3`, D3 as the ROM's Ikbdws leaves it (review RB6's R2).
+PAUSE_LEG_OVERHEAD = 18 + 108 + 12
 
 
 def _second_legs(arm, blob):
@@ -503,7 +518,7 @@ def test_the_table_prices_both_rows_on_each_shore_s_own_cycles_under_the_bar():
 
 # OUR FUNCTION ROW's OWN COST, PINNED EXACTLY (the build is deterministic): it is what holds the interrupt bracket of
 # `$fc28ae` (`rs232_rts_clear`), which no Tier 1 surface sees — no interrupt is delivered (D3) — and any codegen drift.
-OUR_FUNCTION_COST = (731, 9090)
+OUR_FUNCTION_COST = (732, 9102)       # +1 / +12 since review RB6's R2: the entry leaves A3 the ROM's
 
 
 @pytest.mark.parametrize("arm", ARMS)

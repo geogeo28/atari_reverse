@@ -1679,25 +1679,26 @@ boot_hwinit.priced(arm, kind)
   reads its STATUS register there; the kit's modelled slot is one byte an address and refuses the read of a byte the run
   wrote (held: `test_the_stretch_in_one_run_is_refused_at_the_6850_s_shared_address`). Cut at the init's return on each
   shore, the second run reads the slot's default — TDRE set, what a reset 6850 holds — and the two are joined.
-- **What is held**: the stop; every register but `NOT_HELD[kind]` — EXACTLY the ones that differ (function: D1/A0/A1, A2/A3
-  and SR's condition codes alone, which the return site's `move.l #imm,-(sp)` sets unread; stretch: D1/A1, D2/D3/A2/A3 — D0
+- **What is held**: the stop; every register but `NOT_HELD[kind]` — EXACTLY the ones that differ (function: D1/A0/A1, A2
+  and SR's condition codes alone, which the return site's `move.l #imm,-(sp)` sets unread; stretch: D1/A1, D2/A2 — D0
   and A0 held through the hook); the megabyte outside THE STACK RESIDUE (both shores' frames, ours the deeper: `[$74fe,
   $7556)` / `[$74fe, $755a)`) and the blob; the stores; every ledger; the faults.
 - **The dead classes, proved TO A HORIZON**: noise in the residue and the scratch, through the ROM's own continuation to
   `move #$2300,sr` (the proof's own labelled declarations: the rows' MFP and port A, the resolution ST low, GPIP 7 high, the
   blitter probe's bus error) leaves the machine outside the residue, the ledgers, instructions and cycles the same; the
   residue's bytes below `$754a` are NOT overwritten by then (below SP, never read before the horizon); CARRIED past it,
-  unpinned by name: A3 (both rows), D3 (the stretch), A4 (B2's). The boot's own text after `$fc03e0` never names D3, A3, A4.
+  unpinned by name: A4 (B2's); A3 and D3 HELD since boot B6's fix pass (review
+  RB6's R2: `hwinit_entry.S` leaves A3 the RS232 table at both entries' returns, D3 Ikbdws's count run out). The boot's own text after `$fc03e0` never names D3, A3, A4.
 - **The pause is COUNTED** (`test_the_pause_after_the_ikbd_reset_is_the_rom_s_32768_passes_exactly`): its only surface is
   cycles, so each shore's loop is read off its run's profile — 32,768 passes exactly on both — and the second leg is
-  pinned at ours = the ROM's + 126 (+18 Ikbdws's send loop, +108 our entry's call and `boot_ikbd_reset`'s frame and
+  pinned at ours = the ROM's + 138 (+18 Ikbdws's send loop, +12 the entry's `move.l #$ffff,d3`, +108 our entry's call and `boot_ikbd_reset`'s frame and
   `bra.s`), never fewer: the FLOOR the 6301 is owed.
 - **Pinned literally, like the scratch:** the residue (`[$74fe, $7556)` / `[$74fe, $755a)`: a deeper frame reds) and our
-  function row's own cost (731 / 9,090), which is all that holds `$fc28ae`'s interrupt bracket — UNPINNED BY BEHAVIOUR (D3).
+  function row's own cost (732 / 9,102), which is all that holds `$fc28ae`'s interrupt bracket — UNPINNED BY BEHAVIOUR (D3).
 - **The two runs are the ORCHESTRATOR'S INTERIM CALL (the user may override):** within precedent, TDRE the kit's declared
   default.
 - **Tier 3** (D9): four rows `BOOT BIOS hardware init (C)` (function) and `BOOT hardware init (C)` (stretch) × WARM / COLD:
-  **0.72** (731 / 9,090 against 955 / 12,706) and **1.00** (104,788 / 1,535,140 against 105,002 / 1,538,630; the hooks'
+  **0.72** (732 / 9,102 against 955 / 12,706) and **1.00** (104,790 / 1,535,164 against 105,002 / 1,538,630; the hooks'
   58 cycles both run, held equal).
 
 ### THE BOOT'S LAST SLICE — the AUTO runner `$fc0c4a` / `$fc0cae` and the launch `[$fc047a, gem_entry)` (`src/boot/launch/`, `test/boot_launch.py`, boot B4)
@@ -1746,8 +1747,9 @@ boot_launch.priced(s)                                # the .S's Priced(the_rom_s
   state, exactly as the ROM's own oracle run (23 / 23 / 22 bytes, pinned — R-B4-3). Two cases on a case's own pokes
   (R-B4-3): `_bootdev` → the letter (its high byte, a ROM bug kept); the runner with `_drvbits` 0.
 - **Unpinned by name**: the `_cmdload` arm (a boot sector, a reset-resident program — D12 — or a poke of the capture).
-  **Open carry (B6's)**: A3, A4, A6 at `$fc047a` reach the pre-init machine (the BIOS process's basepage +$6c/+$70/+$78);
-  the capture's A3 is `$fc25a0`, which B3's C does not leave.
+  **The carry B6 closed**: A3, A4, A6 at `$fc047a` reach the pre-init machine (the BIOS process's basepage
+  +$6c/+$70/+$78); from the ROM's machine at `$fc0452` both shores now leave them as the capture holds, and B3's C leaves
+  the capture's A3 `$fc25a0` (B6's section).
 
 ### THE BOOT'S DISPLAY SLICE IN C — `[$fc03e0, $fc0452)` (`src/boot/display/display.c`, `test/boot_display.py`, boot B5)
 
@@ -1789,6 +1791,73 @@ boot_display.priced(arm)
 - **Unpinned by name**: the poll loop itself; the order of the slice's RAM stores (equivalent: interrupts masked to
   $fc0452); the hooks' `clr.w d0` (cost alone, D2).
 - **Tier 3**: colour 1.04 (292/280, 294/282), 1.05 ST medium (322/306); mono 1.05 (352/336, 354/338).
+
+### THE BOOT'S LATE SLICE IN C — `[$fc0452, $fc047a)` and the routines it ports (`src/boot/late/late.c`, `test/boot_late.py`, boot B6)
+
+The user's rulings: **D8** (WARM and COLD), **D9** (each machine on its own cycles), **"ROM-window overlay"**, **"Own link
+rule"** (2026-10-29); **R-B4-2** (the clock's probe answered at its entry); **D3** (2026-10-31: no kit interrupt source —
+the waiting routines ANSWERED AT THEIR ENTRIES on both shores, labelled; the slice opens the interrupts and none is
+delivered inside a run); **D4** (2026-10-31: an FDC/DMA model is a later, separate project — the floppy stays answered at
+its entries). THE ORCHESTRATOR'S READING OF D3 (the user may override): D3 names "hdv_boot"; hdv_boot and hdv_init (the
+floppy's upper driver, waiting on nothing itself) run as the ROM's and only the waits below them are answered — the
+narrower answer, R-B5-1's precedent. The orchestrator's standing calls: GEMDOS's init and Dsetdrv, the cartridge's hooks, and the floppy upper
+driver's hdv_boot / hdv_init are the ROM's on both shores, called in place, priced as the OS both run.
+
+```
+make bootlate         # build/bootlate/late.{elf,bin} — the C at LATE_LAID_AT ($fc3d00), D2-D7/A2-A6 fixed
+```
+
+```python
+boot_late.SLICES                          # {"boot late B6, WARM" | "..., COLD": machine}
+boot_late.the_rom_s(machine) / our_side(machine)       # Shore(slice, own, answers): from the ROM's machine at $fc0452
+boot_late.answered(machine)               # an answered entry: (the machine past its return, the ledger entry, the runs laid)
+boot_late.differences(rom, ours)          # [] = held
+boot_late.against_the_capture(shore, capture)          # the END surface: (registers, bytes) apart from build/midboot.bin
+boot_late.priced(machine)
+```
+
+- **What is ported**: the slice and five routines it `bsr`s — `$fc4a9e` (GEMDOS's two BCB lists, its init, Dsetdrv of the
+  boot drive), `$fc4be8` (the clock's date), `$fc053c` (the floppy's boot), `$fc0558` (the ACSI's boot), `$fc0e56` (the
+  reset-resident scan) — inlined into one `noreturn` entry, as B5's. The ROM's own cost is the slice's span and those
+  five; ratio **0.85** (115,906 / 136,546 own cycles, both machines).
+- **System variables at their own addresses** (`late.c`'s `ram`): through `target_image()` every address past `$7fff`
+  became an indexed store off a zero register; absolute addressing needs `--param=min-pagesize=0` (GCC takes a constant
+  address below 4 KB for a null offset: `-Wstringop-overflow` at `_bufl`). Pinned in `test_makefile.py`.
+- **GEMDOS's init and Dsetdrv called at the ROM's depth** (`GEMDOS_BUFFERS_FRAME_BYTES`, 12: the `bsr`'s return and
+  `$fc4a9e`'s `link a6,#-4`): the BIOS frames its caller's registers below savptr on every call GEMDOS makes, and the last
+  frame outlives the slice — from no frame, A6 and SP at `$92c` / `$930` were apart (measured; the B4 twin's precedent).
+- **The two sector sums are the ROM's own registers** (review RB6's F1): D0 the sum (cleared `moveq` for the ACSI's,
+  `clr.w` for the scan's), D1 the `dbf` count, an asm loop (`SECTOR_SUM`) — GCC's C kept them the other way round, which
+  a page with the mark and a wrong sum showed at `$fc047a` (a scratch demo only: R3, no staged page in the suite).
+- **The ACSI's target is bound to D7** (the ROM's probe takes it there and its loop steps it in place), cleared whole by
+  the ROM's `moveq #0,d7`; the scan's page steps before its compare under a `CURSOR_BARRIER` (without it GCC compared
+  the page in A1 and left phystop there).
+- **THE ANSWERS** (`answered`, each counted in the ANSWER LEDGER with what it was asked, the same on both shores): the
+  drive probe `$fc173a` (hdv_init's, D3) — D0 0, a drive answered, both drives, the capture's own status words (a drive
+  ABSENT is the WD1772's answer: D4, unpinned); Floprd `$fc1782` (D4: `aes_boot.Floppy` through
+  `boot_launch.NeverLoggedIn`, the capture's blank disk); the ACSI probe `$fc0586` (D3 "no device": D0 D1 -1, A6/A5 the
+  DMA's registers, flock's byte cleared, Z clear — each held to the ROM's text AND to the capture's registers); the
+  clock's probe `$fc4c0c` (R-B4-2, carry set). OBSERVED, NOT ANSWERED: the cartridge's hooks (their init bit), GEMDOS's
+  init and Dsetdrv (its drive word) — each arrival in the ledger, so the calls' order is held (review RB6's F2). The
+  price is the run UNWATCHED: a resumed stop counts its step-off again (+1 instruction, +40 cycles an arrival); the
+  watched run is held to leave the same machine and answers.
+- **Held**: stop, EVERY register, the megabyte and the stores OUTSIDE THE BIOS STACK'S DEAD FRAMES `[$745a, $755a)` (the
+  mid-boot capture's own MASK field — dead to gem_entry by B4's mask-noise test; the frames lie at each shore's own
+  depth), every ledger (all EMPTY: every device the slice reaches is answered), the faults, the answers; the ROM's run
+  equal with and without the overlay; a run of ours that executes the slice or any of the five REFUSED BY NAME.
+- **THE END SURFACE** (COLD; the capture is a power-on's): both shores equal to `build/midboot.bin` outside its mask but
+  D1 (D6, memctrl `$424` and D6's copy at `$91b` in the BIOS save area: `$08` against the capture's `$05`) and D4 (the
+  lower floppy driver's scratch D2 / A1 and 24 bytes of its own state in `[$9f6, $a54)`), pinned exactly. WARM is no
+  power-on's machine (the desk's RAM above `$10000`, the environment at `$840`).
+- **B4's open carry**: from the ROM's machine at `$fc0452`, A3, A4, A6 at `$fc047a` equal the capture's on both shores
+  (A6 the ACSI answer's `lea $ffff8606,a6`). B3's C now leaves A3 (`$fc2522`'s `movea.l #$fc25a0,a3`) and D3 (Ikbdws's
+  count, `$0000ffff`) as the ROM's code does (review RB6's R2, `hwinit_entry.S`); no chained run of ours exists yet — a
+  scratch check carries B3's C exit through the ROM's B5 / B6 to `$fc047a`, every register equal.
+- **Unpinned by name**: the arms the answers never take — a drive absent, an executable boot sector (`jsr $16da`), an
+  ACSI device and its sector's sum, a reset-resident program found (D12 all; the scan's mark and sum compares and the
+  ACSI's `$1234` compare survive mutation for that reason); `_bootdev` other than 0 (Dsetdrv's word is 0 in every run);
+  a clock present (R-B4-2); a cartridge (D2).
+- **Tier 3**: two rows `BOOT late (C)` — **0.85** WARM and COLD, own cycles pinned exactly.
 
 ## Writing a case
 
@@ -4605,7 +4674,9 @@ recreate/
 │                       LAUNCH_LAID_AT; its C twin `launch.c` + `launch_entry.S` (`twin.bin`, D3-D7/A3-A6 fixed);
 │                       both one directory below the sweep, each linked by its own rule;
 │                       `src/boot/display/display.c` with `include/boot/display.h`: boot B5, [$fc03e0,$fc0452) in
-│                       C, target only, linked by its own rule into `build/bootdisplay/` at DISPLAY_LAID_AT)
+│                       C, target only, linked by its own rule into `build/bootdisplay/` at DISPLAY_LAID_AT;
+│                       `src/boot/late/late.c` with `include/boot/late.h`: boot B6, [$fc0452,$fc047a) and the five
+│                       routines it calls in C, target only, its own rule into `build/bootlate/` at LATE_LAID_AT)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -4646,7 +4717,8 @@ recreate/
 │                       `boot_launch.py` / `test_boot_launch.py` (BOOT B4: the .S and its twin from the mid-boot
 │                       machine, END = the pre-init capture); `acc/autoprg.S` (the AUTO disks' Pterm0 program)
 │                       `boot_display.py` / `test_boot_display.py` (BOOT B5: colour and mono arms, the sync wait's
-│                       poll answered at its entry, R-B5-1)
+│                       poll answered at its entry, R-B5-1); `boot_late.py` / `test_boot_late.py` (BOOT B6: WARM and
+│                       COLD, the answered entries, END = the mid-boot capture)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),

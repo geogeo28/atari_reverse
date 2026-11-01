@@ -2879,3 +2879,20 @@ var 0x09b8 auto_program_name
 cmt 0xfc03e0 Boot B5 (C: src/boot/display/display.c boot_display_entry, own rule at 0xfc3c00, D2-D7/A2-A6 fixed): $ff8260 & 3 (3 -> 2) into sshiftmd; GPIP bit 7 LOW (mono) -> sync wait 0xfc0e1a (A6 link), $ff8260 := 2, sshiftmd := 2; blitter_probe 0xfc0f1a; 0xfca99e (Line-A body vectors for D0); console_reinit 0xfca914; ST medium: pen 15's colour to pen 3 ($ff825e -> $ff8246); swv_vec := 0xfc0030; vblsem := 1; cartridge hooks d0=0 (0xfc0646). Ends at 0xfc0452 (move #$2300,sr, B6). The ROM's routines run in place on both shores; the mono arm's sync-wait poll [0xfc0e3c, 0xfc0e50) answered at its entry (R-B5-1).
 fn 0xfca99e linea_set_body_vectors
 cmt 0xfca99e Names the Line-A's CPU body set (0xfc4e36 -> $2a40) and blitter set (0xfc4e0e -> $2a3c), then jmp 0xfc4dde: the mode in D0 kept at $2a44 and the ten body vectors at $2a14 filled from the blitter set if bit 0, else the CPU set. Called by the boot (0xfc041c) with the blitter probe's answer (0 / 2: the CPU set either way).
+cmt 0xfc0452 Boot B6 (C: src/boot/late/late.c boot_late_entry, own rule at 0xfc3d00, D2-D7/A2-A6 fixed, --param=min-pagesize=0): move #$2300,sr (interrupts open; none delivered in a run, D3); cartridge hooks d0=1; 0xfc4a9e (BCBs + GEMDOS init + Dsetdrv); os_dosdate (0xfc001e) -> $8840; 0xfc4be8 (clock date); 0xfc053c (floppy boot); 0xfc0558 (ACSI boot); 0xfc0e56 (reset-resident scan). Ends at 0xfc047a (B4). Answered at their entries on both shores: drive probe 0xfc173a, Floprd 0xfc1782, ACSI probe 0xfc0586 (no device), clock probe 0xfc4c0c.
+fn 0xfc4a9e boot_gemdos_buffers_and_init
+cmt 0xfc4a9e Boot (Alcyon C, ported in B6's late.c): BCBs $8846->$885a and $886e->$8882, every b_bufdrv -1, buffers $75c4/$77c4/$79c4/$7bc4; _bufl[0..1] := $8846/$886e; jsr GEMDOS init 0xfc4e5e; Dsetdrv(_bootdev) 0xfc6cc0 from its link frame's local (the depth is a surface: the BIOS frames A6/SP below savptr).
+fn 0xfc4be8 boot_clock_date
+cmt 0xfc4be8 Boot: RTC probe 0xfc4c0c; carry clear -> RTC read 0xfc4c44, unless -1: time -> $75b0, date -> $8840, D0 0; else D0 -1.
+fn 0xfc053c boot_floppy
+cmt 0xfc053c Boot: cartridge hooks d0=3; jsr (hdv_boot $47a); D0.w 0 -> jsr $16da (the boot sector: foreign code, D12).
+fn 0xfc0558 boot_acsi
+cmt 0xfc0558 Boot: D7 the target ($00..$e0 step $20); bsr 0xfc0586 (Z = sector read to _dskbufp); 256-word sum $1234 -> jsr (_dskbufp) (foreign code, D12).
+fn 0xfc0586 acsi_read_boot_sector
+cmt 0xfc0586 Boot: ACSI target D7: A6 $ff8606, A5 $ff8604; st flock; DMA address := _dskbufp; command $08|target, $8a + four bytes (0xfc0616), each acknowledged through 0xfc062a (GPIP bit 5 or _hz_200 + d1 ticks); no device: D0 D1 -1, NE; sf flock. ANSWERED AT ITS ENTRY in B6 (D3, no device).
+fn 0xfc062a acsi_wait
+cmt 0xfc062a Boot: D1 += _hz_200; poll GPIP bit 5 until clear (Z) or _hz_200 == D1 (moveq #-1,d1, NE). Entered at 0xfc0626 with the byte in D0 (move.l d0,(a5); moveq #10,d1).
+fn 0xfc0e56 boot_reset_resident
+cmt 0xfc0e56 Boot: from phystop down in 512-byte pages to $400: a page holding $12123456, its own address, and summing (256 words) to $5678 is called at +8 (A0 kept on the stack). Foreign code, D12.
+fn 0xfc173a floppy_drive_probe
+cmt 0xfc173a Floppy lower driver: hdv_init's per-drive probe (12(sp) the drive): select, restore; D0 0 (0xfc1cda) or the error. ANSWERED AT ITS ENTRY in B6 (D3: a drive answered, the capture's).

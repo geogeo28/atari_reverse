@@ -62,7 +62,9 @@ NO_IDLE_REACHED = "the run did not reach an idle within"
 REFUSED_ON_EITHER_STATE = {
     "files: the program double-clicked — launched": ("W6-R8: the launch loads the program over our blob", NO_IDLE_REACHED),
     "a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)": (
-        "W6-R8: the disk copy reads its tracks over our blob", "Rwabs of drive 254: the model holds drive A: alone")}
+        "W6-R8: the disk copy reads its tracks over our blob", NO_IDLE_REACHED)}     # (what the overwritten code does
+# next follows the blob's layout: "Rwabs of drive 254" until boot B6's fix pass moved it twelve bytes; held equal to the
+# battery's by `test_aes_desk_ours.py`)
 # ...and N4's on the flipped state alone, DERIVED (band 6 slice F4's prep, ruling O3): a named stop that moves with a
 # flip (`aes_desk.OUR_STOPS_ONCE_FLIPPED` — the viewer's two key waits, inside the show engine's body) is our C's stop
 # on the flipped state, and a chain with a step at one is refused by name while the flipped blob has no symbol to stop

@@ -53,7 +53,9 @@
 #define ROM_IOREC_RS232_TEMPLATE  0xfc257e   /* the RS232's input and output rings and their flow state, to IOREC_RS232 */
 #define IOREC_TEMPLATE_BYTES      14         /* `moveq #13` + `dbf`: one ring's record */
 #define IOREC_RS232_TEMPLATE_BYTES 34        /* `moveq #33` + `dbf`: two records and the six bytes after them */
-#define ROM_RS232_HANDLER_TABLE   0xfc25a0   /* four longwords: the handlers of channels 9..12, in channel order */
+#define ROM_RS232_HANDLER_TABLE   0xfc25a0   /* four longwords: the handlers of channels 9..12, in channel order — and
+                                              * what A3 is left holding (`$fc2522` `movea.l #$fc25a0,a3`): the boot hands
+                                              * it on, to the pre-init machine (the BIOS process's basepage +$6c) */
 
 /* ---- the ROM's code it stores by value where this build links none (CODE obligations) ----------------------------- */
 #define ROM_RS232_CTS_HANDLER     0xfc27ae   /* channel 2's handler (unported: the RS232 interrupt group) */
@@ -64,6 +66,10 @@
 #define ROM_IKBD_RESET_COMMAND    0xfc053a   /* the IKBD's reset command, $80 $01, read in place (TABLE) ... */
 #define IKBD_RESET_COMMAND_COUNT  1          /* ...sent by Ikbdws, whose count is one less than its bytes */
 #define BOOT_IKBD_RESET_DBF_COUNT 32767      /* `move.l #32767,d0` + `bsr` to an `rts` + `dbf`: 32,768 passes */
+/* ...and D3 as the ROM's Ikbdws leaves it ($fc2212 `moveq #0,d3` / `move.w 4(sp),d3` ... `dbf d3`): the long cleared, its
+ * low word run out to -1. The boot hands it on — the floppy driver saves and restores it — to `$fc047a` and past. Laid by
+ * a `move.l`, which leaves X as it stands (a `subq` from 0 would set it: measured, SR apart at `$fc03e0`). */
+#define IKBDWS_COUNT_RUN_OUT      0xffff
 #define ROM_CARTRIDGE_HOOKS       0xfc0646   /* the cartridge's application hooks, D0 the init bit (CODE: the boot's,
                                               * unported, called four times; D2 open — the port reads 0 here) */
 #define CARTRIDGE_HOOK_IKBD_RESET 2          /* the bit the boot calls the hooks with after the IKBD reset */

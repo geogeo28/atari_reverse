@@ -430,6 +430,29 @@ def test_the_table_and_the_suites_have_the_boot_display_and_its_rule_fixes_every
     assert BOOTDISPLAY not in rules_of([makefile.replace(line, "$(BOOTHEAD_BIN) $(BOOTLAUNCH_BIN)"), kit])[TABLE][0]
 
 
+BOOTLATE = "build/bootlate/late.bin"     # (boot B6: the late slice's C, linked where it is laid)
+
+
+def test_the_table_and_the_suites_have_the_boot_s_late_slice_and_its_rule_fixes_every_callee_saved_register():
+    """boot B6: the table's rows run the C from the WARM and COLD machines, so the table needs its product, and so do the
+    three suites; its source lies one directory below kit.mk's sweeps (no blob links it); its link address is read off
+    `include/boot/late.h`; its own flags fix D2-D7 and A2-A6 (`late.c`'s header) and let it reach the system variables at
+    their own addresses (`--param=min-pagesize=0`). RED: the table's `$(BOOTLATE_BIN)` dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert all(BOOTLATE in rules[target][0] for target in (*THE_SUITES, TABLE))
+    source = RECREATE / "src" / "boot" / "late" / "late.c"
+    assert source.is_file() and not list((RECREATE / "src").glob("*/late.c"))
+    variables = _definitions([makefile])
+    assert "include/boot/late.h" in variables["BOOTLATE_LAID_AT"]
+    fixed = re.search(r"\$\(foreach register,([a-z0-9 ]+),-ffixed-\$\(register\)\)", variables["BOOTLATE_CFLAGS"])
+    assert fixed and fixed.group(1).split() == ["d2", "d3", "d4", "d5", "d6", "d7", "a2", "a3", "a4", "a5", "a6"]
+    assert "--param=min-pagesize=0" in variables["BOOTLATE_CFLAGS"]
+    line = "$(SHIPPED_BIN) $(BOOTLATE_BIN)"
+    assert makefile.count(line) == 1
+    assert BOOTLATE not in rules_of([makefile.replace(line, "$(SHIPPED_BIN)"), kit])[TABLE][0]
+
+
 def capture_key_lacks(texts):
     """What the captures' key does not read, over makefile `texts`: of the workspace modules a capture tool imports (a
     file of this project's tools/ or the workspace's), the oracle and the Hatari — each named by the key's own list or

@@ -1,10 +1,11 @@
-"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2, B3, B4, B5).
+"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2, B3, B4, B5, B6).
 
 The census, its KINDS and what each owes a rebuilt ROM are `rom_data.py`'s; this is the boot's table, over
 `src/boot/head/head.S` and `include/boot/` (the head lies one directory below kit.mk's sweep: the Makefile's own rule
 links it, `build/boothead/`), over `src/boot/` (B2's and B3's C and their entries, in the sweep: the bench blob) and
 over `src/boot/launch/` (B4's C and its entry, below the sweep like the head: `build/bootlaunch/`) and over
-`src/boot/display/` (B5's C, below the sweep too: `build/bootdisplay/`). D11 IS OPEN
+`src/boot/display/` (B5's C, below the sweep too: `build/bootdisplay/`) and over `src/boot/late/` (B6's C, below the
+sweep too: `build/bootlate/`). D11 IS OPEN
 (ROM data by ROM address vs `data/`): each TABLE here is read where it lies, as the orchestrator's call has it, and
 stands as an obligation on a rebuilt ROM — nothing is extracted.
 
@@ -21,7 +22,9 @@ BOOT_C = rom_data.Component(rom_data.RECREATE / "src" / "boot", rom_data.INCLUDE
 BOOT_LAUNCH = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "launch", rom_data.INCLUDE / "boot")
 # ...and B5's (`src/boot/display/`, linked by its own rule into `build/bootdisplay/`).
 BOOT_DISPLAY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "display", rom_data.INCLUDE / "boot")
-SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY)
+# ...and B6's (`src/boot/late/`, linked by its own rule into `build/bootlate/`).
+BOOT_LATE = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "late", rom_data.INCLUDE / "boot")
+SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY, BOOT_LATE)
 ROM_ADDRESSES_AS_DATA = {
     "head.S": {
         # Read in place, pc-relative (the four DATA operands `transcription.Relocated(..., in_place=True)` pins): the
@@ -60,7 +63,9 @@ ROM_ADDRESSES_AS_DATA = {
         "ISR_TIMER_C": CODE, "ISR_ACIA": CODE,
     },
     # ...and its entry's: the cartridge's application hooks (the boot's, unported: D2 open) and the way on (B5's).
-    "hwinit_entry.S": {"ROM_CARTRIDGE_HOOKS": CODE, "ROM_BOOT_IKBD_RESET_DONE": CODE},
+    "hwinit_entry.S": {"ROM_CARTRIDGE_HOOKS": CODE, "ROM_BOOT_IKBD_RESET_DONE": CODE,
+                       # ...and A3 left holding the RS232 handlers' table, as the ROM's init leaves it (review RB6's R2).
+                       "ROM_RS232_HANDLER_TABLE": TABLE},
     # B4 (`src/boot/launch/launch.c`): the strings the launch and the AUTO runner hand GEMDOS, read in place — the
     # environment's template, the search path and its pattern, the empty string — and the OS header `_sysbase` names
     # again (D11: obligations, nothing extracted).
@@ -81,6 +86,12 @@ ROM_ADDRESSES_AS_DATA = {
     "display.c": {"ROM_SYNC_WAIT": CODE, "ROM_BLITTER_PROBE": CODE, "ROM_LINEA_SET_VECTORS": CODE,
                   "ROM_CONSOLE_REINIT": CODE, "ROM_CARTRIDGE_HOOKS": CODE, "ROM_DISPLAY_END": CODE,
                   "ROM_RESET_ENTRY": CODE},
+    # B6 (`src/boot/late/late.c`): the ROM's routines the slice calls in place on both shores — the cartridge's hooks,
+    # GEMDOS's init and its Dsetdrv, the clock's probe (answered at its entry, R-B4-2) and its read, the ACSI's sector
+    # read (answered at its entry, D3) — the way on (B4's); and the OS header's date read in place (D11: an obligation,
+    # nothing extracted).
+    "late.c": {"ROM_CARTRIDGE_HOOKS": CODE, "ROM_GEMDOS_INIT": CODE, "GEMDOS_DSETDRV": CODE, "BIOS_RTC_PROBE": CODE,
+               "ROM_RTC_READ": CODE, "ROM_ACSI_READ_BOOT_SECTOR": CODE, "ROM_LAUNCH": CODE, "ROM_OS_HEADER": TABLE},
 }
 
 
@@ -106,8 +117,9 @@ def test_a_table_s_kind_is_where_it_lies():
 
 def test_the_scope_is_the_boot_s_sources_and_headers():
     """The census reads the files it means — a scope one directory off would census nothing and pass."""
-    headers = ["boot/display.h", "boot/head.h", "boot/hwinit.h", "boot/launch.h", "boot/sysvars.h"]
+    headers = ["boot/display.h", "boot/head.h", "boot/hwinit.h", "boot/late.h", "boot/launch.h", "boot/sysvars.h"]
     assert sorted(BOOT.scanned()) == [*headers, "head.S"]
     assert sorted(BOOT_C.scanned()) == [*headers, "hwinit.c", "hwinit_entry.S", "sysvars.c", "sysvars_entry.S"]
     assert sorted(BOOT_LAUNCH.scanned()) == [*headers, "launch.S", "launch.c", "launch_entry.S"]
     assert sorted(BOOT_DISPLAY.scanned()) == [*headers, "display.c"]
+    assert sorted(BOOT_LATE.scanned()) == [*headers, "late.c"]

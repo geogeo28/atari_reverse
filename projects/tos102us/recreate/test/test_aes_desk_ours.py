@@ -56,9 +56,12 @@ STACKS = (desk.PD0_STACK, desk.PD1_STACK, desk.DISPATCHER_STACK, desk.USERDEF_ST
 LAUNCHED = "files: the program double-clicked — launched"
 A_LAUNCH_OVER_THE_BLOB = "W6-R8: A LAUNCH — the shell's Pexec loads the program over free memory, where our blob lies"
 A_COPY_OVER_THE_BLOB = "W6-R8: THE DISK COPY — its buffer, all free memory but a kilobyte, read full of tracks where our blob lies"
+# WHAT THE REFUSAL READS is what the overwritten code does next, so it follows the blob's layout: the copy's read
+# "Rwabs of drive 254" until boot B6's fix pass moved the blob's code past `hwinit_entry.S` by twelve bytes (B3's entries
+# leaving A3 / D3 as the ROM's), a run that never idles since (measured, the PC in no routine: `$41fc260e`).
 REFUSED_ON_OUR_SHORE = {   # `{chain: (its class, the step refused, what the refusal reads)}`
     LAUNCHED: (A_LAUNCH_OVER_THE_BLOB, 0, "the run did not reach an idle within 6000000 instructions"),
-    desk.COPIED: (A_COPY_OVER_THE_BLOB, 4, "Rwabs of drive 254: the model holds drive A: alone")}
+    desk.COPIED: (A_COPY_OVER_THE_BLOB, 4, "the run did not reach an idle within 4000000 instructions")}
 
 
 def _goes_on_from_a_refused(name):

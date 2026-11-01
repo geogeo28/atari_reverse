@@ -125,6 +125,8 @@ import boot_hwinit                                         # noqa: E402
 import boot_launch                                         # noqa: E402
 # ...and THE BOOT'S DISPLAY SLICE IN C (boot B5): each colour arm priced the same way (`boot_display`).
 import boot_display                                        # noqa: E402
+# ...and THE BOOT'S LATE SLICE IN C (boot B6): each machine priced the same way (`boot_late`).
+import boot_late                                           # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1784,6 +1786,28 @@ def is_a_boot_display_slice(row):
     return row.registered in boot_display.SLICES
 
 
+# THE BOOT'S LATE SLICE (boot B6; rulings D3, D4, D8, D9, "ROM-window overlay", "Own link rule"): `src/boot/late/late.c` laid
+# over the ROM window (A LABELLED STAGING), both shores from the ROM's own machine at $fc0452 on WARM and COLD, one row a
+# machine; each shore on its OWN cycles (the ROM's its slice's and the five routines it ports), the ROM's routines both run
+# (the cartridge's hooks, GEMDOS's init and Dsetdrv, hdv_boot and hdv_init) in neither column, the waiting routines answered
+# at their entries on both (the drive probe, Floprd, the ACSI probe, the clock's probe), every observable surface held
+# (`boot_late.differences`).
+BOOT_LATE_SLICE_FUNCTION = "BOOT late (C)"
+BOOT_LATE_SLICE_CASE = "LABELLED STAGING (ROM-window overlay): B6 [${start:x}, ${stop:x}), {name}"
+
+
+def _boot_late_slice_row(name, machine):
+    start, stop = boot_late.SPAN
+    return Row(BOOT_LATE_SLICE_FUNCTION, BOOT_LATE_SLICE_CASE.format(start=start, stop=stop, name=name), start,
+               boot_late.ENTRY_SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_late_slice(row):
+    """Is `row` a machine's run of the boot's late slice — both shores from the ROM's machine at $fc0452, on their own
+    cycles?"""
+    return row.registered in boot_late.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1795,7 +1819,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items())
         + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items())
         + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items())
-        + tuple(_boot_display_slice_row(name, arm) for name, arm in boot_display.SLICES.items()))
+        + tuple(_boot_display_slice_row(name, arm) for name, arm in boot_display.SLICES.items())
+        + tuple(_boot_late_slice_row(name, machine) for name, machine in boot_late.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4286,6 +4311,20 @@ def boot_display_slice_on(name):
     return _boot_measurement(boot_display.priced(boot_display.SLICES[name]), boot_display.ENTRY_SYMBOL)
 
 
+def boot_late_slice_on(name):
+    """A MACHINE'S RUN OF THE BOOT'S LATE SLICE's `Measurement`: every held surface equal (`boot_late.priced`, refused by
+    name otherwise), each shore on its own cycles; the ROM's routines both run (`boot_rest`) under the row."""
+    return _boot_measurement(boot_late.priced(boot_late.SLICES[name]), boot_late.ENTRY_SYMBOL)
+
+
+BOOT_LATE_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice and the five "
+                        "routines it ports on its); instructions each run's whole; the cartridge hooks, GEMDOS's init and "
+                        "Dsetdrv, hdv_boot and hdv_init both run {rest} cycles, held equal, in neither column; the drive "
+                        "probe, Floprd, the ACSI probe and the clock's probe answered at their entries on both (D3, D4, "
+                        "R-B4-2); held: every register, the megabyte and the stores outside the BIOS stack's dead frames, "
+                        "every ledger, the faults, the answers (`boot_late.differences`)")
+
+
 BOOT_DISPLAY_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice on its); "
                            "instructions each run's whole; the probe, the Line-A's set-up, the console's re-init and the "
                            "cartridge hooks both run {rest} cycles, held equal, in neither column; held: every register, the "
@@ -5403,6 +5442,8 @@ def _measured_on_its_path(row, bench):
         return boot_launch_slice_on(row.registered)
     if is_a_boot_display_slice(row):
         return boot_display_slice_on(row.registered)
+    if is_a_boot_late_slice(row):
+        return boot_late_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5932,6 +5973,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_LAUNCH_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_display_slice(row):
             lines.append(BOOT_DISPLAY_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_late_slice(row):
+            lines.append(BOOT_LATE_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

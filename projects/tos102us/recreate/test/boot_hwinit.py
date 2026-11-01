@@ -214,18 +214,18 @@ NOT_HELD = {
         "a0": "the ROM's IOREC cursor; GCC's scratch",
         "a1": "the ROM's template cursor; GCC's scratch",
         "a2": "the ROM's handler argument (CTS's, the last installed); GCC keeps the caller's (callee-saved)",
-        "a3": "the ROM's handle on the RS232 handlers' table; GCC keeps the caller's (callee-saved)",
         "sr": "its CONDITION CODES alone (`CCR_SET_AT_THE_RETURN`): the rest of SR held",
     },
     STRETCH_KIND: {
         "d1": "the ROM's Ikbdws byte (its low byte only, over the init's $ffff); GCC's scratch",
         "a1": "the ROM's Ikbdws ACIA; GCC's scratch",
         "d2": "the ROM's settle counter (its low word, over the init's 0); GCC keeps the caller's (callee-saved)",
-        "d3": "the ROM's Ikbdws byte count; GCC keeps the caller's (callee-saved)",
         "a2": "the ROM's Ikbdws cursor; GCC keeps the caller's (callee-saved)",
-        "a3": "the ROM's handle on the RS232 handlers' table; GCC keeps the caller's (callee-saved)",
     },
 }
+# NOT IN EITHER SET, HELD: A3 (the RS232 handlers' table, left at both entries' returns) and the stretch's D3 (Ikbdws's
+# count run out) — the ROM's boot hands both on to `$fc047a` and A3 into the pre-init machine (review RB6's R2, measured),
+# so `hwinit_entry.S` leaves them as the ROM's code does.
 # The function's return site, `$fc03ba`, is `move.l #imm,-(sp)`: it SETS N, Z, V and C and reads none — the flags our
 # return leaves are dead there, X and the system byte are not (held).
 CCR_SET_AT_THE_RETURN = 0x0f
