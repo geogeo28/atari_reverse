@@ -408,6 +408,28 @@ def test_the_table_has_what_the_boot_launch_rows_run_and_the_suites_both_product
     assert MIDBOOT not in rules_of([makefile.replace(line, "$(BOOTLAUNCH_BIN) $(CAND)"), kit])[TABLE][0]
 
 
+BOOTDISPLAY = "build/bootdisplay/display.bin"     # (boot B5: the display slice's C, linked where it is laid)
+
+
+def test_the_table_and_the_suites_have_the_boot_display_and_its_rule_fixes_every_callee_saved_register():
+    """boot B5: the table's rows run the C from the WARM and COLD machines, so the table needs its product, and so do
+    the three suites; its source lies one directory below kit.mk's sweeps (no blob links it); its link address is read
+    off `include/boot/display.h`; and its own flags fix D2-D7 and A2-A6 — the ROM's routines it calls clobber them, so
+    the C must hold nothing there (`display.c`'s header). RED: the table's `$(BOOTDISPLAY_BIN)` dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert all(BOOTDISPLAY in rules[target][0] for target in (*THE_SUITES, TABLE))
+    source = RECREATE / "src" / "boot" / "display" / "display.c"
+    assert source.is_file() and not list((RECREATE / "src").glob("*/display.c"))
+    variables = _definitions([makefile])
+    assert "include/boot/display.h" in variables["BOOTDISPLAY_LAID_AT"]
+    fixed = re.search(r"\$\(foreach register,([a-z0-9 ]+),-ffixed-\$\(register\)\)", variables["BOOTDISPLAY_CFLAGS"])
+    assert fixed and fixed.group(1).split() == ["d2", "d3", "d4", "d5", "d6", "d7", "a2", "a3", "a4", "a5", "a6"]
+    line = "$(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN)"
+    assert makefile.count(line) == 1
+    assert BOOTDISPLAY not in rules_of([makefile.replace(line, "$(BOOTHEAD_BIN) $(BOOTLAUNCH_BIN)"), kit])[TABLE][0]
+
+
 def capture_key_lacks(texts):
     """What the captures' key does not read, over makefile `texts`: of the workspace modules a capture tool imports (a
     file of this project's tools/ or the workspace's), the oracle and the Hatari — each named by the key's own list or

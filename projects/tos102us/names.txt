@@ -2876,3 +2876,6 @@ var 0x0984 auto_path
 var 0x0988 auto_pattern
 var 0x098c auto_dta
 var 0x09b8 auto_program_name
+cmt 0xfc03e0 Boot B5 (C: src/boot/display/display.c boot_display_entry, own rule at 0xfc3c00, D2-D7/A2-A6 fixed): $ff8260 & 3 (3 -> 2) into sshiftmd; GPIP bit 7 LOW (mono) -> sync wait 0xfc0e1a (A6 link), $ff8260 := 2, sshiftmd := 2; blitter_probe 0xfc0f1a; 0xfca99e (Line-A body vectors for D0); console_reinit 0xfca914; ST medium: pen 15's colour to pen 3 ($ff825e -> $ff8246); swv_vec := 0xfc0030; vblsem := 1; cartridge hooks d0=0 (0xfc0646). Ends at 0xfc0452 (move #$2300,sr, B6). The ROM's routines run in place on both shores; the mono arm's sync-wait poll [0xfc0e3c, 0xfc0e50) answered at its entry (R-B5-1).
+fn 0xfca99e linea_set_body_vectors
+cmt 0xfca99e Names the Line-A's CPU body set (0xfc4e36 -> $2a40) and blitter set (0xfc4e0e -> $2a3c), then jmp 0xfc4dde: the mode in D0 kept at $2a44 and the ten body vectors at $2a14 filled from the blitter set if bit 0, else the CPU set. Called by the boot (0xfc041c) with the blitter probe's answer (0 / 2: the CPU set either way).

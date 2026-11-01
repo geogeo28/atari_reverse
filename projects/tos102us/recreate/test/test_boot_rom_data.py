@@ -1,9 +1,10 @@
-"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2, B3, B4).
+"""EVERY ROM ADDRESS THE BOOT USES AS A VALUE — enumerated, and held to its source (boot B1, B2, B3, B4, B5).
 
 The census, its KINDS and what each owes a rebuilt ROM are `rom_data.py`'s; this is the boot's table, over
 `src/boot/head/head.S` and `include/boot/` (the head lies one directory below kit.mk's sweep: the Makefile's own rule
 links it, `build/boothead/`), over `src/boot/` (B2's and B3's C and their entries, in the sweep: the bench blob) and
-over `src/boot/launch/` (B4's C and its entry, below the sweep like the head: `build/bootlaunch/`). D11 IS OPEN
+over `src/boot/launch/` (B4's C and its entry, below the sweep like the head: `build/bootlaunch/`) and over
+`src/boot/display/` (B5's C, below the sweep too: `build/bootdisplay/`). D11 IS OPEN
 (ROM data by ROM address vs `data/`): each TABLE here is read where it lies, as the orchestrator's call has it, and
 stands as an obligation on a rebuilt ROM — nothing is extracted.
 
@@ -18,7 +19,9 @@ BOOT = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "head", rom_data.
 BOOT_C = rom_data.Component(rom_data.RECREATE / "src" / "boot", rom_data.INCLUDE / "boot")
 # B4's C lies one directory below the sweep too (`src/boot/launch/`, linked by its own rule into `build/bootlaunch/`).
 BOOT_LAUNCH = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "launch", rom_data.INCLUDE / "boot")
-SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH)
+# ...and B5's (`src/boot/display/`, linked by its own rule into `build/bootdisplay/`).
+BOOT_DISPLAY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "display", rom_data.INCLUDE / "boot")
+SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY)
 ROM_ADDRESSES_AS_DATA = {
     "head.S": {
         # Read in place, pc-relative (the four DATA operands `transcription.Relocated(..., in_place=True)` pins): the
@@ -71,6 +74,13 @@ ROM_ADDRESSES_AS_DATA = {
     "launch.S": {"ROM_ENVIRONMENT_TEMPLATE": TABLE, "ROM_COMMAND_PRG": TABLE, "ROM_EMPTY_STRING": TABLE,
                  "ROM_AUTO_PATH": TABLE, "ROM_AUTO_PATTERN": TABLE, "ROM_OS_HEADER": TABLE, "ROM_RESET_ENTRY": CODE,
                  "ROM_LAUNCH_END": DISTANCE, "ROM_AUTO_RUNNER": DISTANCE},
+    # B5 (`src/boot/display/display.c`): the ROM's routines the slice calls in place on both shores — the sync wait
+    # (the head's too), the blitter probe (XBIOS Blitmode's, unported), the Line-A's vectors and the console's re-init
+    # (the VDI's range, unported), the cartridge's hooks — the way on, and the reset stored by value in swv_vec (CODE:
+    # the head's, laid elsewhere on a rebuilt ROM).
+    "display.c": {"ROM_SYNC_WAIT": CODE, "ROM_BLITTER_PROBE": CODE, "ROM_LINEA_SET_VECTORS": CODE,
+                  "ROM_CONSOLE_REINIT": CODE, "ROM_CARTRIDGE_HOOKS": CODE, "ROM_DISPLAY_END": CODE,
+                  "ROM_RESET_ENTRY": CODE},
 }
 
 
@@ -96,7 +106,8 @@ def test_a_table_s_kind_is_where_it_lies():
 
 def test_the_scope_is_the_boot_s_sources_and_headers():
     """The census reads the files it means — a scope one directory off would census nothing and pass."""
-    headers = ["boot/head.h", "boot/hwinit.h", "boot/launch.h", "boot/sysvars.h"]
+    headers = ["boot/display.h", "boot/head.h", "boot/hwinit.h", "boot/launch.h", "boot/sysvars.h"]
     assert sorted(BOOT.scanned()) == [*headers, "head.S"]
     assert sorted(BOOT_C.scanned()) == [*headers, "hwinit.c", "hwinit_entry.S", "sysvars.c", "sysvars_entry.S"]
     assert sorted(BOOT_LAUNCH.scanned()) == [*headers, "launch.S", "launch.c", "launch_entry.S"]
+    assert sorted(BOOT_DISPLAY.scanned()) == [*headers, "display.c"]

@@ -123,6 +123,8 @@ import boot_sysvars                                        # noqa: E402
 import boot_hwinit                                         # noqa: E402
 # ...and THE BOOT'S LAST SLICE — the AUTO runner and the launch of the shell (boot B4): priced the same way (`boot_launch`).
 import boot_launch                                         # noqa: E402
+# ...and THE BOOT'S DISPLAY SLICE IN C (boot B5): each colour arm priced the same way (`boot_display`).
+import boot_display                                        # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1762,6 +1764,26 @@ def is_a_boot_launch_slice(row):
     return row.registered in boot_launch.SLICES
 
 
+# THE BOOT'S DISPLAY SLICE (boot B5; rulings D5, D8, D9, "ROM-window overlay", "Own link rule"): `src/boot/display/display.c`
+# laid over the ROM window (A LABELLED STAGING), both shores from the ROM's own machine at $fc03e0 on WARM and COLD, one
+# row per colour arm (the resolution byte, the blitter ABSENT or PRESENT); each shore on its OWN cycles, the ROM's routines
+# both run (the probe, the Line-A's set-up, the console's re-init, the hooks) in neither column, every observable surface
+# held (`boot_display.differences`).
+BOOT_DISPLAY_SLICE_FUNCTION = "BOOT display (C)"
+BOOT_DISPLAY_SLICE_CASE = "LABELLED STAGING (ROM-window overlay): B5 [${start:x}, ${stop:x}), {name}"
+
+
+def _boot_display_slice_row(name, arm):
+    start, stop = boot_display.SPAN
+    return Row(BOOT_DISPLAY_SLICE_FUNCTION, BOOT_DISPLAY_SLICE_CASE.format(start=start, stop=stop, name=name), start,
+               boot_display.ENTRY_SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_display_slice(row):
+    """Is `row` an arm of the boot's display slice — both shores from the ROM's machine at $fc03e0, on their own cycles?"""
+    return row.registered in boot_display.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1772,7 +1794,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_boot_slice_row(name, head_slice) for name, head_slice in boot_head.SLICES.items())
         + tuple(_boot_c_slice_row(name, arm) for name, arm in boot_sysvars.SLICES.items())
         + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items())
-        + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items()))
+        + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items())
+        + tuple(_boot_display_slice_row(name, arm) for name, arm in boot_display.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4257,6 +4280,19 @@ def boot_launch_slice_on(name):
     return _boot_measurement(boot_launch.priced(boot_launch.SLICES[name]), boot_launch.ENTRY_SYMBOL)
 
 
+def boot_display_slice_on(name):
+    """AN ARM OF THE BOOT'S DISPLAY SLICE's `Measurement`: every held surface equal (`boot_display.priced`, refused by
+    name otherwise), each shore on its own cycles; the ROM's routines both run (`boot_rest`) under the row."""
+    return _boot_measurement(boot_display.priced(boot_display.SLICES[name]), boot_display.ENTRY_SYMBOL)
+
+
+BOOT_DISPLAY_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice on its); "
+                           "instructions each run's whole; the probe, the Line-A's set-up, the console's re-init and the "
+                           "cartridge hooks both run {rest} cycles, held equal, in neither column; held: every register, the "
+                           "megabyte with the hooks' return mapped back, the stores, every ledger, the faults "
+                           "(`boot_display.differences`)")
+
+
 BOOT_LAUNCH_SLICE_LINE = ("{indent}  a slice of the boot as the ROM's bytes on its own cycles (the overlay's on ours, the launch's text and "
                           "the AUTO runner's on the ROM's); instructions each run's whole; GEMDOS, the BIOS and the "
                           "floppy model (the clock answered at its probe's entry) both run {rest} cycles, held equal, in "
@@ -5365,6 +5401,8 @@ def _measured_on_its_path(row, bench):
         return boot_hwinit_slice_on(row.registered)
     if is_a_boot_launch_slice(row):
         return boot_launch_slice_on(row.registered)
+    if is_a_boot_display_slice(row):
+        return boot_display_slice_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5892,6 +5930,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_HWINIT_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_launch_slice(row):
             lines.append(BOOT_LAUNCH_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_display_slice(row):
+            lines.append(BOOT_DISPLAY_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

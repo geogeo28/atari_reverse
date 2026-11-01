@@ -448,6 +448,33 @@ $(BOOTLAUNCH_DIR)/%.bin: $(BOOTLAUNCH_DIR)/%.elf
 bootlaunch: $(BOOTLAUNCH_BIN) $(BOOTLAUNCH_TWIN_BIN)
 test guarded gates: $(BOOTLAUNCH_BIN) $(BOOTLAUNCH_TWIN_BIN)
 
+# THE BOOT'S DISPLAY SLICE (boot B5; rulings "ROM-window overlay" and "Own link rule") — [$fc03e0, $fc0452) in C,
+# `src/boot/display/display.c`, LAID over a copy of the image's ROM window at `DISPLAY_LAID_AT` (`include/boot/display.h`,
+# the one spelling) and LINKED THERE, by this rule alone, one directory below kit.mk's `src/*/*` sweeps (no blob above
+# links it, no symbol of theirs moves). ITS OWN FLAGS: BENCH_CFLAGS with EVERY CALLEE-SAVED REGISTER FIXED, D2-D7 and
+# A2-A6 — the ROM's routines the slice calls clobber them, and the ROM's slice hands its continuation what they leave
+# (`display.c`'s header). `test/boot_display.py` reads the flat bytes and the ELF's symbols.
+BOOTDISPLAY_DIR    := build/bootdisplay
+BOOTDISPLAY_ELF    := $(BOOTDISPLAY_DIR)/display.elf
+BOOTDISPLAY_BIN    := $(BOOTDISPLAY_DIR)/display.bin
+BOOTDISPLAY_SRC    := src/boot/display/display.c
+BOOTDISPLAY_CFLAGS := $(BENCH_CFLAGS) $(foreach register,d2 d3 d4 d5 d6 d7 a2 a3 a4 a5 a6,-ffixed-$(register))
+BOOTDISPLAY_LAID_AT := $(call laid_at,DISPLAY_LAID_AT,include/boot/display.h)
+ifeq ($(BOOTDISPLAY_LAID_AT),)
+$(error include/boot/display.h defines no DISPLAY_LAID_AT — the boot display's link address is read from there and nowhere else)
+endif
+
+$(BOOTDISPLAY_ELF): $(BOOTDISPLAY_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTDISPLAY_DIR)
+	m68k-elf-gcc $(BOOTDISPLAY_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTDISPLAY_LAID_AT) $(BOOTDISPLAY_SRC) -o $@
+
+$(BOOTDISPLAY_BIN): $(BOOTDISPLAY_ELF)
+	m68k-elf-objcopy -O binary $(BOOTDISPLAY_ELF) $(BOOTDISPLAY_BIN)
+
+.PHONY: bootdisplay
+bootdisplay: $(BOOTDISPLAY_BIN)
+test guarded gates: $(BOOTDISPLAY_BIN)
+
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
@@ -464,7 +491,9 @@ derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single
 # process writes, line for line. Boot B4's rows run the shipped launch (`$(BOOTLAUNCH_BIN)`) from the mid-boot capture
 # (`$(MIDBOOT)`, served from the store like every capture); the C twin is priced by nothing, so the table reads no twin.
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTHEAD_BIN) $(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
+# Boot B5's rows run its C (`$(BOOTDISPLAY_BIN)`) from the WARM and COLD machines.
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) \
+                $(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 
 .PHONY: bench

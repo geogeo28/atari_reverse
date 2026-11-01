@@ -1749,6 +1749,47 @@ boot_launch.priced(s)                                # the .S's Priced(the_rom_s
   **Open carry (B6's)**: A3, A4, A6 at `$fc047a` reach the pre-init machine (the BIOS process's basepage +$6c/+$70/+$78);
   the capture's A3 is `$fc25a0`, which B3's C does not leave.
 
+### THE BOOT'S DISPLAY SLICE IN C — `[$fc03e0, $fc0452)` (`src/boot/display/display.c`, `test/boot_display.py`, boot B5)
+
+The user's rulings: **D5** (the probe's bus error, `bus_error.Fault`), **D8** (WARM and COLD), **D9** (each arm on its own
+cycles), **"ROM-window overlay"**, **"Own link rule"** (2026-10-29); **R-B5-1 "Answer it at entry"** (2026-10-31). The orchestrator's standing calls: the sync wait
+`$fc0e1a`, the blitter probe `$fc0f1a`, the Line-A's vectors `$fca99e`, the console re-init `$fca914` and the cartridge
+hooks `$fc0646` are the ROM's on both shores (CODE obligations, `test_boot_rom_data.py`), priced as the OS both run.
+
+```
+make bootdisplay      # build/bootdisplay/display.{elf,bin} — the C at DISPLAY_LAID_AT ($fc3c00), D2-D7/A2-A6 fixed
+```
+
+```python
+boot_display.SLICES                       # {"boot display B5, <machine>, <mode>, blitter ABSENT|PRESENT": Arm}
+boot_display.the_rom_s(arm) / our_side(arm)            # Shore(slice, own): from the ROM's machine at $fc03e0
+boot_display.differences(rom, ours, arm, not_held=())  # [] = held; the hooks' return mapped back
+boot_display.answered_poll(machine)       # R-B5-1: the sync wait's poll answered (D0.b, D4.b the count; D3.w $ffff)
+boot_display.priced(arm)
+```
+
+- **The C is entered at its first byte, no glue**: a `noreturn` function, the image base through a register
+  (`target_image`), the ROM's routines called by inline `jsr` (the sync wait by `lea 1f(pc),a6 / jmp`), the way on a
+  `jmp $fc0452`. Its own rule fixes every callee-saved register: the ROM's routines clobber them, the ROM's slice hands
+  what they leave to its continuation, and a C that held anything there would save it in a prologue the ROM does not
+  run (ESTIMATED, not measured: `link` + `movem`, ~1.30 against the bar). Empty off target (the host sweeps compile every source).
+- **Where it lies**: over Prtblk's text at `$fc3c00`, past B4's launch `[$fc3200, $fc3ad6)`; the ROM's run equal with and
+  without it; ours refused by name if it executes the ROM's slice.
+- **Arms** (A CASE'S DECLARATIONS, labelled): GPIP bit 7 HIGH (colour) / LOW (mono) x the resolution byte (mode bits
+  under foreign high bits) x the blitter ABSENT (the probe's fault) / PRESENT (its word declared) x WARM / COLD — 32
+  rows, 8 distinct costs of ours (the blitter's two answers run one path of ours).
+- **Held**: stop, EVERY register, the megabyte with the hooks' return (the stack longword under the entry's SP) mapped
+  back from our `jmp $fc0452`, stores, every ledger, faults; own cycles pinned exactly per arm (the sshiftmd barrier's
+  only surface is cost).
+- **THE MONO ARM'S SYNC WAIT (R-B5-1)**: only its poll `[$fc0e3c, $fc0e50)` is answered, at its entry, on both shores:
+  the wait's head and tail run (their five timer-B stores ledgered); the answer leaves D0.b and D4.b the count D4 holds
+  (the ROM's `moveq #1,d4`), D3.w $ffff — each held to the ROM's text. Why: the 618 reads follow the run's own store of
+  timer B's data register — a list is STALE there (and past the 256-byte pool), write-through reads 240 for ever. A6
+  reaches $fc0452 as each shore's link (the ROM's $fc0408, ours past our one `jmp $fc0e1a`): mapped back by that value.
+- **Unpinned by name**: the poll loop itself; the order of the slice's RAM stores (equivalent: interrupts masked to
+  $fc0452); the hooks' `clr.w d0` (cost alone, D2).
+- **Tier 3**: colour 1.04 (292/280, 294/282), 1.05 ST medium (322/306); mono 1.05 (352/336, 354/338).
+
 ## Writing a case
 
 ```python
@@ -4562,7 +4603,9 @@ recreate/
 │                       `src/boot/launch/launch.S` with `include/boot/launch.h`: boot B4, the AUTO runner and the
 │                       launch [$fc047a, gem_entry) AS THE ROM'S BYTES — `build/bootlaunch/launch.bin` at
 │                       LAUNCH_LAID_AT; its C twin `launch.c` + `launch_entry.S` (`twin.bin`, D3-D7/A3-A6 fixed);
-│                       both one directory below the sweep, each linked by its own rule)
+│                       both one directory below the sweep, each linked by its own rule;
+│                       `src/boot/display/display.c` with `include/boot/display.h`: boot B5, [$fc03e0,$fc0452) in
+│                       C, target only, linked by its own rule into `build/bootdisplay/` at DISPLAY_LAID_AT)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
 │                       rebuilt ROM image and the two measurement programs
@@ -4602,6 +4645,8 @@ recreate/
 │                       (B3: the function and the stretch on both shores)
 │                       `boot_launch.py` / `test_boot_launch.py` (BOOT B4: the .S and its twin from the mid-boot
 │                       machine, END = the pre-init capture); `acc/autoprg.S` (the AUTO disks' Pterm0 program)
+│                       `boot_display.py` / `test_boot_display.py` (BOOT B5: colour and mono arms, the sync wait's
+│                       poll answered at its entry, R-B5-1)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),
