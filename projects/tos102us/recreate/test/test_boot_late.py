@@ -226,6 +226,34 @@ def test_the_product_lies_at_its_laid_address_clear_of_b5_s_overlay():
     assert display + DISPLAY_BIN.stat().st_size <= product.base and product.base + len(product.code) <= PRTBLK_END
 
 
+BOOT_SOURCES = bl.RECREATE / "src" / "boot"
+_STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"')
+_STRING_MACRO = re.compile(r'^#define\s+(\w+)\s+((?:"[^"]*"\s*,?\s*)+)$', re.MULTILINE)
+_ASM_EXIT = re.compile(r"__asm__\b(?:(?!__asm__).)*?\);\s*__builtin_unreachable\(\);", re.DOTALL)
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CLOBBER_SECTION = 3    # `template : outputs : inputs : clobbers [: labels]`
+
+
+def _clobbers(statement, macros):
+    """The clobber section of one `__asm__ (...)` statement, its string macros expanded."""
+    sections = _STRING_LITERAL.sub(lambda literal: literal[0].replace(":", ""), statement).split(":")   # a template's labels
+    clobbers = sections[_CLOBBER_SECTION] if len(sections) > _CLOBBER_SECTION else ""
+    return re.sub(r"\b\w+\b", lambda name: macros.get(name[0], name[0]), clobbers)
+
+
+def test_every_asm_that_leaves_for_good_clobbers_memory():
+    """A `jmp` out of the boot's C leaves the function for good (`__builtin_unreachable()` follows it: a noreturn function
+    that falls off its end is an error under -Werror), so GCC may sink or drop any store before it unless the asm says it
+    reads memory. Owed by review RCH on late.c's exit to `$fc047a`; display.c's exit is the second site held."""
+    exits = {}
+    for source in sorted(BOOT_SOURCES.rglob("*.c")):
+        text = _BLOCK_COMMENT.sub("", source.read_text())
+        macros = dict(_STRING_MACRO.findall(text))
+        for statement in _ASM_EXIT.findall(text):
+            exits.setdefault(source.relative_to(BOOT_SOURCES).as_posix(), []).append('"memory"' in _clobbers(statement, macros))
+    assert exits == {"late/late.c": [True], "display/display.c": [True]}
+
+
 @pytest.mark.parametrize("machine", bl.MACHINES)
 def test_the_rom_s_run_is_the_same_with_and_without_the_overlay(machine):
     plain, with_it = bl.the_rom_s(machine), bl.the_rom_s(machine, laid=bl.overlay())

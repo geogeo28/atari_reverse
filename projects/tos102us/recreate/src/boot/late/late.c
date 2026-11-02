@@ -246,7 +246,7 @@ __attribute__((noreturn)) void boot_late_entry(void)
     boot_floppy();
     boot_acsi();
     boot_reset_resident();
-    __asm__ volatile ("jmp (%c0).l" : : "i"(ROM_LAUNCH));
+    __asm__ volatile ("jmp (%c0).l" : : "i"(ROM_LAUNCH) : "memory");    /* leaves for good: a store before it must land */
     __builtin_unreachable();
 }
 #endif
