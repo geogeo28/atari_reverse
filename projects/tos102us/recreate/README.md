@@ -1859,6 +1859,69 @@ boot_late.priced(machine)
   a clock present (R-B4-2); a cartridge (D2).
 - **Tier 3**: two rows `BOOT late (C)` — **0.85** WARM and COLD, own cycles pinned exactly.
 
+### THE CHAINED BOOT — our boot from the reset to gem_entry, against the ROM's own (`test/boot_chain.py`, boot CH)
+
+The user's rulings (2026-11-01): **R-CH-1 "Steered chain"** — each slice on ITS OWN EXISTING STAGING, the machine
+CARRIED WHOLE between slices, the harness checking the arrival at the ROM's next slice start and steering the PC into
+ours (A CHAINED STAGING), with a STATIC LINK CHECK of every `jmp.l` into the ROM window each product holds; **D10 DEFERRED** (no composed image); the BLANK DISK only. Every
+ruling each slice stands on stands with it (D3, D4, D5, D7, D8, D9, "ROM-window overlay", "Own link rule", R-B4-2/3,
+R-B5-1).
+
+```python
+boot_chain.SLICES                             # {"boot chain, WARM" | "..., COLD" [, "<B5 arm>"]: Chain(machine, arm)} — eight
+boot_chain.the_rom_s(chain) / ours(chain)     # (Step, ...): head, B2, B3, B5, B6, B4 — each the machine it left, its ledgers,
+                                              #   its cycles in every span (`spans`), its answers
+boot_chain.link_check() / steering()          # [] = every product's exits are the ROM's next slice starts; the steering map
+boot_chain.differences(rom_step, our_step, chain)          # [] = the boundary held
+boot_chain.against_the_midboot(...) / against_the_preinit(...)   # the END surfaces (COLD)
+boot_chain.priced(chain)                      # both shores, every boundary held, the rest held equal step by step
+```
+
+- **The steps.** The head from our reset (`boot_head.ours_of`), stopped at its own end (it falls through); B2's blob
+  LAID THERE on both shores (its own staging at its own start: the cold arm's clear of `$400..phystop` lies behind;
+  the ROM's chain held equal without it outside its span); B3's two legs (the 6850, B3's interim call); B5 on the
+  arm's declarations (the mono poll answered, R-B5-1); B6 through its answered entries (the plain run priced, the
+  watched one ledgered, held to leave the same machine); B4 through `boot_launch.run` (the floppy model, the clock).
+  At each boundary ours must arrive at the ROM's next slice start (`steered`, refused by name otherwise) and is
+  entered at the next product's entry.
+- **The link check** (`link_check`): EVERY word-aligned `jmp.l` INTO THE ROM WINDOW each product holds, pinned
+  EXACTLY as a multiset (`EXPECTED_EXITS`; the blob's scanned in B2's and B3's entries alone) — the blob's `$fc03b6` and
+  `$fc03e0` once each, the display's `$fc0452` twice (its two paths) and `$fc0e1a` once (the sync wait), the late C's
+  `$fc047a`, the launch's `$fc0030` (the ROM's own after a returning GEM); the head none, exactly the head's length;
+  and the steering map exactly the arrivals — the head's end and the slice starts the products exit to — into the next
+  entries. Negatives: a wrong slice start, a re-target to no slice start, an exit appended, a head cut short, a
+  steering entry off by two.
+- **Held at every boundary** (`differences`): the stop; every register but THE CARRIES, EXACTLY (`CARRIED`: B2's D1,
+  A1, A3, A4 at `$fc03b6`; B3's D1, A1, D2, A2 and B2's A4 at `$fc03e0`; none from `$fc0452` on — all dead, proved
+  composed); the head's links by offset while they live; the megabyte with ONLY the named mappings (the seven linked
+  vectors; at gem_entry the launch's links and the returns into our code — our dispatcher's `jsr (a0)` return, the
+  launch's addresses by offset — that dead frames keep INSIDE the pre-init mask) outside each slice's derived residue,
+  the BIOS stack's dead frames TIGHTENED for the chain alone (at `$fc047a` apart only from `$74ff` up; at gem_entry in
+  EXACTLY five bytes, `APART_AT_THE_END`, set equality);
+  the stores; every ledger; the answers. B6's answer ledger and B4's GEMDOS / floppy / clock / blank ledgers equal the
+  slices' own.
+- **The END surfaces (COLD)**: at `$fc047a` the mid-boot capture apart in exactly B6's D1 / D4 classes; at gem_entry
+  the pre-init capture apart in its OWN exact set (`END_PREINIT_*`: memctrl `$424` and 21 bytes of the lower floppy
+  driver's state in `[$9f7, $a54)` — the oracle's carried from B6, which is why it is not B4's capture-made set).
+- **The hand-off no slice sees**: B2 and B3 store our linked entries, and the ROM's later code enters them — the three
+  traps of B6 (GEMDOS's init, Dsetdrv) and the three of B4 go through OUR `trap.S`, the launch's two blanks through
+  OUR HBL entry; the ROM's dispatcher and HBL handler run 0 cycles on ours, and every step of ours is vetted against
+  THE UNION of the spans the boot ports (`PORTED_UNION`: a vector left the ROM's, or ours calling into another
+  slice's ROM text, is refused by name). THE +4 A CALL, proved: our `trap.S` minus the ROM's dispatcher is 4 cycles a call (`lea abs.l` 12
+  against `lea d16(pc)` 8); the HBL entry costs the ROM's exactly.
+- **I-1 (the harness)**: `aes_boot._xbios_entry` reads the ROM's function table through THE BUILD'S linked
+  `xbios_trap14` too (`_dispatch_table`: `trap.S` dispatches through the ROM's own table by an absolute `lea`) — at the
+  symbol's own address and holding that `lea` alone; a copy of its bytes elsewhere, our BIOS entry, or the entry not
+  laid are refused as before.
+- **Not chained, by name**: B4's one-program arm (its Pexec(0) clears the TPA, which holds the bench blob and so our
+  vectors' targets — B4's own battery holds it); the DESKTOP.INF and files disks; any composed image (D10: the head's
+  laid span `$fc6000` lies over GEMDOS's file-system code `[$fc60f2, $fc629c)` that the launch runs, 1,782 cycles —
+  owed first if D10 is taken up).
+- **Tier 3** (D9, the stretch kind): eight rows `BOOT chain (whole)` / `CHAINED STAGING (steered chain): [$fc0030,
+  $fd9eca), <chain>` — ours every cycle in our products and the blob (the overlay of a step counted in its own step
+  alone: in any other its span is the ROM's text), the ROM's in its ported spans, its dispatcher and its HBL handler;
+  the rest held equal step by step: **0.990** WARM, **0.995** COLD, own cycles pinned exactly.
+
 ## Writing a case
 
 ```python
@@ -4718,7 +4781,9 @@ recreate/
 │                       machine, END = the pre-init capture); `acc/autoprg.S` (the AUTO disks' Pterm0 program)
 │                       `boot_display.py` / `test_boot_display.py` (BOOT B5: colour and mono arms, the sync wait's
 │                       poll answered at its entry, R-B5-1); `boot_late.py` / `test_boot_late.py` (BOOT B6: WARM and
-│                       COLD, the answered entries, END = the mid-boot capture)
+│                       COLD, the answered entries, END = the mid-boot capture); `boot_chain.py` /
+│                       `test_boot_chain.py` (BOOT CH: our boot chained from the reset to gem_entry against the
+│                       ROM's own, the steering and its link check, END = both captures)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),

@@ -127,6 +127,8 @@ import boot_launch                                         # noqa: E402
 import boot_display                                        # noqa: E402
 # ...and THE BOOT'S LATE SLICE IN C (boot B6): each machine priced the same way (`boot_late`).
 import boot_late                                           # noqa: E402
+# ...and THE CHAINED BOOT (boot CH): the whole boot from the reset to gem_entry, each chain priced the same way (`boot_chain`).
+import boot_chain                                          # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1808,6 +1810,27 @@ def is_a_boot_late_slice(row):
     return row.registered in boot_late.SLICES
 
 
+# THE CHAINED BOOT (boot CH; ruling R-CH-1 "Steered chain", D9's stretch kind): our boot from the reset to gem_entry, every
+# slice of ours on its own staging and the machine carried between them, against the ROM's own boot from the same machine
+# (A CHAINED STAGING), the blank disk in drive A:, one row a chain (WARM, COLD, and three more of B5's arms on each); each
+# shore on its OWN cycles — ours every cycle in our products and the blob, our linked trap and HBL entries among them; the
+# ROM's in the spans it ports and in its own dispatcher and HBL handler — the rest held equal step by step
+# (`boot_chain.priced`).
+BOOT_CHAIN_FUNCTION = "BOOT chain (whole)"
+BOOT_CHAIN_CASE = "CHAINED STAGING (steered chain): [${start:x}, ${stop:x}), {name}"
+
+
+def _boot_chain_row(name, chain):
+    start, stop = boot_head.HEAD_LO, boot_chain.END
+    return Row(BOOT_CHAIN_FUNCTION, BOOT_CHAIN_CASE.format(start=start, stop=stop, name=name), start,
+               boot_head.SYMBOL, (), None, {}, None, None, RETURNS_NOTHING, False, start, registered=name)
+
+
+def is_a_boot_chain(row):
+    """Is `row` a chain of the whole boot — both shores from the reset to gem_entry, on their own cycles?"""
+    return row.registered in boot_chain.SLICES
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1820,7 +1843,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_boot_hwinit_slice_row(name, arm_and_kind) for name, arm_and_kind in boot_hwinit.SLICES.items())
         + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items())
         + tuple(_boot_display_slice_row(name, arm) for name, arm in boot_display.SLICES.items())
-        + tuple(_boot_late_slice_row(name, machine) for name, machine in boot_late.SLICES.items()))
+        + tuple(_boot_late_slice_row(name, machine) for name, machine in boot_late.SLICES.items())
+        + tuple(_boot_chain_row(name, chain) for name, chain in boot_chain.SLICES.items()))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4317,6 +4341,20 @@ def boot_late_slice_on(name):
     return _boot_measurement(boot_late.priced(boot_late.SLICES[name]), boot_late.ENTRY_SYMBOL)
 
 
+def boot_chain_on(name):
+    """A CHAIN OF THE WHOLE BOOT's `Measurement`: every boundary held (`boot_chain.priced`, refused by name otherwise), each
+    shore on its own cycles; the ROM's code both run and the answers (`boot_rest`) under the row."""
+    return _boot_measurement(boot_chain.priced(boot_chain.SLICES[name]), boot_head.SYMBOL)
+
+
+BOOT_CHAIN_LINE = ("{indent}  the whole boot, reset to gem_entry, on its own cycles (ours: our products and the blob, our linked "
+                   "trap and HBL entries among them; the ROM's: the spans it ports, its dispatcher and HBL handler); "
+                   "instructions each run's whole; the ROM's code both run and the answers {rest} cycles, held equal step "
+                   "by step, in neither column; held at every boundary: every register but the carries named, the megabyte "
+                   "with the named mappings outside each slice's residue, the stores, every ledger, the answers "
+                   "(`boot_chain.differences`)")
+
+
 BOOT_LATE_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice and the five "
                         "routines it ports on its); instructions each run's whole; the cartridge hooks, GEMDOS's init and "
                         "Dsetdrv, hdv_boot and hdv_init both run {rest} cycles, held equal, in neither column; the drive "
@@ -5444,6 +5482,8 @@ def _measured_on_its_path(row, bench):
         return boot_display_slice_on(row.registered)
     if is_a_boot_late_slice(row):
         return boot_late_slice_on(row.registered)
+    if is_a_boot_chain(row):
+        return boot_chain_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -5975,6 +6015,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_DISPLAY_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_late_slice(row):
             lines.append(BOOT_LATE_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_chain(row):
+            lines.append(BOOT_CHAIN_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

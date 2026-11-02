@@ -245,6 +245,8 @@ RWABS_WRITE = 1
 # it (`_xbios_entry`); its frame is the dispatcher's `jsr`'s: (buffer, a filler long, device, sector, track, side, count).
 XBIOS_FLOPRD = 8
 LEA_PC_RELATIVE_A0 = 0x41fa             # the dispatcher's first instruction: `lea <its table>(pc),a0`
+LEA_ABSOLUTE_LONG_A0 = 0x41f9           # ...and THE BUILD'S (`src/bios/trap.S`): `lea <the ROM's table>.l,a0`
+OUR_XBIOS_ENTRY = "xbios_trap14"        # the build's linked XBIOS entry, which boot B2's C stores in the vector
 TABLE_ENTRY_INDIRECT = 0x80000000       # of a dispatcher's table entry: the routine is the longword it names (a RAM vector)
 FLOPRD_BUFFER_AT, FLOPRD_DEVICE_AT, FLOPRD_SECTOR_AT, FLOPRD_TRACK_AT, FLOPRD_SIDE_AT, FLOPRD_COUNT_AT = 4, 12, 14, 16, 18, 20
 # ...and THE DRIVE'S MEDIA-CHANGE MODE, the one byte of the driver's own state the desk DRIVES: after that read it
@@ -409,14 +411,30 @@ def record_geometry_of(boot_sector):
     return RECORD_GEOMETRY.pack(sectors // cylinder_sectors, sides, cylinder_sectors, track_sectors, hidden)
 
 
+def _dispatch_table(memory, handler):
+    """The function table the XBIOS handler at `handler` dispatches through, or None where it is no dispatcher this
+    model knows: THE ROM'S (in the ROM window, `lea <table>(pc),a0`) or THE BUILD'S OWN LINKED ENTRY. The second is
+    there because boot B2's C stores `xbios_trap14` in the vector (`BOOT_LINKED_ENTRY`), so a CHAINED boot of ours
+    (`boot_chain.py`) reaches the floppy with it; `src/bios/trap.S` dispatches through THE ROM'S OWN TABLE, by an
+    absolute `lea` — so the routine it enters for a function is the ROM's, and the model stands in for the same one.
+    Accepted only at the symbol's own address, holding that `lea` of the ROM's XBIOS table: a copy of its bytes
+    anywhere else, or our BIOS entry, is a foreign vector and refused."""
+    opcode = case.word_in(memory, handler)
+    if opcode == LEA_PC_RELATIVE_A0 and handler >= emu.ROM_BASE:
+        return handler + WORD_BYTES + struct.unpack_from(">h", memory, handler + WORD_BYTES)[0]
+    if (opcode == LEA_ABSOLUTE_LONG_A0 and handler == transcription.bench().symbols.get(OUR_XBIOS_ENTRY)
+            and case.long_in(memory, handler + WORD_BYTES) == addrs.XBIOS_FUNCTION_TABLE):
+        return addrs.XBIOS_FUNCTION_TABLE
+    return None
+
+
 def _xbios_entry(memory, function):
     """The routine the machine's own XBIOS dispatcher enters for `function`: its table found through the trap's
-    vector and the handler's first instruction (`lea <table>(pc),a0`: a word, how many functions, then a longword
+    vector and the handler's first instruction (`_dispatch_table`: a word, how many functions, then a longword
     each) — REFUSED BY NAME where the vector names no such handler or the entry is not a routine of the ROM."""
     handler = case.long_in(memory, addrs.VECTOR_TRAP_XBIOS) & BUS
-    opcode, displacement = struct.unpack_from(">Hh", memory, handler)
-    table = handler + WORD_BYTES + displacement
-    if opcode != LEA_PC_RELATIVE_A0 or handler < emu.ROM_BASE or case.word_in(memory, table) <= function:
+    table = _dispatch_table(memory, handler)
+    if table is None or case.word_in(memory, table) <= function:
         raise Refused(f"this machine's XBIOS vector ({handler:#x}) does not name the ROM's dispatcher with a table of "
                       f"more than {function} functions: the model stands in for the ROM's floppy driver and no other")
     entry = case.long_in(memory, table + WORD_BYTES + function * LONG_BYTES)

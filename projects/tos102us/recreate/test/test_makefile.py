@@ -587,3 +587,31 @@ def test_the_derivations_are_kept_in_the_store_and_fresh_makes_them_in_build(tmp
     assert _make("-s", "print-root", probe=probe).strip() == "[]"
     assert _make("-s", "print-root", "FRESH=1", probe=probe).strip() == f"[{RECREATE / 'build' / 'derived'}]"
     assert _make("-s", "print-root", "FRESH=0", probe=probe).strip() == "[]"
+
+
+# THE CHAINED BOOT (boot CH) reads every boot product at once — the head, the blob (B2/B3's C and our linked entries), the
+# display, the late C, the launch — and the two captures its END surfaces compare against.
+CHAIN_READS = (BOOTHEAD, BOOTDISPLAY, BOOTLATE, BOOTLAUNCH, MIDBOOT, "build/preinit.bin", "build/bench/bench.bin")
+
+
+def chain_reads_lacking(texts):
+    """`{target: the chain's reads it lacks}` — over the three suites and the table; a suite may have one through the
+    table (a prerequisite of each), as `gates` has the blob."""
+    rules = rules_of(texts)
+    lacking = {}
+    for target in (*THE_SUITES, TABLE):
+        held = rules[target][0] | (rules[TABLE][0] if TABLE in rules[target][0] else set())
+        missing = [read for read in CHAIN_READS if read not in held]
+        if missing:
+            lacking[target] = missing
+    return lacking
+
+
+def test_the_suites_and_the_table_have_every_product_the_chained_boot_reads():
+    """boot CH: the chain's battery (the suites) and its rows (the table) read all five products and both captures.
+    RED: the table's `$(BOOTHEAD_BIN)` dropped — named for the table and for every suite that has it through the table."""
+    makefile, kit = _texts()
+    assert chain_reads_lacking([makefile, kit]) == {}
+    line = "$(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN)"
+    dropped = chain_reads_lacking([makefile.replace(line, "$(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN)"), kit])
+    assert dropped.get(TABLE) == [BOOTHEAD]
