@@ -28,6 +28,7 @@
                                               * (6) let in, the HBL (2) kept out */
 #define CARTRIDGE_HOOK_INTERRUPTS 1          /* the hooks' init bit once the interrupts are open (`moveq #1,d0`) */
 #define CARTRIDGE_HOOK_FLOPPY_BOOT 3         /* ...and before the floppy's boot (`moveq #3,d0`, $fc053c) */
+#define FLOPPY_BOOT_FRAME_BYTES   4          /* where $fc053c calls hdv_boot from: under the `bsr $fc053c`'s return (4) */
 
 /* ---- $fc4a9e: GEMDOS's disk buffers, two lists of two BCBs, then its init and the boot drive made current -------- */
 #define BOOT_BCB_FIRST            0x8846     /* four BCBs, end to end from here: the lists [0] -> [1] and [2] -> [3] */

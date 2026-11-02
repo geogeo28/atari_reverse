@@ -1791,9 +1791,9 @@ def is_a_boot_display_slice(row):
 # THE BOOT'S LATE SLICE (boot B6; rulings D3, D4, D8, D9, "ROM-window overlay", "Own link rule"): `src/boot/late/late.c` laid
 # over the ROM window (A LABELLED STAGING), both shores from the ROM's own machine at $fc0452 on WARM and COLD, one row a
 # machine; each shore on its OWN cycles (the ROM's its slice's and the five routines it ports), the ROM's routines both run
-# (the cartridge's hooks, GEMDOS's init and Dsetdrv, hdv_boot and hdv_init) in neither column, the waiting routines answered
-# at their entries on both (the drive probe, Floprd, the ACSI probe, the clock's probe), every observable surface held
-# (`boot_late.differences`).
+# (the cartridge's hooks, GEMDOS's init and Dsetdrv, hdv_boot and hdv_init, the lower floppy driver) in neither column, the
+# floppy run through the kit's FDC/DMA model on both (ruling D4: the drive probe and Floprd no longer answered), the ACSI
+# probe and the clock's probe answered at their entries on both, every observable surface held (`boot_late.differences`).
 BOOT_LATE_SLICE_FUNCTION = "BOOT late (C)"
 BOOT_LATE_SLICE_CASE = "LABELLED STAGING (ROM-window overlay): B6 [${start:x}, ${stop:x}), {name}"
 
@@ -4357,9 +4357,9 @@ BOOT_CHAIN_LINE = ("{indent}  the whole boot, reset to gem_entry, on its own cyc
 
 BOOT_LATE_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice and the five "
                         "routines it ports on its); instructions each run's whole; the cartridge hooks, GEMDOS's init and "
-                        "Dsetdrv, hdv_boot and hdv_init both run {rest} cycles, held equal, in neither column; the drive "
-                        "probe, Floprd, the ACSI probe and the clock's probe answered at their entries on both (D3, D4, "
-                        "R-B4-2); held: every register, the megabyte and the stores outside the BIOS stack's dead frames, "
+                        "Dsetdrv, hdv_boot, hdv_init and the lower floppy driver both run {rest} cycles, held equal, in neither "
+                        "column; the floppy through the kit's FDC/DMA model (D4), the ACSI probe and the clock's probe "
+                        "answered at their entries on both (D3, R-B4-2); held: every register, the megabyte and the stores outside the BIOS stack's dead frames, "
                         "every ledger, the faults, the answers (`boot_late.differences`)")
 
 

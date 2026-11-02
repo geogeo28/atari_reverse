@@ -15,9 +15,15 @@
  * THE ROM'S ROUTINES IT CALLS ARE THE ROM'S, ON BOTH SHORES, IN PLACE: the cartridge's hooks (the boot's, unported),
  * GEMDOS's init and its Dsetdrv (GEMDOS stays the ROM's in the boot: the orchestrator's standing call), hdv_boot (the
  * floppy driver's, unported: D4), the clock's probe and read (the BIOS's; the probe answered at its entry, R-B4-2), the
- * ACSI's sector read (the boot's; answered at its entry "no device", ruling D3). Each is called as the ROM calls it,
- * with the registers the ROM's slice hands it. The code a boot finds — a boot sector, an ACSI sector, a reset-resident
- * program — is called the ROM's way and is FOREIGN (D12 open): no run of the slice reaches one.
+ * ACSI's sector read (the boot's; answered at its entry "no device", ruling D3). Each is called with the registers the
+ * ROM's slice hands it. GEMDOS's init and Dsetdrv (GEMDOS_BUFFERS_FRAME_BYTES) and hdv_boot (FLOPPY_BOOT_FRAME_BYTES)
+ * are called at the ROM's stack depth too; THE OTHER CALLS FROM INSIDE A ROUTINE THE ROM REACHES BY `bsr` ARE 4 BYTES
+ * HIGHER ON OURS, UNPINNED BY NAME (nothing observes them today): the hooks with D0 = 3 ($fc053e; no cartridge, D2: the
+ * hooks touch no stack), the boot-sector call `jsr $16da` ($fc0554; unreached, D12), the clock's probe and read
+ * ($fc4be8: the probe answered at its entry, R-B4-2, its return in the masked stack residue; the read unreached), and
+ * the ACSI's read ($fc055a: answered at its entry, D3, its return in the masked residue). The code a boot finds — a
+ * boot sector, an ACSI sector, a reset-resident program — is called the ROM's way and is FOREIGN (D12 open): no run of
+ * the slice reaches one.
  *
  * THE REGISTERS THIS FILE MAY NOT TOUCH: D2-D7 and A2-A6 (the Makefile compiles it with them fixed) — the ROM's
  * routines clobber them freely and the ROM's slice hands its continuation whatever they left, so the C holds nothing
@@ -83,14 +89,19 @@ static inline uint32_t rom_rtc_read(void)
     return stamp;
 }
 
-/* `movea.l hdv_boot,a0 / jsr (a0)`: the floppy driver's boot — 0 where the boot sector it read is executable. */
+/* `movea.l hdv_boot,a0 / jsr (a0)`: the floppy driver's boot — 0 where the boot sector it read is executable. CALLED AT
+ * THE ROM'S DEPTH, under the `bsr $fc053c`'s return (`FLOPPY_BOOT_FRAME_BYTES`): hdv_boot's frame stays on the stack,
+ * but its frame pointer A6 is saved by the lower floppy driver's `movem.l d3-d7/a3-a6,$a28` at $a48, which the mid-boot
+ * capture holds — measured once the driver ran through the FDC model (ruling D4): from one frame higher, $a4b was apart. */
 static inline uint16_t rom_hdv_boot(void)
 {
     register uint32_t answer __asm__("d0");
 
-    __asm__ volatile ("movea.l (%c1).l,%%a0\n\t"
-                      "jsr (%%a0)"
-                      : "=d"(answer) : "i"(SYSVAR_HDV_BOOT) : "d1", "a0", "a1", "cc", "memory");
+    __asm__ volatile ("lea -%c1(%%sp),%%sp\n\t"
+                      "movea.l (%c2).l,%%a0\n\t"
+                      "jsr (%%a0)\n\t"
+                      "lea %c1(%%sp),%%sp"
+                      : "=d"(answer) : "i"(FLOPPY_BOOT_FRAME_BYTES), "i"(SYSVAR_HDV_BOOT) : "d1", "a0", "a1", "cc", "memory");
     return answer;
 }
 

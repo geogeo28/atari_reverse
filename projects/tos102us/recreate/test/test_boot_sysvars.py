@@ -115,7 +115,7 @@ def test_ours_is_the_rom_s_on_every_held_surface(a_pair):
 
 def test_the_surfaces_and_the_scratch_are_pinned_literally():
     assert bs.SURFACES == ("stop", "registers", "ram", "stored", "hardware_writes", "io_reads", "hardware_reads",
-                           "psg_events", "faults")
+                           "psg_events", "fdc_events", "faults")
     assert bs.LEDGERS == bs.SURFACES[4:]
     assert set(bs.NOT_HELD) == GCC_SCRATCH | THE_ROM_S_WORKING
 

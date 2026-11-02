@@ -31,7 +31,8 @@ RETURN ADDRESSES INTO OUR CODE that GEMDOS's and the AUTO runner's dead frames k
 (`our_returns`) — outside each boundary's derived stack residue (B2's, B3's, B6's dead classes; the BIOS stack's
 dead frames TIGHTENED for the chain: `FRAMES_APART_FROM`, and at gem_entry the exact `APART_AT_THE_END`); every ordered ledger of
 every step; B6's answers; B4's GEMDOS, floppy, clock and blank ledgers. THE END SURFACES (COLD): at `$fc047a` the mid-boot
-capture apart in exactly B6's D1/D4 classes; at gem_entry the pre-init capture apart in its own exact set (`END_PREINIT`).
+capture apart in exactly B6's D1 class (D4's gone: B6 runs the floppy through the FDC model); at gem_entry the
+pre-init capture apart in its own exact set (`END_PREINIT`).
 
 THE HAND-OFF NO SLICE SEES: B2 and B3 store our linked entries in the vectors, and the ROM's own code after them enters
 them — the BIOS/XBIOS traps GEMDOS makes, the horizontal blanks the launch takes. Counted (`trap_calls`, `Step.spent`), on ours in our
@@ -295,34 +296,50 @@ def _leg(machine, stops, laid=None, **declared):
 
 
 # ---- ONE STEP, ONE SHORE ---------------------------------------------------------------------------------------------------
-Step = namedtuple("Step", "name machine stop instructions cycles stored ledgers spent answers")
+Step = namedtuple("Step", "name machine stop instructions cycles stored ledgers spent answers carry", defaults=(None,))
 Step.__doc__ = """One shore's run of one step: the `machine` it left (at gem_entry: the launch's RAM and registers), the `stop`,
 its `instructions` and `cycles`, the RAM it `stored` (address runs), its ordered `ledgers` (`{name: tuple}`), what it
-`spent` in each span (`spans`), and the `answers` it was given (B5's poll, B6's ledger)."""
+`spent` in each span (`spans`), the `answers` it was given (B5's poll, B6's ledger), and the `carry` it hands the next
+step (R-D4-2: PSG port A and the FDC/DMA chip, `boot_late.Carry`). B6's ledgers hold the FDC model's ledger and the chip it
+left (`fdc_events`, `fdc_chip`): compared exactly at its boundary."""
 SLICE_LEDGERS = boot_hwinit.LEDGERS
 LAUNCH_LEDGERS = ("io_reads", "hardware_reads", "hardware_writes", "gemdos", "calls", "blanks", "clock", "disk")
 
 
-def _joined_step(name, legs, spent, answers=()):
+def _joined_step(name, legs, spent, carry, answers=()):
     joined = legs[0]
     for later in legs[1:]:
         joined = boot_hwinit.joined(joined, later)
     return Step(name, joined.machine, joined.stop, joined.instructions, joined.cycles, joined.stored,
-                {ledger: getattr(joined, ledger) for ledger in SLICE_LEDGERS}, spent, tuple(answers))
+                {**{ledger: getattr(joined, ledger) for ledger in SLICE_LEDGERS}, "fdc_chip": joined.fdc_chip}, spent,
+                tuple(answers), carry)
 
 
-def _answered_legs(machine, until, laid, mono, observing, **declared):
-    """`machine` run to `until` leg by leg — a stop at B5's poll answered (R-B5-1), at one of B6's waits answered (D3, D4,
-    R-B4-2), at an observed entry (where `observing`) ledgered and run on: `(legs, spent, answers)`."""
+def _carried_through(legs, carry):
+    """The carry after `legs` that do NOT arm the FDC model: port A after their stores, the chip unchanged (no slice
+    before B6 touches the FDC: `test_boot_chain.py` holds their ledgers clear of the DMA block)."""
+    for done in legs:
+        carry = carry._replace(port_a=boot.port_a_after(done, carry.port_a))
+    return carry
+
+
+def _answered_legs(machine, until, laid, mono, observing, floppy=None, **declared):
+    """`machine` run to `until` leg by leg — a stop at B5's poll answered (R-B5-1), at one of B6's waits answered (D3,
+    R-B4-2), at an observed entry (where `observing`) ledgered and run on: `(legs, spent, answers, carry)`. `floppy`:
+    `(drives, carry, gpip)` — every leg through the FDC model, the carry handed leg to leg (B6's); else None."""
     stops = {until} | (boot_late.ANSWERED if not mono else boot_late.ANSWERED | {boot_display.SYNC_POLL})
     stops |= boot_late.OBSERVED if observing else frozenset()
     legs, spent, answers = [], {}, []
+    carry = floppy[1] if floppy else None
     while True:
-        done, cycles = _leg(machine, stops, laid, **declared)
+        leg_declared = {**declared, **boot_late.floppy_declared(floppy[0], carry, floppy[2])} if floppy else declared
+        done, cycles = _leg(machine, stops, laid, **leg_declared)
+        if floppy:
+            carry = boot_late.carried(done, carry)
         legs.append(done)
         spent = _added(spent, cycles)
         if done.stop == until:
-            return legs, spent, answers
+            return legs, spent, answers, carry
         if done.stop == boot_display.SYNC_POLL:
             machine = boot_display.answered_poll(done.machine)
             answers.append(("the sync wait's poll",))
@@ -335,23 +352,26 @@ def _answered_legs(machine, until, laid, mono, observing, **declared):
             legs[-1] = done._replace(stored=(*done.stored, *runs))
 
 
-def _answered_step(name, machine, until, laid, mono, **declared):
+def _answered_step(name, machine, until, laid, mono, carry, floppy=None, **declared):
     """A step through its answered entries: THE PLAIN RUN for the machine and the price, THE WATCHED RUN (the observed
     entries stops too) for the answer ledger — held to leave the same machine (B6's rule: a resumed stop counts its
-    step-off again)."""
-    legs, spent, answers = _answered_legs(machine, until, laid, mono, observing=False, **declared)
-    watched, _spent, ledger = _answered_legs(machine, until, laid, mono, observing=True, **declared)
-    if watched[-1].machine != legs[-1].machine:
+    step-off again). `floppy`: `(drives, gpip)` — B6's, through the FDC model, `carry` handed leg to leg."""
+    through = (floppy[0], carry, floppy[1]) if floppy else None
+    legs, spent, answers, left = _answered_legs(machine, until, laid, mono, observing=False, floppy=through, **declared)
+    watched, _spent, ledger, _left = _answered_legs(machine, until, laid, mono, observing=True, floppy=through, **declared)
+    if (watched[-1].machine, watched[-1].fdc_chip) != (legs[-1].machine, legs[-1].fdc_chip):
         raise boot.Refused(f"{machine.label}: the step {name} watched is not the step unwatched")
-    return _joined_step(name, legs, spent, ledger)
+    return _joined_step(name, legs, spent, left if floppy else _carried_through(legs, carry), ledger)
 
 
-def _launch_step(machine, laid):
+def _launch_step(machine, laid, carry):
+    """B4 through `boot_launch.run` — the floppy answered at the upper driver's entries there (R-D4-3: `aes_boot.Floppy`
+    stays everywhere but B6): the FDC model is not armed, so the chip passes through as B6 left it."""
     launch, _elsewhere = boot_launch.run(machine, boot_launch.disk(DISK).image, END, (), laid=laid)
     spent = _read()
     left = machine._replace(ram=launch.ram, registers=launch.registers)
     return Step(B4, left, launch.stop, launch.instructions, launch.cycles, launch.stored,
-                {ledger: getattr(launch, ledger) for ledger in LAUNCH_LEDGERS}, spent, ())
+                {ledger: getattr(launch, ledger) for ledger in LAUNCH_LEDGERS}, spent, (), carry)
 
 
 def _labelled(machine, chain):
@@ -359,24 +379,67 @@ def _labelled(machine, chain):
     return machine._replace(label=label)
 
 
+# THE CARRY FROM THE RESET (R-D4-2): port A not yet stored (the head's first store sets it, on both shores — refused by
+# name otherwise), the FDC chip MR's (None: `emu`'s power-on chip, which every armed run is handed in its place).
+RESET_CARRY = boot_late.Carry(None, None)
+
+
+def _b3_declared(carry):
+    """B3's declarations IN THE CHAIN: its battery's, but PSG port A the one CARRIED from the head's own store
+    (R-D4-2) — not the seed its battery declares, which stays that battery's alone."""
+    if carry.port_a is None:
+        raise boot.Refused("the chain reached B3 with PSG port A never stored: nothing to carry")
+    declared = boot_hwinit.declared()
+    return {**declared, "psg_seed": {**declared["psg_seed"], addrs.PSG_PORT_A: carry.port_a}}
+
+
+def _b3_legs(machine, first_stop, carry):
+    """B3's two legs, port A carried into the first and from it into the second: `(first, second, spent, carry)`."""
+    first, spent_first = _leg(machine, {first_stop}, **_b3_declared(carry))
+    carry = _carried_through([first], carry)
+    second, spent_second = _leg(first.machine, {boot.IKBD_RESET_DONE}, **_b3_declared(carry))
+    return first, second, _added(spent_first, spent_second), _carried_through([second], carry)
+
+
 @functools.cache
-def the_rom_s(chain, with_the_blob=True):
-    """THE ROM'S OWN BOOT on `chain`, step by step from the reset: `(Step, ...)`. The bench blob is laid at `$fc02cc` as on
-    ours (`with_the_blob`; held equal without it outside its span)."""
+def _rom_to_interrupts_opened(chain, with_the_blob=True):
+    """The ROM's head, B2, B3 and B5 on `chain`: `(steps, the carry at $fc0452)`."""
     machine = _labelled(boot_head.ARMS[chain.machine](), chain)
     steps = []
     done, spent = _leg(machine, {boot.HEAD_ENDS})
-    steps.append(_joined_step(HEAD, [done], spent))
+    carry = _carried_through([done], RESET_CARRY)
+    steps.append(_joined_step(HEAD, [done], spent, carry))
     machine = boot_sysvars.laid(done.machine) if with_the_blob else done.machine
     done, spent = _leg(machine, {boot.HARDWARE_INIT_CALLED})
-    steps.append(_joined_step(B2, [done], spent))
-    first, spent_first = _leg(done.machine, {boot_hwinit.RETURNED}, **boot_hwinit.declared())
-    second, spent_second = _leg(first.machine, {boot.IKBD_RESET_DONE}, **boot_hwinit.declared())
-    steps.append(_joined_step(B3, [first, second], _added(spent_first, spent_second)))
+    carry = _carried_through([done], carry)
+    steps.append(_joined_step(B2, [done], spent, carry))
+    first, second, spent, carry = _b3_legs(done.machine, boot_hwinit.RETURNED, carry)
+    steps.append(_joined_step(B3, [first, second], spent, carry))
     mono = chain.arm.monitor == boot_display.MONO
-    steps.append(_answered_step(B5, second.machine, boot.INTERRUPTS_OPENED, None, mono, **boot_display.declared(chain.arm)))
-    steps.append(_answered_step(B6, steps[-1].machine, boot.MIDBOOT, None, False))
-    steps.append(_launch_step(steps[-1].machine, None))
+    steps.append(_answered_step(B5, second.machine, boot.INTERRUPTS_OPENED, None, mono, carry,
+                                **boot_display.declared(chain.arm)))
+    return tuple(steps), steps[-1].carry
+
+
+def rom_port_a_entering_b6(chain):
+    """PSG port A at `$fc0452` on `chain`, off the ROM's own chained runs (`boot_late.port_a_at_start`'s source)."""
+    return _rom_to_interrupts_opened(chain)[1].port_a
+
+
+def _floppy(chain):
+    """B6's floppy in the chain: the capture's drives, GPIP's other bits the chain's B5 arm's."""
+    return boot_late.drives(boot_late.CAPTURE_DRIVES), boot_display.GPIP_OF[chain.arm.monitor]
+
+
+@functools.cache
+def the_rom_s(chain, with_the_blob=True):
+    """THE ROM'S OWN BOOT on `chain`, step by step from the reset: `(Step, ...)`. The bench blob is laid at `$fc02cc` as on
+    ours (`with_the_blob`; held equal without it outside its span). PSG port A and the FDC chip carried at every
+    boundary from the ROM's own runs; B6 through the FDC model."""
+    steps, carry = _rom_to_interrupts_opened(chain, with_the_blob)
+    steps = list(steps)
+    steps.append(_answered_step(B6, steps[-1].machine, boot.MIDBOOT, None, False, carry, floppy=_floppy(chain)))
+    steps.append(_launch_step(steps[-1].machine, None, steps[-1].carry))
     return tuple(steps)
 
 
@@ -390,22 +453,24 @@ def ours(chain, steering_map=None):
     machine = _labelled(boot_head.ours_of(boot_head.ARMS[chain.machine]()), chain)
     steps = []
     done, spent = _leg(machine, {boot_head.ours(boot.HEAD_ENDS)}, laid=boot_head.overlay())
-    steps.append(_joined_step(HEAD, [done], spent))
+    carry = _carried_through([done], RESET_CARRY)
+    steps.append(_joined_step(HEAD, [done], spent, carry))
     machine = steered(boot_sysvars.laid(done.machine), boot_head.ours(boot.HEAD_ENDS), steering_map)
     done, spent = _leg(machine, {boot.HARDWARE_INIT_CALLED})
-    steps.append(_joined_step(B2, [done], spent))
+    carry = _carried_through([done], carry)
+    steps.append(_joined_step(B2, [done], spent, carry))
     machine = steered(done.machine, boot.HARDWARE_INIT_CALLED, steering_map)
-    first, spent_first = _leg(machine, {the_blob.entry(boot_hwinit.RETURNED_SYMBOL)}, **boot_hwinit.declared())
-    second, spent_second = _leg(first.machine, {boot.IKBD_RESET_DONE}, **boot_hwinit.declared())
-    steps.append(_joined_step(B3, [first, second], _added(spent_first, spent_second)))
+    first, second, spent, carry = _b3_legs(machine, the_blob.entry(boot_hwinit.RETURNED_SYMBOL), carry)
+    steps.append(_joined_step(B3, [first, second], spent, carry))
     mono = chain.arm.monitor == boot_display.MONO
     machine = steered(second.machine, boot.IKBD_RESET_DONE, steering_map)
-    steps.append(_answered_step(B5, machine, boot.INTERRUPTS_OPENED, boot_display.overlay(), mono,
+    steps.append(_answered_step(B5, machine, boot.INTERRUPTS_OPENED, boot_display.overlay(), mono, carry,
                                 **boot_display.declared(chain.arm)))
     machine = steered(steps[-1].machine, boot.INTERRUPTS_OPENED, steering_map)
-    steps.append(_answered_step(B6, machine, boot.MIDBOOT, boot_late.overlay(), False))
+    steps.append(_answered_step(B6, machine, boot.MIDBOOT, boot_late.overlay(), False, steps[-1].carry,
+                                floppy=_floppy(chain)))
     machine = steered(steps[-1].machine, boot.MIDBOOT, steering_map)
-    steps.append(_launch_step(machine, boot_launch.overlay()))
+    steps.append(_launch_step(machine, boot_launch.overlay(), steps[-1].carry))
     _vet_who_ran(machine.label, steps)
     return tuple(steps)
 
@@ -466,10 +531,12 @@ CARRIED = {B2: frozenset({"d1", "a1", "a3", "a4"}), B3: frozenset({"d1", "a1", "
 # THE BIOS STACK'S DEAD FRAMES, TIGHTENED FOR THE CHAIN (its comparison alone; the slices' batteries keep their own
 # classes). At `$fc047a` the two shores' frames — B3's, B5's, B6's, each at its own depth — differ only from `$74ff` up on
 # every chain (measured, `test_boot_chain.py`): below it the mid-boot mask's field `[$745a, $755a)` is held byte for
-# byte. At gem_entry the launch has stored over all of them but FIVE BYTES, B3's frames' leftovers no later store reaches:
+# byte. At gem_entry the launch has stored over all of them but THREE BYTES, B3's frames' leftovers no later store reaches
+# (measured: five before D4's P3 — `$7509` and `$750f` were apart then and are equal now; which of P3's changes laid them
+# alike, the port-A carry or the lower floppy driver's frames, is not separated):
 # the comparison there is no region at all, but that exact set (`APART_AT_THE_END`).
 FRAMES_APART_FROM = 0x74ff
-APART_AT_THE_END = frozenset({0x74ff, 0x7500, 0x7501, 0x7509, 0x750f})
+APART_AT_THE_END = frozenset({0x74ff, 0x7500, 0x7501})
 
 
 @functools.cache
@@ -600,15 +667,19 @@ def differences(rom, mine, chain):
             found.append(f"{ledger}: the ROM's and ours differ")
     if rom.answers != mine.answers:
         found.append(f"answers: the ROM's {rom.answers}, ours {mine.answers}")
+    if rom.carry != mine.carry:
+        found.append(f"carry: the ROM's {rom.carry}, ours {mine.carry}")
     return found
 
 
 # ---- THE END SURFACES (COLD: the captures are a power-on's) ------------------------------------------------------------------
-# AT gem_entry against the pre-init capture of the blank disk: B4's own pin is from the mid-boot capture (the capture's
-# lower floppy driver state); a chain carries THE ORACLE'S from B6 — so its own exact set: D1's memctrl and D4's bytes.
+# AT gem_entry against the pre-init capture of the blank disk: D1's memctrl, and the lower floppy driver's own state the
+# LAUNCH never lays — B6 now leaves it the capture's (the driver run through the FDC model, R-D4-3), but B4 answers the
+# floppy at the upper driver's entries (`aes_boot.Floppy`, which R-D4-3 keeps there), so the reads Hatari's launch made
+# through the lower driver (its request, its save area, its records) are on no shore: this exact set, measured.
 END_PREINIT_MEMCTRL = (boot_late.MEMCTRL_COPIES[0],)
-END_PREINIT_LOWER_DRIVER = (0x9f7, 0xa0d, 0xa0f, 0xa14, 0xa15, 0xa24, 0xa25, 0xa26, 0xa27, 0xa2b, 0xa2f, 0xa33, 0xa35,
-                            0xa42, 0xa43, 0xa46, 0xa47, 0xa4a, 0xa4b, 0xa4f, 0xa53)
+END_PREINIT_LOWER_DRIVER = (0xa0d, 0xa0f, 0xa14, 0xa15, 0xa2a, 0xa2b, 0xa2e, 0xa2f, 0xa31, 0xa33, 0xa35, 0xa37, 0xa39,
+                            0xa3b, 0xa3d, 0xa3e, 0xa3f, 0xa42, 0xa43, 0xa46, 0xa47, 0xa4a, 0xa4b)
 
 
 def against_the_midboot(step, capture, ours_side):

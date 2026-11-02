@@ -217,8 +217,9 @@ def mapped_back(ram, symbols, linked=None):
     return bytes(ram)
 
 
-SURFACES = ("stop", "registers", "ram", "stored", "hardware_writes", "io_reads", "hardware_reads", "psg_events", "faults")
-LEDGERS = ("hardware_writes", "io_reads", "hardware_reads", "psg_events", "faults")
+SURFACES = ("stop", "registers", "ram", "stored", "hardware_writes", "io_reads", "hardware_reads", "psg_events",
+            "fdc_events", "faults")
+LEDGERS = ("hardware_writes", "io_reads", "hardware_reads", "psg_events", "fdc_events", "faults")
 
 
 def stored_set(slice_):

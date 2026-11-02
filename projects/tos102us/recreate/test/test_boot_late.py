@@ -3,14 +3,18 @@ and the routines it ports with it (`$fc4a9e`, `$fc4be8`, `$fc053c`, `$fc0558`, `
 on the WARM and COLD machines (ruling D8, each A LABELLED STAGING), our side over a copy of the ROM window (rulings
 "ROM-window overlay", "Own link rule").
 
-THE WAITING ROUTINES ANSWERED AT THEIR ENTRIES on both shores (ruling D3, 2026-10-31; D4 for the floppy; R-B4-2 for the
-clock): each answer's value held here to the ROM's text that would leave it and to the capture — Hatari's run of the ROM's
-own code — that holds it; each answer shown to write what it says and nothing else. Held on every observable surface: the
-stop, every register, the megabyte and the stores outside the BIOS stack's dead frames (the capture's own MASK field),
-every ordered ledger, the faults, the answers in order; each surface's negative here; each arm's own cost pinned exactly;
-the price the table's (ruling D9). THE END SURFACE: the machine both shores reach at `$fc047a` against the mid-boot
-capture under its own mask — apart in exactly the classes named (D1, D4), the same on both shores; B4's open carry
-(A3, A4, A6) closed here."""
+THE WAITING ROUTINES ANSWERED AT THEIR ENTRIES on both shores (ruling D3, 2026-10-31; R-B4-2 for the clock) — the ACSI
+probe and the clock's — each answer's value held here to the ROM's text that would leave it and to the capture (Hatari's
+run of the ROM's own code) that holds it; each answer shown to write what it says and nothing else. THE FLOPPY RUN AS THE
+ROM'S THROUGH THE KIT'S FDC/DMA MODEL (ruling D4, R-D4-1..3, 2026-11-01): hdv_init's drive probe and hdv_boot's Floprd
+unanswered, their waits the ROM's own instruction-count loops; PSG port A and the chip carried from the ROM's runs
+(R-D4-2); the model's ordered ledger and the chip it leaves held exactly; the drive arms (B: absent, no drive, A: empty)
+each reached by the ROM's own count; Floprd's read of the blank disk the device model's. Held on every observable surface:
+the stop, every register, the megabyte and the stores outside the BIOS stack's dead frames (the capture's own MASK
+field), every ordered ledger, the FDC chip, the faults, the answers in order; each surface's negative here; each arm's
+own cost pinned exactly; the price the table's (ruling D9). THE END SURFACE: the machine both shores reach at `$fc047a`
+against the mid-boot capture under its own mask — apart in exactly D1, the same on both shores (D4's class gone); B4's
+open carry (A3, A4, A6) closed here."""
 import re
 import struct
 
@@ -21,18 +25,22 @@ from harness import BASE_IMAGE, addrs
 
 import aes_boot
 import boot
+import boot_display
 import boot_late as bl
 import case
 import layouts
 import midboot_snapshot
 import rom_data
+from test_aes_devices import SYSVAR_NFLOPS
 
 C = bl.CONSTANTS
 BAR = 1.10
 WORD_BYTES, LONG_BYTES = bl.WORD_BYTES, bl.LONG_BYTES
 # THE ROM'S INSTRUCTIONS THE ANSWERS ARE READ OFF (each held to its text below).
-DRIVE_PROBE_SUCCESS_BRANCH = 0xfc177a   # the probe's `beq.w` to its success exit ...
-DRIVE_PROBE_SUCCESS = 0xfc1cda          # ...`clr.l d0`
+# THE FLOPPY'S WAITS, read off the lower driver: `move.l #$40000,d7` (`#$60000`, the motor off), then `subq.l #1,d7 /
+# beq timeout / btst #5,$fffa01 / bne` — instruction counts, no `_hz_200` (what lets the zero-time model serve them).
+FLOPPY_WAIT_COUNT_LOAD, FLOPPY_SPIN_UP_COUNT_LOAD, FLOPPY_WAIT_POLL = 0xfc1dc0, 0xfc1dd4, 0xfc1de2
+FLOPPY_WAIT_COUNT, FLOPPY_SPIN_UP_COUNT = 0x40000, 0x60000
 ACSI_TIMED_OUT = 0xfc0642               # `$fc062a`'s `moveq #-1,d1`: `_hz_200` passed the count
 ACSI_FAILED = 0xfc0606                  # `moveq #-1,d0`: the probe's failure
 ACSI_FLAGS_SET = 0xfc060c               # `tst.b d0`: the flags it returns
@@ -121,17 +129,26 @@ def _at(at):
     return rom_data.instructions(at, at + WORD_BYTES)[0][1]
 
 
-def test_the_drive_probe_is_hdv_init_s_and_its_answer_the_capture_s():
-    """D3: the probe hdv_init calls for each drive, the drive at 12(sp); hdv_init stores its D0 in the drive's status
-    word; the capture's ROM run stored DRIVE_PRESENT for BOTH drives — the probe's success exit (`clr.l d0`)."""
+def test_the_floppy_s_waits_count_instructions_and_never_read_the_clock():
+    """WHY NO TIME SOURCE (ruling D4): the lower driver's wait loads its count, then polls GPIP bit 5 — no `_hz_200`."""
+    assert _at(FLOPPY_WAIT_COUNT_LOAD) == f"movel #{FLOPPY_WAIT_COUNT},%d7"
+    assert _at(FLOPPY_SPIN_UP_COUNT_LOAD) == f"movel #{FLOPPY_SPIN_UP_COUNT},%d7"
+    assert _at(FLOPPY_WAIT_POLL) == "btst #5,0xfffffa01"
+    assert not [text for _at_, text in rom_data.instructions(FLOPPY_WAIT_COUNT_LOAD, FLOPPY_WAIT_POLL + 10)
+                if f"{addrs.SYSVAR_HZ_200:#x}" in text]
+
+
+def test_the_drive_probe_is_hdv_init_s_and_the_model_counts_both_drives_as_the_capture_did():
+    """hdv_init calls the probe for each drive, the drive at 12(sp), and stores its D0 in the drive's status word: the
+    capture's ROM run stored 0 for BOTH drives — and so does the ROM's run through the model on the capture's drives."""
     assert _at(bl.DRIVE_PROBE_CALL) == f"jsr {bl.DRIVE_PROBE:#x}"
     assert _at(bl.DRIVE_PROBE + 6) == f"tstw %sp@({bl.DRIVE_PROBE_DEVICE_AT})"
     status = case.long_in(BASE_IMAGE, bl.DRIVE_STATUS_LOAD + WORD_BYTES)
     assert _at(bl.DRIVE_STATUS_LOAD) == f"addal #{status},%a0"
-    capture = boot.midboot_machine()
-    assert [case.word_in(capture.ram, status + drive * WORD_BYTES) for drive in FLOPPY_DRIVES] == [bl.DRIVE_PRESENT] * 2
-    assert _at(DRIVE_PROBE_SUCCESS_BRANCH) == f"beqw {DRIVE_PROBE_SUCCESS:#x}" and _at(DRIVE_PROBE_SUCCESS) == "clrl %d0"
-    assert bl.DRIVE_PRESENT == 0
+    capture, ran = boot.midboot_machine(), bl.the_rom_s(boot.COLD).slice.machine
+    for machine in (capture, ran):
+        assert [case.word_in(machine.ram, status + drive * WORD_BYTES) for drive in FLOPPY_DRIVES] == [0, 0]
+        assert case.word_in(machine.ram, SYSVAR_NFLOPS) == len(FLOPPY_DRIVES)
 
 
 def test_floprd_is_the_machine_s_own_xbios_entry_and_hdv_boot_calls_it():
@@ -163,7 +180,7 @@ def _standing_at(machine, entry, **registers):
     return machine._replace(ram=bytes(ram), registers={**machine.registers, "pc": entry, "isp": sp, **registers})
 
 
-@pytest.mark.parametrize("entry", sorted(bl.ANSWERED - {bl.FLOPRD_ENTRY}), ids=hex)
+@pytest.mark.parametrize("entry", sorted(bl.ANSWERED), ids=hex)
 def test_each_answer_writes_what_it_says_and_nothing_else(entry):
     """Each answer from a machine whose every scratch register holds a pattern: the registers it names written, the
     flags it names, the PC the return, the stack one longword up — every other register and byte as they were."""
@@ -173,12 +190,7 @@ def test_each_answer_writes_what_it_says_and_nothing_else(entry):
     after, asked, laid = bl.answered(before)
     registers = {**before.registers, "pc": bl.SPAN[1], "isp": before.registers["isp"] + LONG_BYTES}
     ram = bytearray(before.ram)
-    if entry == bl.DRIVE_PROBE:     # what the capture's own hdv_init stored for the drive asked (the ROM's run on Hatari)
-        status = case.long_in(BASE_IMAGE, bl.DRIVE_STATUS_LOAD + WORD_BYTES)
-        drive = case.word_in(before.ram, before.registers["isp"] + bl.DRIVE_PROBE_DEVICE_AT)
-        registers["d0"] = case.word_in(boot.midboot_machine().ram, status + drive * WORD_BYTES)
-        assert asked == ("the drive probe", drive)
-    elif entry == bl.ACSI_PROBE:    # read off the ROM's text: the two `lea`s, the two `moveq #-1`, `tst.b` over -1
+    if entry == bl.ACSI_PROBE:    # read off the ROM's text: the two `lea`s, the two `moveq #-1`, `tst.b` over -1
         a6, a5 = (_operand_of_lea(at) for at in (bl.ACSI_PROBE, bl.ACSI_PROBE + 6))
         registers.update(d0=_moveq_minus_one(ACSI_FAILED), d1=_moveq_minus_one(ACSI_TIMED_OUT), a5=a5, a6=a6)
         registers["sr"] = before.registers["sr"] & ~0x1f | 0x08      # X (the wait's `add.l`, no carry) Z V C clear, N set
@@ -200,17 +212,40 @@ def _moveq_minus_one(at):
     return 0xffffffff
 
 
-def test_floprd_s_answer_is_the_device_model_s_read_of_the_capture_s_disk():
-    """D4: hdv_boot's Floprd served by `aes_boot.Floppy` (drive A: never logged in): the boot sector of the blank disk
-    laid at the buffer it names, D0 the model's answer, nothing else of the machine but the return."""
+@pytest.mark.parametrize("machine", bl.MACHINES)
+def test_the_rom_s_floprd_through_the_model_reads_what_the_device_model_served(machine):
+    """THE FLOPRD CROSS-CHECK (R-D4-3): from the one machine standing at Floprd's entry, `aes_boot.Floppy`'s answer (the
+    one B6 retired) and the ROM's own Floprd run through the FDC model to its return: the same call (the boot sector of
+    the blank disk to `_dskbufp`), the same bytes at every run the device model lays, the same D0."""
+    check, model, returned = bl.floprd_cross_check(machine)
+    assert check.asked.arguments == (C["BOOT_DISK_BUFFER"], 0, 1, 0, 0, 1)
+    assert check.laid == ((C["BOOT_DISK_BUFFER"], addrs.BOOT_SECTOR_BYTES),)
+    assert returned.registers["d0"] == check.model_d0 == check.served_d0 == FLOPRD_OK     # D0 off the ROM's run itself
+    assert model == check.served
+    assert check.served[C["BOOT_DISK_BUFFER"]] == bl.the_disk()[:addrs.BOOT_SECTOR_BYTES]
+
+
+FLOPRD_OK = 0
+FLOPRD_SEEK_ERROR = 0xfffffffa          # -6: the `$a26` Floprd's seek-verify ($fc1d7a) loads, extended at its exit
+
+
+def test_the_cross_check_s_d0_is_the_rom_s_own_not_the_device_model_s():
+    """THE D0 HALF, PINNED APART FROM THE ANSWER IT IS CHECKED AGAINST: drive A: empty, the ROM's Floprd times out in its
+    seek-verify and returns the seek error, while the device model (which holds the disk) would have answered 0 — so a
+    `model_d0` that were the device model's would be named here."""
+    check, _model, returned = bl.floprd_cross_check(boot.COLD, bl.A_EMPTY)
+    assert returned.registers["d0"] == check.model_d0 == FLOPRD_SEEK_ERROR
+    assert check.served_d0 == FLOPRD_OK and check.model_d0 != check.served_d0
+
+
+def test_the_boot_sector_lands_through_the_dma_as_a_store():
+    """The DMA's 512 bytes are STORES of the run (the kit joins them to the write-set), at `_dskbufp`."""
     shore = bl.the_rom_s(boot.COLD)
-    floprd = [asked for asked in shore.answers if asked[0] == "Floprd"]
-    assert len(floprd) == 1
     sector = bytes(shore.slice.machine.ram[C["BOOT_DISK_BUFFER"]:C["BOOT_DISK_BUFFER"] + addrs.BOOT_SECTOR_BYTES])
     assert sector == bl.the_disk()[:addrs.BOOT_SECTOR_BYTES]
-    assert any(
-        start <= C["BOOT_DISK_BUFFER"] and C["BOOT_DISK_BUFFER"] + addrs.BOOT_SECTOR_BYTES <= start + length
-        for start, length in shore.slice.stored)
+    assert ("dma_in", C["BOOT_DISK_BUFFER"], addrs.BOOT_SECTOR_BYTES) in shore.slice.fdc_events
+    assert any(start <= C["BOOT_DISK_BUFFER"] and C["BOOT_DISK_BUFFER"] + addrs.BOOT_SECTOR_BYTES <= start + length
+               for start, length in shore.slice.stored)
 
 
 def test_an_entry_no_answer_names_is_refused():
@@ -289,21 +324,20 @@ def test_ours_is_the_rom_s_on_every_held_surface(a_pair):
 
 
 def test_the_answers_are_asked_in_the_rom_s_order(a_pair):
-    """The hooks with 1; GEMDOS's init; Dsetdrv of drive 0 (`_bootdev`); the clock once; the hooks with 3; the drive probe for A: then B:; Floprd once (the boot sector,
-    drive A:); the ACSI for each of its eight targets in order — on both shores."""
+    """The hooks with 1; GEMDOS's init; Dsetdrv of drive 0 (`_bootdev`); the clock once; the hooks with 3; the ACSI for
+    each of its eight targets in order — on both shores. The drive probe and Floprd are ANSWERED NO MORE (R-D4-3)."""
     _machine, the_rom_s, ours = a_pair
     assert ours.answers == the_rom_s.answers
     hooks = "the cartridge's hooks"
-    assert [asked for asked in ours.answers if asked[0] != "Floprd"] == [
+    assert list(ours.answers) == [
         (hooks, C["CARTRIDGE_HOOK_INTERRUPTS"]), ("GEMDOS's init",), ("Dsetdrv", 0), ("the clock's probe",),
-        (hooks, C["CARTRIDGE_HOOK_FLOPPY_BOOT"]),
-        *[("the drive probe", drive) for drive in FLOPPY_DRIVES], *[("the ACSI probe", target) for target in ACSI_TARGETS]]
-    assert [asked[0] for asked in ours.answers].index("Floprd") == 5 + len(FLOPPY_DRIVES)
+        (hooks, C["CARTRIDGE_HOOK_FLOPPY_BOOT"]), *[("the ACSI probe", target) for target in ACSI_TARGETS]]
 
 
 def test_the_slice_s_state_is_laid(a_pair):
     """What the slice is FOR, on both shores: the interrupts open (mask 3), the two buffer lists, the DOS date the OS
-    header's, the drives counted and mounted (both answered), the boot sector read, flock free, A0 the scan's floor."""
+    header's, the drives counted and mounted (both, through the model), the boot sector read, flock free, A0 the scan's
+    floor."""
     _machine, _the_rom_s, ours = a_pair
     ram, registers = ours.slice.machine.ram, ours.slice.machine.registers
     assert registers["sr"] & SR_INTERRUPT_MASK == C["BOOT_SR_INTERRUPTS_OPEN"] & SR_INTERRUPT_MASK
@@ -315,18 +349,29 @@ def test_the_slice_s_state_is_laid(a_pair):
     assert ram[addrs.SYSVAR_FLOCK] == 0 and registers["a0"] == C["RESIDENT_SCAN_FLOOR"] and registers["d7"] == 0
 
 
-def test_no_interrupt_is_delivered_and_no_hardware_is_touched(a_pair):
-    """The slice opens the interrupts and none arrives (D3); every device it reaches is answered at an entry, so its
-    ledgers are EMPTY on both shores — the probes' DMA/FDC writes are on no shore's."""
-    _machine, the_rom_s, ours = a_pair
+def test_no_interrupt_is_delivered_and_only_the_floppy_is_touched(a_pair):
+    """The slice opens the interrupts and none arrives (D3); every other device it reaches is answered at an entry. ITS
+    HARDWARE IS THE FLOPPY'S ALONE, on both shores: every store in the DMA block, the PSG's port A alone, no declared or
+    modelled read (GPIP's polls are the FDC model's own ledger's) — and that ledger's polls are GPIP's declared byte with
+    bit 5 LOW: the zero-time chip's INTRQ at the first poll, every wait; no command hangs."""
+    machine, the_rom_s, ours = a_pair
+    asserted = boot_display.GPIP_OF[bl.DISPLAY_ARM[machine].monitor] & ~bl.GPIP_INTRQ    # B5's arm's declaration
     for shore in (the_rom_s, ours):
-        assert all(not getattr(shore.slice, ledger) for ledger in bl.LEDGERS)
+        slice_ = shore.slice
+        assert slice_.hardware_writes
+        assert all(bl.DMA_BLOCK[0] <= at < bl.DMA_BLOCK[1] for at, _width, _value in slice_.hardware_writes)
+        assert {register for _kind, register, _value in slice_.psg_events} == {addrs.PSG_PORT_A}
+        assert not slice_.io_reads and not slice_.hardware_reads and not slice_.faults
+        polls = [entry for entry in slice_.fdc_events if entry[0] == "poll"]
+        assert polls and all(entry[1:] == (asserted, 1) for entry in polls)
+        assert not [entry for entry in slice_.fdc_events if entry[0] in ("hang", "forced")]
+
 
 
 def test_the_stores_apart_lie_in_the_bios_stack_s_dead_frames_alone(a_pair):
     """Unmapped, the megabytes differ in THE RESIDUE alone (the capture's own MASK field: the BIOS stack under its top),
-    and nothing is stored below it — the frames apart are each shore's own depths (hdv_boot one call nearer the top on
-    ours). The residue is dead at `$fc047a`: B4's `test_the_capture_s_masked_bytes_are_read_by_no_run_to_gem_entry`."""
+    and nothing is stored below it — the frames apart are each shore's own depths. The residue
+    is dead at `$fc047a`: B4's `test_the_capture_s_masked_bytes_are_read_by_no_run_to_gem_entry`."""
     _machine, the_rom_s, ours = a_pair
     lo, hi = bl.STACK_RESIDUE
     differing = [at for at, (one, other) in enumerate(zip(the_rom_s.slice.machine.ram, ours.slice.machine.ram)) if one != other]
@@ -343,36 +388,40 @@ def test_our_own_cost_is_pinned_exactly(a_pair):
     assert (ours.own, the_rom_s.own) == OWN_CYCLES
 
 
-OWN_CYCLES = (115_906, 136_546)         # ours, the ROM's: the same on WARM and COLD (the slice reads nothing they differ in)
+# ours, the ROM's: the same on WARM and COLD (the slice reads nothing they differ in). Ours 115,906 before the floppy ran
+# through the FDC model: +16, the two `lea`s that call hdv_boot at the ROM's depth (`FLOPPY_BOOT_FRAME_BYTES`).
+OWN_CYCLES = (115_922, 136_546)
 
 
 # ---- THE END SURFACE: the mid-boot capture ---------------------------------------------------------------------------------
-def test_the_end_surface_is_the_capture_but_the_classes_named():
+def test_the_end_surface_is_the_capture_but_d1():
     """COLD — the capture is a power-on's boot — reaches `$fc047a` on both shores equal to the capture outside its MASK
-    but for D1 (the cold arm's memctrl on the flat megabyte: D6, memctrl, D6's copy where the BIOS framed it) and D4 (the
-    lower floppy driver's scratch D2 / A1 and its own state in [$9f6, $a54)) — the same on both shores, pinned exactly."""
+    but for D1 ALONE (the cold arm's memctrl on the flat megabyte: D6, memctrl, D6's copy where the BIOS framed it, and
+    D6's low byte in the lower floppy driver's save area) — the same on both shores, pinned exactly. D4's class (the lower
+    driver's state in [$9f6, $a54) and its scratch D2 / A1) is GONE: the driver runs through the FDC model (R-D4-3)."""
     capture = boot.midboot_machine()
     rom, ours = bl.against_the_capture(bl.the_rom_s(boot.COLD), capture), bl.against_the_capture(bl.our_side(boot.COLD), capture)
-    assert rom == ours
-    registers, differing = ours
-    assert registers == set(bl.END_REGISTERS_OWED)
-    lower = {at for at in differing if bl.LOWER_DRIVER_STATE[0] <= at < bl.LOWER_DRIVER_STATE[1]}
-    assert differing - lower == set(bl.MEMCTRL_COPIES)
-    assert sorted(lower) == LOWER_DRIVER_BYTES_APART
-
-
-LOWER_DRIVER_BYTES_APART = [0x9f7, 0xa0d, 0xa14, 0xa15, 0xa24, 0xa25, 0xa26, 0xa27, 0xa2a, 0xa2b, 0xa2e, 0xa31, 0xa37,
-                            0xa39, 0xa3b, 0xa3d, 0xa3e, 0xa3f, 0xa42, 0xa43, 0xa4a, 0xa4b, 0xa4f, 0xa53]
+    assert rom == ours == (set(bl.END_REGISTERS_OWED), set(bl.END_APART))
+    assert set(bl.END_REGISTERS_OWED) == {"d6"}
+    assert [at for at in bl.END_APART if bl.LOWER_DRIVER_STATE[0] <= at < bl.LOWER_DRIVER_STATE[1]] == [
+        bl.LOWER_DRIVER_SAVED_D6_LOW]
 
 
 def test_the_memctrl_copies_are_the_cold_arm_s_own():
     """D1 named, not assumed: the capture's ST holds memctrl $05, the oracle's flat megabyte sizes $08 — in memctrl and in
-    D6's low byte where the BIOS framed D6 below savptr (the register save area: D3 at $90c, a longword each)."""
+    D6's low byte where the BIOS framed D6 below savptr (the register save area: D3 at $90c, a longword each), and where
+    the lower floppy driver's `movem.l d3-d7/a3-a6,$a28` keeps it ($a34: D6's low byte at $a37)."""
     capture = boot.midboot_machine()
     ours = bl.our_side(boot.COLD).slice.machine
     memctrl, framed = bl.MEMCTRL_COPIES
     assert (capture.ram[memctrl], ours.ram[memctrl]) == (capture.registers["d6"], ours.registers["d6"]) == (0x05, 0x08)
     assert (capture.ram[framed], ours.ram[framed]) == (0x05, 0x08)
+    saved = bl.LOWER_DRIVER_SAVED_D6_LOW
+    assert (capture.ram[saved], ours.ram[saved]) == (0x05, 0x08)
+    assert _at(LOWER_DRIVER_SAVE) == "moveml %d3-%d7/%a3-%fp,0xa28" and saved == 0xa28 + 3 * LONG_BYTES + 3
+
+
+LOWER_DRIVER_SAVE = 0xfc1c48            # the lower driver's common entry: `movem.l d3-d7/a3-a6,$a28`
 
 
 @pytest.mark.parametrize("machine", bl.MACHINES)
@@ -424,6 +473,7 @@ def test_each_held_surface_changed_alone_is_named(cold_pair):
         "ram": _ram_changed(ours, addrs.GEMDOS_DATE, ours.slice.machine.ram[addrs.GEMDOS_DATE] ^ 1),
         "stored": _with_slice(ours, stored=(*ours.slice.stored, (bl.STACK_RESIDUE[0] - 2, 1))),
         **{ledger: _with_slice(ours, **{ledger: (*getattr(ours.slice, ledger), ("a staged entry",))}) for ledger in bl.LEDGERS},
+        "fdc_chip": _with_slice(ours, fdc_chip=bytes(len(ours.slice.fdc_chip))),
         "answers": ours._replace(answers=ours.answers[:-1]),
     }
     assert set(changed) == {*bl.SURFACES, "answers"}
@@ -478,3 +528,74 @@ def test_the_rest_beside_each_shore_s_own_is_held_equal_in_the_price(monkeypatch
     monkeypatch.setattr(bl, "emu", _OursOwnReadShort())
     with pytest.raises(AssertionError, match="beside its own, ours spent"):
         bl.priced(boot.COLD)
+
+
+# ---- THE CARRIES (R-D4-2) AND THE DRIVE ARMS (R-D4-3), from the ROM's own runs ---------------------------------------------
+PORT_A_AFTER_B3 = 0x27                  # the head's `$07` through B3's own RMWs: DTR, RTS cleared, the strobe set
+
+
+@pytest.mark.parametrize("machine", bl.MACHINES)
+def test_port_a_at_the_slice_s_start_is_carried_from_the_rom_s_own_stores(machine):
+    """PSG port A at `$fc0452` is the ROM's chained boot's (the head's store through B3's RMWs) — not B3's battery seed,
+    which declares another byte — and D2 at `$fc047a` (port A before the driver's last select) is then the capture's."""
+    import boot_hwinit
+    assert bl.port_a_at_start(machine) == PORT_A_AFTER_B3
+    assert boot_hwinit.PSG_SEED[addrs.PSG_PORT_A] != PORT_A_AFTER_B3
+    assert bl.the_rom_s(machine).slice.machine.registers["d2"] == boot.midboot_machine().registers["d2"]
+
+
+def test_the_chip_and_port_a_are_carried_leg_to_leg():
+    """Every leg is a run: the chip a leg leaves is the chip the next starts from (R-D4-2) — the joined ledger in the
+    ROM's own order across the legs, and the chip the shores leave equal (and not MR's)."""
+    rom, ours = bl.the_rom_s(boot.COLD), bl.our_side(boot.COLD)
+    assert rom.slice.fdc_chip == ours.slice.fdc_chip != bl.emu.fdc_power_on_state()
+    commands = [entry for entry in rom.slice.fdc_events if entry[0] == "command"]
+    # A: restore, the exit's seek; B: restore, seek; hdv_boot's Floprd: seek-verify, read, the exit's seek — in order
+    assert [entry[1] for entry in commands] == [bl.WD1772_RESTORE, bl.WD1772_SEEK, bl.WD1772_RESTORE, bl.WD1772_SEEK,
+                                                bl.WD1772_SEEK_VERIFY, bl.WD1772_READ_SECTOR, bl.WD1772_SEEK]
+    assert [entry[2] >> bl.FDC_DRIVE_SHIFT for entry in commands] == [0, 0, 1, 1, 0, 0, 0]
+
+
+# THE ARMS, each from the ROM's runs on both shores, held equal, each with its ledger: the drives the ROM counts, and the
+# timeouts the ROM's own count-down reaches (`(command, polls)` per hang); their instructions pinned (the ROM's shore).
+ARMS = {bl.B_ABSENT: dict(nflops=1, timeouts=(), instructions=17_008),
+        bl.A_ABSENT: dict(nflops=0, timeouts=((bl.WD1772_RESTORE, FLOPPY_SPIN_UP_COUNT - 1),), instructions=1_587_388),
+        bl.A_EMPTY: dict(nflops=1, timeouts=((bl.WD1772_RESTORE, FLOPPY_SPIN_UP_COUNT - 1),
+                                             *[(bl.WD1772_SEEK_VERIFY, FLOPPY_WAIT_COUNT - 1)] * 4),
+                         instructions=5_785_168)}
+
+
+@pytest.fixture(scope="module", params=sorted(ARMS))
+def arm_pair(request):
+    return request.param, bl.the_rom_s(boot.COLD, drive_arm=request.param), bl.our_side(boot.COLD, drive_arm=request.param)
+
+
+def test_each_drive_arm_is_held_equal_and_reached_by_the_rom_s_own_count(arm_pair):
+    arm, rom, ours = arm_pair
+    expected = ARMS[arm]
+    assert bl.differences(rom, ours) == []
+    assert case.word_in(rom.slice.machine.ram, SYSVAR_NFLOPS) == expected["nflops"]
+    events = rom.slice.fdc_events
+    hangs = [entry[1] for entry in events if entry[0] == "hang"]
+    long_polls = [entry[2] for entry in events if entry[0] == "poll" and entry[2] > 1]
+    assert len(hangs) == len(long_polls) == len(expected["timeouts"])          # (the zip below cannot truncate)
+    assert list(zip(hangs, long_polls)) == list(expected["timeouts"])
+    assert len([entry for entry in events if entry[0] == "forced"]) == len(expected["timeouts"])
+    assert rom.slice.instructions == expected["instructions"]
+
+
+def test_drive_b_absent_s_restore_ends_in_the_seek_error():
+    """The motor on (A:'s probe turned it on), B:'s restore steps 255 times with no TR00: the seek error, twice (the
+    probe's retry after its seek to 10), and the probe fails."""
+    events = bl.the_rom_s(boot.COLD, drive_arm=bl.B_ABSENT).slice.fdc_events
+    drive_b = 1 << bl.FDC_DRIVE_SHIFT
+    b_restores = [index for index, entry in enumerate(events)
+                  if entry[0] == "command" and entry[1:] == (bl.WD1772_RESTORE, drive_b)]
+    assert [events[index + 1] for index in b_restores] == [("done", bl.WD1772_SEEK_ERROR, 0)] * 2
+
+
+def test_a_drive_arm_on_one_shore_alone_is_named():
+    """THE FDC LEDGER IS A SURFACE: the ROM's on the capture's drives, ours with B: absent — its transactions named (and the
+    megabyte: one drive counted). The chip alone is the each-surface negative's (both arms leave drive A:'s seek last)."""
+    found = bl.differences(bl.the_rom_s(boot.COLD), bl.our_side(boot.COLD, drive_arm=bl.B_ABSENT))
+    assert any(item.startswith("fdc_events") for item in found) and any(item.startswith("ram") for item in found)

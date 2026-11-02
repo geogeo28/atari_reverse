@@ -259,21 +259,38 @@ def _vet_kept_off_the_rom_s_head(machine, laid):
 # ---- THE RUNNER ------------------------------------------------------------------------------------------------------------
 SLICE_INSNS = 4_000_000                 # a slice's default budget: the warm head is ~105,000; the cold arm's ~209,000
 Slice = namedtuple("Slice", "machine stop instructions cycles stored hardware_writes io_reads hardware_reads psg_events "
-                            "faults")
+                            "fdc_events faults fdc_chip", defaults=(None,))
 Slice.__doc__ = """One run of a slice: the `machine` it left (a `BootMachine` standing at the stop, the next slice's
 start), the `stop` it arrived at, its `instructions` and `cycles` (the oracle's running totals, the entry's segment
 included), the RAM it `stored` to as `(start, length)` runs (the write ledger and the frames the harness pushed), the
 ledgers `hardware_writes` `(address, width, value)`, `io_reads` (declared I/O, `(address, width, value)`),
-`hardware_reads` `(address, value)` and `psg_events`, in order, and the bus-error `faults` taken (`{SP: frame}`)."""
+`hardware_reads` `(address, value)`, `psg_events` and `fdc_events` (the FDC/DMA model's ordered transaction ledger,
+`emu.fdc_events()`: empty on a run that does not arm it), in order, the bus-error `faults` taken (`{SP: frame}`), and
+`fdc_chip`: the chip the FDC/DMA model LEFT (`emu.fdc_state()`'s bytes, the next slice's carry), None unarmed."""
+
+# THE FDC/DMA MODEL ARMED FOR ONE RUN (ruling D4 R-D4-1..3; kit TRAP_MODEL.md "Phase 17"): the two drive bays
+# (`emu.FdcDrive`s — a `bytes` image is lent READ-ONLY) and the chip the run starts from (`emu.fdc_state()` bytes carried
+# from the run before, or None for MR's power-on chip). Disarmed when the run ends, whatever ends it.
+Fdc = namedtuple("Fdc", "drive_a drive_b chip")
 
 
-def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed=None, faults=(), laid=None):
+def port_a_after(slice_, before):
+    """PSG port A as `slice_` LEFT it: its last store to register 14, or `before` (what it started from) where it made
+    none — THE PORT-A CARRY (R-D4-2), every leg a run whose PSG file restarts from its seed."""
+    for kind, register, value in slice_.psg_events:
+        if kind == emu.os_map.OS_PSG_EVENT_WRITE and register == addrs.PSG_PORT_A:
+            before = value
+    return before
+
+
+def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed=None, faults=(), laid=None, fdc=None):
     """THE ROM'S CODE RUN FROM `machine` (from its PC, with its whole register file) TO ITS FIRST ARRIVAL AT ANY ADDRESS
     OF `until` — a `Slice`, or REFUSED BY NAME (the module's docstring). `io_seed`, `hw_seed`, `psg_seed`: what the case
     declares the hardware held (the kit's own declarations, refused by the kit where read and undeclared); `faults`:
     the `bus_error.Fault`s the case declares. `laid`: an `Overlay` (`overlaid`) — our code over a copy of the ROM
     window for this run; such a run is PROFILED, refused by name if it executed the ROM's own head, and leaves its
-    profile for the caller to read (`emu.prof_cycles`)."""
+    profile for the caller to read (`emu.prof_cycles`). `fdc`: an `Fdc` — the FDC/DMA model ARMED for this run, its
+    ledger and the chip it left in the `Slice` — or None (unarmed: every access as before)."""
     stops, declared = frozenset(until), bus_error.stops_of(faults)
     if not stops:
         raise Refused("a slice names no stop: it would run for its whole budget")
@@ -286,6 +303,8 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
         emu.prof_reset()
     pushed = {}
     emu.install_chip_seeds(psg_seed=psg_seed, hw_seed=hw_seed)
+    if fdc:
+        emu.fdc_arm(fdc.drive_a, fdc.drive_b, chip=fdc.chip)
     try:
         result = emu.run_bench(memory, entry, 0, aes_boot.OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
                                door={entry}, seed_regs=None, io_seed=io_seed or {})
@@ -306,9 +325,13 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
                 break
         registers = stopped_cpu.registers_now()
         writes, truncated = emu.bench_writes(memory)
-        ledgers = (tuple(emu.hw_writes()), tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.psg_events()))
+        ledgers = (tuple(emu.hw_writes()), tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.psg_events()),
+                   tuple(emu.fdc_events()))
+        chip = emu.fdc_state() if fdc else None
     finally:
         emu.bench_abort()
+        if fdc:
+            emu.fdc_disarm()
         if laid:
             emu.prof_enable(False)
     _vetted(machine, stops)
@@ -320,7 +343,8 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
     for frame_at, frame in pushed.items():
         stored.update(range(frame_at, frame_at + len(frame)))
     left = machine._replace(ram=bytes(memory[:RAM_BYTES]), registers=registers)
-    return Slice(left, at, result["ninsns"], result["cycles"], stopped_cpu.address_runs(sorted(stored)), *ledgers, pushed)
+    return Slice(left, at, result["ninsns"], result["cycles"], stopped_cpu.address_runs(sorted(stored)), *ledgers, pushed,
+                 chip)
 
 
 def instructions():

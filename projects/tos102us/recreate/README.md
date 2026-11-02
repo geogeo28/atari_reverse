@@ -1494,6 +1494,8 @@ boot.warm_machine(); boot.cold_machine(); boot.midboot_machine()   # BootMachine
 boot.entered_at(machine, pc, **registers)                          # the same machine, its run starting elsewhere
 boot.run(machine, until, budget=, io_seed=, hw_seed=, psg_seed=, faults=())   # -> Slice
 boot.run_through(machine, stops, final=)                           # slice by slice: (slices, refusal or None)
+boot.Fdc(drive_a, drive_b, chip)          # arm the kit's FDC/DMA model for one boot.run (disarmed after); Slice.fdc_events / .fdc_chip
+boot.port_a_after(slice_, before)         # PSG port A as a run left it (the R-D4-2 carry)
 bus_error.Fault(what, at, words, access, handler)                  # one declared bus error (aes_boot.THE_BLITTER_PROBE)
 ```
 
@@ -1797,10 +1799,12 @@ boot_display.priced(arm)
 The user's rulings: **D8** (WARM and COLD), **D9** (each machine on its own cycles), **"ROM-window overlay"**, **"Own link
 rule"** (2026-10-29); **R-B4-2** (the clock's probe answered at its entry); **D3** (2026-10-31: no kit interrupt source —
 the waiting routines ANSWERED AT THEIR ENTRIES on both shores, labelled; the slice opens the interrupts and none is
-delivered inside a run); **D4** (2026-10-31: an FDC/DMA model is a later, separate project — the floppy stays answered at
-its entries). THE ORCHESTRATOR'S READING OF D3 (the user may override): D3 names "hdv_boot"; hdv_boot and hdv_init (the
-floppy's upper driver, waiting on nothing itself) run as the ROM's and only the waits below them are answered — the
-narrower answer, R-B5-1's precedent. The orchestrator's standing calls: GEMDOS's init and Dsetdrv, the cartridge's hooks, and the floppy upper
+delivered inside a run); **D4** (2026-11-01, R-D4-1..4): the floppy runs as the ROM's on both shores THROUGH THE KIT'S FDC/DMA
+MODEL (`emu.fdc_arm`, kit TRAP_MODEL.md "Phase 17"). hdv_init's drive probe and hdv_boot's Floprd are no longer answered.
+Their waits are the ROM's instruction-count loops on GPIP bit 5, and a zero-time chip ends them at the first poll.
+THE ORCHESTRATOR'S READING OF D3 (the user may override): D3 names "hdv_boot"; hdv_boot and hdv_init (the
+floppy's upper driver, waiting on nothing itself) run as the ROM's and only the waits below them were answered — the
+narrower answer, R-B5-1's precedent; since D4 the floppy's waits are the FDC/DMA model's and only the ACSI's is answered. The orchestrator's standing calls: GEMDOS's init and Dsetdrv, the cartridge's hooks, and the floppy upper
 driver's hdv_boot / hdv_init are the ROM's on both shores, called in place, priced as the OS both run.
 
 ```
@@ -1819,7 +1823,7 @@ boot_late.priced(machine)
 - **What is ported**: the slice and five routines it `bsr`s — `$fc4a9e` (GEMDOS's two BCB lists, its init, Dsetdrv of the
   boot drive), `$fc4be8` (the clock's date), `$fc053c` (the floppy's boot), `$fc0558` (the ACSI's boot), `$fc0e56` (the
   reset-resident scan) — inlined into one `noreturn` entry, as B5's. The ROM's own cost is the slice's span and those
-  five; ratio **0.85** (115,906 / 136,546 own cycles, both machines).
+  five; ratio **0.85** (115,922 / 136,546 own cycles, both machines).
 - **System variables at their own addresses** (`late.c`'s `ram`): through `target_image()` every address past `$7fff`
   became an indexed store off a zero register; absolute addressing needs `--param=min-pagesize=0` (GCC takes a constant
   address below 4 KB for a null offset: `-Wstringop-overflow` at `_bufl`). Pinned in `test_makefile.py`.
@@ -1833,27 +1837,42 @@ boot_late.priced(machine)
   the ROM's `moveq #0,d7`; the scan's page steps before its compare under a `CURSOR_BARRIER` (without it GCC compared
   the page in A1 and left phystop there).
 - **THE ANSWERS** (`answered`, each counted in the ANSWER LEDGER with what it was asked, the same on both shores): the
-  drive probe `$fc173a` (hdv_init's, D3) — D0 0, a drive answered, both drives, the capture's own status words (a drive
-  ABSENT is the WD1772's answer: D4, unpinned); Floprd `$fc1782` (D4: `aes_boot.Floppy` through
-  `boot_launch.NeverLoggedIn`, the capture's blank disk); the ACSI probe `$fc0586` (D3 "no device": D0 D1 -1, A6/A5 the
-  DMA's registers, flock's byte cleared, Z clear — each held to the ROM's text AND to the capture's registers); the
-  clock's probe `$fc4c0c` (R-B4-2, carry set). OBSERVED, NOT ANSWERED: the cartridge's hooks (their init bit), GEMDOS's
+  ACSI probe `$fc0586` (D3 "no device": D0 D1 -1, A6/A5 the DMA's registers, flock's byte cleared, Z clear — each held
+  to the ROM's text AND to the capture's registers) and the clock's probe `$fc4c0c` (R-B4-2, carry set). Nothing else is
+  answered. OBSERVED, NOT ANSWERED: the cartridge's hooks (their init bit), GEMDOS's
   init and Dsetdrv (its drive word) — each arrival in the ledger, so the calls' order is held (review RB6's F2). The
   price is the run UNWATCHED: a resumed stop counts its step-off again (+1 instruction, +40 cycles an arrival); the
   watched run is held to leave the same machine and answers.
+- **THE FLOPPY** (`boot.run(..., fdc=boot.Fdc(...))`):
+  - THE CAPTURE'S DRIVES: the blank disk lent read-only in A:, and B: connected and empty.
+  - GPIP's other bits are B5's arm's declaration; bit 5 is the model's.
+  - PSG port A and the chip are CARRIED leg to leg (`Carry`, `carried`). Port A at `$fc0452` comes from the ROM's
+    chained boot (`port_a_at_start`): the head's `$07` through B3's own RMWs gives `$27`. The chip starts as MR's.
+  - The model's ordered ledger (`Slice.fdc_events`) and the chip it leaves (`Slice.fdc_chip`) are held exactly.
+  - `DRIVE_ARMS` (COLD): drive B: absent (its restore ends in the SEEK ERROR after 255 steps — no timeout); no drive
+    at all and drive A: empty (each reached by the ROM's own count-down). Each is held equal between the shores.
+  - `floprd_cross_check`: the ROM's Floprd through the model against `aes_boot.Floppy`'s answer, from the one machine
+    (one call at CHS 0/0/1; its D0 read off the returned machine and pinned apart from the device model's on drive A:
+    empty, -6 against 0).
+  - The WD1772 bytes the batteries read the ledger in, `DMA_BLOCK` and `GPIP_INTRQ` are named once, in `boot_late.py`.
+- **hdv_boot AT THE ROM'S DEPTH** (`FLOPPY_BOOT_FRAME_BYTES`). hdv_boot's frame pointer A6 is saved by the lower
+  driver's `movem` at `$a48`; called one frame higher, `$a4b` was apart. The fix follows `GEMDOS_BUFFERS_FRAME_BYTES`.
+  The other calls from inside a `bsr`'d routine (the hooks with D0 = 3, `jsr $16da`, the clock's probe and read, the
+  ACSI's read) are still 4 bytes higher on ours: UNPINNED by name, nothing observes them.
 - **Held**: stop, EVERY register, the megabyte and the stores OUTSIDE THE BIOS STACK'S DEAD FRAMES `[$745a, $755a)` (the
   mid-boot capture's own MASK field — dead to gem_entry by B4's mask-noise test; the frames lie at each shore's own
-  depth), every ledger (all EMPTY: every device the slice reaches is answered), the faults, the answers; the ROM's run
+  depth), every ledger (all EMPTY but the FDC model's, held), the faults, the answers; the ROM's run
   equal with and without the overlay; a run of ours that executes the slice or any of the five REFUSED BY NAME.
 - **THE END SURFACE** (COLD; the capture is a power-on's): both shores equal to `build/midboot.bin` outside its mask but
-  D1 (D6, memctrl `$424` and D6's copy at `$91b` in the BIOS save area: `$08` against the capture's `$05`) and D4 (the
-  lower floppy driver's scratch D2 / A1 and 24 bytes of its own state in `[$9f6, $a54)`), pinned exactly. WARM is no
+  D1 ALONE: D6, `$424`, `$91b` (D6's copy in the BIOS save area: `$08` against the capture's `$05`), and `$a37` (D6's
+  low byte in the lower driver's save area). D4's class is gone. Pinned exactly. WARM is no
   power-on's machine (the desk's RAM above `$10000`, the environment at `$840`).
 - **B4's open carry**: from the ROM's machine at `$fc0452`, A3, A4, A6 at `$fc047a` equal the capture's on both shores
   (A6 the ACSI answer's `lea $ffff8606,a6`). B3's C now leaves A3 (`$fc2522`'s `movea.l #$fc25a0,a3`) and D3 (Ikbdws's
   count, `$0000ffff`) as the ROM's code does (review RB6's R2, `hwinit_entry.S`); no chained run of ours exists yet — a
   scratch check carries B3's C exit through the ROM's B5 / B6 to `$fc047a`, every register equal.
-- **Unpinned by name**: the arms the answers never take — a drive absent, an executable boot sector (`jsr $16da`), an
+- **Unpinned by name**: the arms the answers never take — the model's own unpinned arms (motor-off deselect, disk
+  swap, INDEX, CRC/protection, rotational latency), an executable boot sector (`jsr $16da`), an
   ACSI device and its sector's sum, a reset-resident program found (D12 all; the scan's mark and sum compares and the
   ACSI's `$1234` compare survive mutation for that reason); `_bootdev` other than 0 (Dsetdrv's word is 0 in every run);
   a clock present (R-B4-2); a cartridge (D2).
@@ -1863,7 +1882,8 @@ boot_late.priced(machine)
 
 The user's rulings (2026-11-01): **R-CH-1 "Steered chain"** — each slice on ITS OWN EXISTING STAGING, the machine
 CARRIED WHOLE between slices, the harness checking the arrival at the ROM's next slice start and steering the PC into
-ours (A CHAINED STAGING), with a STATIC LINK CHECK of every `jmp.l` into the ROM window each product holds; **D10 DEFERRED** (no composed image); the BLANK DISK only. Every
+ours (A CHAINED STAGING), with a STATIC LINK CHECK of every `jmp.l` into the ROM window each product holds; **D10 DEFERRED** (no composed image); the BLANK DISK only; **R-D4-2/R-D4-3**
+(the carry; the floppy through the model in B6). Every
 ruling each slice stands on stands with it (D3, D4, D5, D7, D8, D9, "ROM-window overlay", "Own link rule", R-B4-2/3,
 R-B5-1).
 
@@ -1883,7 +1903,10 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   arm's declarations (the mono poll answered, R-B5-1); B6 through its answered entries (the plain run priced, the
   watched one ledgered, held to leave the same machine); B4 through `boot_launch.run` (the floppy model, the clock).
   At each boundary ours must arrive at the ROM's next slice start (`steered`, refused by name otherwise) and is
-  entered at the next product's entry.
+  entered at the next product's entry. PSG port A and the FDC chip are CARRIED at every boundary (`Step.carry`), from
+  each shore's own runs. B3 in the chain reads the head's carried port A instead of its battery's seed. B6 runs through
+  the FDC model. Every other step (B4 included) makes no store, declared read or modelled read in the DMA block — held
+  — so the chip passes through to gem_entry.
 - **The link check** (`link_check`): EVERY word-aligned `jmp.l` INTO THE ROM WINDOW each product holds, pinned
   EXACTLY as a multiset (`EXPECTED_EXITS`; the blob's scanned in B2's and B3's entries alone) — the blob's `$fc03b6` and
   `$fc03e0` once each, the display's `$fc0452` twice (its two paths) and `$fc0e1a` once (the sync wait), the late C's
@@ -1891,18 +1914,19 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   and the steering map exactly the arrivals — the head's end and the slice starts the products exit to — into the next
   entries. Negatives: a wrong slice start, a re-target to no slice start, an exit appended, a head cut short, a
   steering entry off by two.
-- **Held at every boundary** (`differences`): the stop; every register but THE CARRIES, EXACTLY (`CARRIED`: B2's D1,
+- **Held at every boundary** (`differences`): the stop; the carry; every register but THE CARRIES, EXACTLY (`CARRIED`: B2's D1,
   A1, A3, A4 at `$fc03b6`; B3's D1, A1, D2, A2 and B2's A4 at `$fc03e0`; none from `$fc0452` on — all dead, proved
   composed); the head's links by offset while they live; the megabyte with ONLY the named mappings (the seven linked
   vectors; at gem_entry the launch's links and the returns into our code — our dispatcher's `jsr (a0)` return, the
   launch's addresses by offset — that dead frames keep INSIDE the pre-init mask) outside each slice's derived residue,
   the BIOS stack's dead frames TIGHTENED for the chain alone (at `$fc047a` apart only from `$74ff` up; at gem_entry in
-  EXACTLY five bytes, `APART_AT_THE_END`, set equality);
+  EXACTLY three bytes, `APART_AT_THE_END`, set equality — was five; measured: which P3 change laid `$7509` / `$750f`
+  alike is not separated);
   the stores; every ledger; the answers. B6's answer ledger and B4's GEMDOS / floppy / clock / blank ledgers equal the
   slices' own.
-- **The END surfaces (COLD)**: at `$fc047a` the mid-boot capture apart in exactly B6's D1 / D4 classes; at gem_entry
-  the pre-init capture apart in its OWN exact set (`END_PREINIT_*`: memctrl `$424` and 21 bytes of the lower floppy
-  driver's state in `[$9f7, $a54)` — the oracle's carried from B6, which is why it is not B4's capture-made set).
+- **The END surfaces (COLD)**: at `$fc047a` the mid-boot capture apart in exactly B6's D1 class; at gem_entry the
+  pre-init capture apart in its OWN exact set (`END_PREINIT_*`): `$424` and the 23 lower-driver bytes the launch's
+  upper-entry answers never lay (`END_PREINIT_LOWER_DRIVER`).
 - **The hand-off no slice sees**: B2 and B3 store our linked entries, and the ROM's later code enters them — the three
   traps of B6 (GEMDOS's init, Dsetdrv) and the three of B4 go through OUR `trap.S`, the launch's two blanks through
   OUR HBL entry; the ROM's dispatcher and HBL handler run 0 cycles on ours, and every step of ours is vetted against

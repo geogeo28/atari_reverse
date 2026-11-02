@@ -8,19 +8,17 @@ THE USER'S RULINGS THIS MODULE STANDS ON: D8 (the WARM and COLD machines, `boot.
 on each shore's own cycles, `bench/tier3.py`), "ROM-window overlay" and "Own link rule" (where our code lies, below) —
 2026-10-29; R-B4-2 "Answer it at its entry" (the clock's probe) — and D3 (2026-10-31): "NO kit interrupt source. The
 waiting routines are ANSWERED AT THEIR ENTRIES on both shores, labelled". The slice opens the interrupts (`move
-#$2300,sr`) and NONE IS DELIVERED inside a run (said on every label). And D4 (2026-10-31): an FDC/DMA model is a later,
-separate project — the floppy stays answered at its entries. The orchestrator's standing calls: GEMDOS's init and its
+#$2300,sr`) and NONE IS DELIVERED inside a run (said on every label). And D4 (2026-11-01, R-D4-1..4): THE FLOPPY RUNS AS
+THE ROM'S THROUGH THE KIT'S FDC/DMA MODEL (a zero-time WD1772 + DMA, TRAP_MODEL.md "Phase 17") — hdv_init's drive probe
+`$fc173a` and hdv_boot's Floprd `$fc1782` are no longer answered; the capture's blank disk in drive A: (read-only), drive
+B: connected and empty (the capture's), or one of three arms (`DRIVE_ARMS`); PSG port A and the FDC chip CARRIED from
+the ROM's own runs, leg to leg (R-D4-2); GPIP's other bits B5's arm's, its bit 5 the model's; the model's ORDERED LEDGER
+and the chip it leaves held exactly between the shores (R-D4-3). The orchestrator's standing calls: GEMDOS's init and its
 Dsetdrv stay the ROM's on both shores (OS both run); so do the cartridge's hooks (D2: the port reads 0) and the floppy
-driver's hdv_boot / hdv_init (the F-upper driver, unported), each called in place.
+driver's hdv_boot / hdv_init (the F-upper driver, unported) and its lower driver, each called in place.
 
-THE ANSWERS, AT FOUR ENTRIES, ON BOTH SHORES ALIKE (`answered`), each value pinned to the ROM's text or to the capture
+THE ANSWERS, AT TWO ENTRIES, ON BOTH SHORES ALIKE (`answered`), each value pinned to the ROM's text or to the capture
 (the ROM's own run on Hatari), each counted in the run's ANSWER LEDGER with what it was asked:
-  * THE DRIVE PROBE `$fc173a` (D3: hdv_init's, the FDC's restore and its waits below it) — D0 the drive's status as the
-    capture's own hdv_init stored it: 0, a drive answered, for both drives (`DRIVE_PRESENT`). THE CAPTURE'S CLASS (the
-    ROM's own two-drive path, `aes_boot`'s DRIVE B: note); a drive ABSENT is no class of ours — what the probe answers
-    there is the WD1772's (D4), unpinned by name.
-  * FLOPRD `$fc1782` (D4: the existing device model's fourth entry, `aes_boot.Floppy`) — hdv_boot's read of the boot
-    sector, served off THE CAPTURE'S BLANK DISK by `boot_launch.NeverLoggedIn` (R-B4-3: drive A:'s record zero here).
   * THE ACSI PROBE `$fc0586` (D3, "no device") — what the ROM's own probe leaves when the controller never answers: D0
     and D1 -1, A5/A6 the DMA's two registers, flock's byte cleared, Z clear (`ACSI_NO_DEVICE`).
   * THE CLOCK'S PROBE `$fc4c0c` (R-B4-2) — carry set: no RP5C15 on the capture's plain ST.
@@ -28,12 +26,10 @@ AND THREE ENTRIES OBSERVED, run as the ROM's: the cartridge's hooks (the init bi
 cartridge — D2 — nothing else reads it), GEMDOS's init and its Dsetdrv (with the drive word) — each arrival in the
 ledger, so the calls' order and Dsetdrv's argument are held. UNPINNED BY NAME: `_bootdev` other than 0 (a hard disk's
 boot: the ACSI answers "no device"), so the drive Dsetdrv makes current is 0 in every run.
-THE ORCHESTRATOR'S READING OF D3 (the user may override): D3 names "hdv_boot"; hdv_boot and hdv_init are the floppy's
-upper driver — C that waits on nothing itself — so they run as the ROM's, and the two waits below them are what is
-answered at their entries (the drive probe, D3's own; Floprd, D4's) — the narrower answer, R-B5-1's precedent.
-WHAT NO ANSWER LAYS (named): the lower floppy driver's own state and scratch — its register save area, its records, its
-retry count ([$9f6, $a54), and D2 / A1) — which the capture holds and neither shore does (D4); the DMA's and the FDC's
-writes the probes make before they wait (on no shore's ledger); the stack the answered routines would have used.
+THE FLOPPY'S WAITS, ONCE ANSWERED (the drive probe, D3's; Floprd, D4's), NOW RUN: they are instruction-count loops on GPIP
+bit 5, which the zero-time model ends at the first poll — or, on a drive with no disk or no drive at all, never: the
+ROM's own count-down times out and forces the command (the arms). WHAT THE MID-BOOT CAPTURE HOLDS THAT NO SHORE DOES is
+then D1 alone (`END_APART`).
 
 WHERE OUR CODE LIES: over a copy of the image's ROM window at `LATE_LAID_AT` (`boot.overlaid`, A LABELLED STAGING),
 linked there by its own rule (`build/bootlate/`) with every callee-saved register fixed. Held: the ROM's own runs are
@@ -43,8 +39,8 @@ REFUSED BY NAME (the false green).
 WHAT IS HELD (`differences`): the stop; EVERY register; the megabyte and the addresses stored OUTSIDE THE BIOS STACK'S
 DEAD FRAMES (the mid-boot capture's own MASK field, `[$745a, $755a)`: below the stack's top at the stop, where the two
 shores' frames lie at different depths — our C calls GEMDOS's init from no frame, the ROM's from `$fc4a9e`'s `link`);
-every ordered ledger (the hardware writes, the declared reads, the modelled reads, the PSG's accesses); the faults; the
-answers in order with what each was asked; the floppy's calls. Instructions and cycles are the price, not a surface.
+every ordered ledger (the hardware writes, the declared reads, the modelled reads, the PSG's accesses, the FDC model's
+transactions); the chip the FDC model left; the faults; the answers in order with what each was asked. Instructions and cycles are the price, not a surface.
 """
 import functools
 import struct
@@ -83,13 +79,25 @@ ACSI_BOOT = (0xfc0558, 0xfc0586)        # `moveq #0,d7` .. its `rts`
 RESIDENT_SCAN = (0xfc0e56, 0xfc0e96)    # `movea.l phystop,a0` .. its `rts`
 THE_ROM_S_SPANS = (SPAN, GEMDOS_BUFFERS, CLOCK_DATE, FLOPPY_BOOT, ACSI_BOOT, RESIDENT_SCAN)
 
-# ---- THE ANSWERED ENTRIES -------------------------------------------------------------------------------------------------
+# ---- THE FLOPPY'S LOWER DRIVER, NO LONGER ANSWERED (ruling D4, R-D4-3): run as the ROM's through the kit's model ---------
 DRIVE_PROBE = 0xfc173a                  # hdv_init's `jsr` ($fc0f82): the drive's select, its restore, the FDC's waits
 DRIVE_PROBE_CALL = 0xfc0f82
 DRIVE_PROBE_DEVICE_AT = 12              # `tst.w 12(sp)` ($fc1740): the drive the probe asks after
 DRIVE_STATUS_LOAD = 0xfc0f96            # hdv_init's `adda.l #<the drives' status words>,a0`, the drive * 2 in A0
-DRIVE_PRESENT = 0                       # the probe's success exit ($fc1cda `clr.l d0`), what the capture holds for both
 FLOPRD_CALL = 0xfc15aa                  # hdv_boot's `jsr` of the driver's Floprd, the boot sector to `_dskbufp`
+FLOPRD_ENTRY = 0xfc1782                 # held to the machine's own XBIOS table (`aes_boot._xbios_entry`) by the battery
+
+# ---- THE FDC'S BYTES the batteries read the model's ledger in (WD1772 datasheet; the lower driver's own operands) -------
+WD1772_RESTORE = 0x03                   # `$00 | 3`: restore, the step rate `seekrate` (3) or'd in ($fc1da0)
+WD1772_SEEK = 0x13                      # `$10 | 3`: seek, no verify ($fc1d2e, and every exit's seek to the current track)
+WD1772_SEEK_VERIFY = 0x17               # `$14 | 3`: seek with verify ($fc1d7a)
+WD1772_READ_SECTOR = 0x80               # Floprd's `move.w #$80` command
+WD1772_SEEK_ERROR = 0xb0                # type I status: motor on, spun up, seek error (no TR00)
+FDC_DRIVE_SHIFT = 8                     # a ledger COMMAND's second word: drive << 8 | side
+DMA_BLOCK = (0xff8600, 0xff8610)        # the DMA chip's decode (kit fdc.h FDC_BLOCK_LO / FDC_BLOCK_HI)
+GPIP_INTRQ = 0x20                       # GPIP bit 5: the FDC's interrupt line, active low (kit fdc.h FDC_GPIP_INTRQ)
+
+# ---- ANSWERED ENTRIES ---------------------------------------------------------------------------------------------------
 ACSI_PROBE = CONSTANTS["ROM_ACSI_READ_BOOT_SECTOR"]
 CLOCK_PROBE = boot_launch.CLOCK_PROBE
 # THE ACSI PROBE'S "NO DEVICE": its first command byte never acknowledged — `$fc062a` polls GPIP bit 5 until `_hz_200`
@@ -104,11 +112,37 @@ ACSI_WAIT_ADD = 0xfc062a
 SR_CARRY = boot_launch.SR_CARRY
 TARGET_MASK = 0xff                      # the ACSI's target: D7's low byte
 ANSWER_LABEL = ("D3 THE WAITING ROUTINES ANSWERED AT THEIR ENTRIES on both shores (no interrupt is delivered: the slice "
-                "opens them and none arrives): the drive probe ($fc173a) — a drive answered, the capture's, for both "
-                "drives; the ACSI probe ($fc0586) — no device; D4 FLOPRD ($fc1782) off the capture's blank disk, drive "
-                "A: never logged in (R-B4-3); R-B4-2 THE CLOCK ($fc4c0c) — carry set. NOT LAID: the lower floppy "
-                "driver's own state and scratch, the probes' DMA/FDC writes. THE ORCHESTRATOR'S READING OF D3 (the user may "
-                "override): hdv_boot and hdv_init run as the ROM's, the waits below them answered")
+                "opens them and none arrives): the ACSI probe ($fc0586) — no device; R-B4-2 THE CLOCK ($fc4c0c) — carry "
+                "set. D4 (R-D4-1..3): THE FLOPPY RUN AS THE ROM'S THROUGH THE KIT'S FDC/DMA MODEL — hdv_init's drive "
+                "probe and hdv_boot's Floprd unanswered; a zero-time WD1772 + DMA, the capture's blank disk lent "
+                "read-only in drive A:; the chip and PSG port A carried from the ROM's own runs")
+
+# ---- THE FDC/DMA MODEL'S DRIVES (R-D4-1, R-D4-3): the capture's own, and the three arms the ROM's lower driver takes ------
+# THE CAPTURE'S (Hatari's default machine): the blank disk in drive A:, drive B: connected and EMPTY — its probe succeeds
+# (a restore needs no index pulse once A:'s spin-up turned the motor on), so both drives count, as the capture's do.
+Drives = namedtuple("Drives", "name drive_a drive_b")
+CAPTURE_DRIVES = "the capture's drives"
+B_ABSENT, A_ABSENT, A_EMPTY = "drive B: absent", "no drive at all", "drive A: empty"
+DRIVE_ARMS = (CAPTURE_DRIVES, B_ABSENT, A_ABSENT, A_EMPTY)
+
+
+@functools.cache
+def drives(arm=CAPTURE_DRIVES):
+    """The two bays of `arm` (`DRIVE_ARMS`): THE CAPTURE'S; DRIVE B: ABSENT (its restore steps 255 times and fails: one
+    drive counted); NO DRIVE AT ALL (A:'s spin-up never ends — the ROM's own count-down times out, `$D0` forces it);
+    DRIVE A: EMPTY, B: absent (A:'s spin-up and hdv_boot's seek-verify hang on no index pulse: the ROM's own timeouts).
+    The disk is THE CAPTURE'S BLANK DISK, lent read-only (`bytes`): a write to it is refused by the model."""
+    disk = bytes(the_disk())
+    bays = {CAPTURE_DRIVES: (emu.FdcDrive(disk), emu.FdcDrive(None)),
+            B_ABSENT: (emu.FdcDrive(disk), emu.FDC_ABSENT),
+            A_ABSENT: (emu.FDC_ABSENT, emu.FDC_ABSENT),
+            A_EMPTY: (emu.FdcDrive(None), emu.FDC_ABSENT)}
+    return Drives(arm, *bays[arm])
+
+
+# THE ARMS' BUDGETS: an arm whose waits time out spends the ROM's own count-down in instructions (measured: the drive A:
+# empty arm ~5.8 M on the ROM's shore) — over a slice's default budget.
+TIMEOUT_ARM_INSNS = 12_000_000
 
 # ---- OUR SIDE --------------------------------------------------------------------------------------------------------------
 ENTRY_SYMBOL = "boot_late_entry"
@@ -159,33 +193,33 @@ def the_disk():
     return aes_boot.blank_disk()
 
 
+def gpip_of(machine):
+    """GPIP's byte as the slice's machine declares it (B5's arm's: the monitor socket's bit 7 and the other bits'
+    mix) — its bit 5 the FDC model's while armed (R-D4-3)."""
+    return boot_display.GPIP_OF[DISPLAY_ARM[machine].monitor]
+
+
+@functools.cache
+def port_a_at_start(machine):
+    """PSG PORT A AT `$fc0452` on `machine`, FROM THE ROM'S OWN RUNS (R-D4-2): the head's store, carried through B3's own
+    read-modify-writes (`boot_chain`'s chained ROM boot) — not B3's declared seed, which is B3's battery's alone."""
+    import boot_chain                   # (it imports this module: the carry is read off its ROM chain, lazily)
+    return boot_chain.rom_port_a_entering_b6(boot_chain.Chain(machine, DISPLAY_ARM[machine]))
+
+
 # ---- THE ANSWERS -------------------------------------------------------------------------------------------------------
 def _returned(registers, ram, sp):
     """The answered routine's `rts`: the PC its caller's call pushed, the stack above it."""
     return {**registers, "pc": case.long_in(ram, sp) & BUS, "isp": sp + LONG_BYTES}
 
 
-def answered(machine, floppy_memory=None):
+def answered(machine):
     """`machine` standing at an answered entry, ANSWERED: `(the machine past the routine's return, the ledger entry, the
-    RAM runs the answer laid)`. The floppy's answer reads and lays through `aes_boot.Floppy`'s own model."""
+    RAM runs the answer laid)`."""
     registers, ram = dict(machine.registers), bytearray(machine.ram)
     pc, sp = registers["pc"], registers["isp"]
     laid = ()
-    if pc == DRIVE_PROBE:
-        drive = case.word_in(ram, sp + DRIVE_PROBE_DEVICE_AT)
-        registers["d0"] = DRIVE_PRESENT
-        asked = ("the drive probe", drive)
-    elif pc == FLOPRD_ENTRY:
-        memory = bytearray(BASE_IMAGE)
-        memory[:RAM_BYTES] = ram
-        floppy = boot_launch.NeverLoggedIn(memory, the_disk())
-        answer, _to = floppy.served(FLOPRD_ENTRY, sp)
-        laid = floppy.laid_by_the_last_call()
-        for at, data in laid:
-            ram[at:at + len(data)] = data
-        registers["d0"] = answer & aes_boot.LONG_MASK
-        asked = ("Floprd", *floppy.calls[-1]) if floppy.calls else ("Floprd",)
-    elif pc == ACSI_PROBE:
+    if pc == ACSI_PROBE:
         registers.update(ACSI_NO_DEVICE, sr=registers["sr"] & ~CCR_XNZVC | CCR_N)
         ram[addrs.SYSVAR_FLOCK] = 0
         laid = ((addrs.SYSVAR_FLOCK, b"\0"),)
@@ -199,8 +233,7 @@ def answered(machine, floppy_memory=None):
     return left, asked, tuple((at, len(data)) for at, data in laid)
 
 
-FLOPRD_ENTRY = 0xfc1782                 # held to the machine's own XBIOS table (`aes_boot._xbios_entry`) by the battery
-ANSWERED = frozenset({DRIVE_PROBE, FLOPRD_ENTRY, ACSI_PROBE, CLOCK_PROBE})
+ANSWERED = frozenset({ACSI_PROBE, CLOCK_PROBE})
 # ...AND ONE ENTRY OBSERVED, NOT ANSWERED: the cartridge's hooks, run as the ROM's, their init bit (D0's low word) put
 # in the ledger at each arrival — with no cartridge (D2: the port reads 0) the bit is read by nothing, so the ledger is
 # the one surface that holds it (measured: a hook bit mutated survived every other surface).
@@ -224,6 +257,40 @@ def observed(machine):
     if registers["pc"] == DSETDRV:
         return ("Dsetdrv", case.word_in(machine.ram, registers["isp"] + DSETDRV_DRIVE_AT))
     return ("GEMDOS's init",)
+
+# ---- THE FLOPRD CROSS-CHECK: the model's read of the blank disk against `aes_boot.Floppy`'s, one machine ---------------
+FloprdCheck = namedtuple("FloprdCheck", "asked laid served model_d0 served_d0")
+FloprdCheck.__doc__ = """hdv_boot's Floprd on the ROM's shore, at its entry: what it `asked` (`aes_boot.Floppy`'s call record), the
+RAM runs the device model `laid` and what it `served` (D0); and what the ROM's own Floprd, run on through the FDC model to
+its return, left at those same runs (`model_d0`, and `laid` read back off the machine: `FloprdCheck.model_bytes`)."""
+
+
+def floprd_cross_check(machine, drive_arm=CAPTURE_DRIVES):
+    """THE ROM'S OWN FLOPRD THROUGH THE FDC MODEL against `aes_boot.Floppy`'s answer (the one B6 retired, R-D4-3), from
+    the one machine standing at Floprd's entry (`$fc1782`, the boot sector to `_dskbufp`): `(FloprdCheck, the bytes the
+    model's run left at each laid run, the machine the ROM's Floprd returned — so a caller reads its D0 off the run
+    itself)`. One call at CHS 0/0/1 (image offset 0): it does not exercise the track / side mapping."""
+    carry, drive_arm, gpip = entry_carry(machine), drives(drive_arm), gpip_of(machine)
+    budget = _budget(drive_arm.name)
+    standing = start_of(machine)
+    while True:
+        done = boot.run(standing, {FLOPRD_ENTRY} | ANSWERED, budget=budget, **floppy_declared(drive_arm, carry, gpip))
+        carry = carried(done, carry)
+        if done.stop == FLOPRD_ENTRY:
+            break
+        standing, _asked, _runs = answered(done.machine)
+    at_entry = done.machine
+    memory = bytearray(BASE_IMAGE)
+    memory[:RAM_BYTES] = at_entry.ram
+    floppy = boot_launch.NeverLoggedIn(memory, the_disk())
+    served, returns_to = floppy.served(FLOPRD_ENTRY, at_entry.registers["isp"])
+    laid = floppy.laid_by_the_last_call()
+    returned = boot.run(at_entry, {returns_to}, budget=budget, **floppy_declared(drive_arm, carry, gpip))
+    ram = returned.machine.ram
+    check = FloprdCheck(floppy.calls[-1], tuple((at, len(data)) for at, data in laid), dict(laid),
+                        returned.machine.registers["d0"], served & aes_boot.LONG_MASK)
+    return check, {at: ram[at:at + length] for at, length in check.laid}, returned.machine
+
 
 # ---- THE TWO SHORES --------------------------------------------------------------------------------------------------------
 Shore = namedtuple("Shore", "slice own answers")
@@ -251,24 +318,43 @@ def _with_stores(slice_, runs):
     return slice_._replace(stored=stopped_cpu.address_runs(sorted(stored)))
 
 
-def _legs(machine, until, laid, own, not_ran, observing):
+Carry = namedtuple("Carry", "port_a chip")
+Carry.__doc__ = """WHAT A RUN HANDS THE NEXT (R-D4-2), from the ROM's own runs: PSG port A (its last store) and the FDC/DMA model's
+chip (`emu.fdc_state()` bytes; None = MR's power-on chip, the reset's — no slice before B6 touches the FDC)."""
+
+
+def floppy_declared(drive_arm, carry, gpip):
+    """`boot.run`'s keywords for one leg through the FDC model: port A and the chip carried in, GPIP's other bits."""
+    return dict(psg_seed={addrs.PSG_PORT_A: carry.port_a}, hw_seed={addrs.MFP_GPIP: gpip},
+                fdc=boot.Fdc(drive_arm.drive_a, drive_arm.drive_b, carry.chip))
+
+
+def carried(done, carry):
+    """The carry `done` (a leg's `Slice`) hands the next leg: port A after it, the chip it left."""
+    return Carry(boot.port_a_after(done, carry.port_a), done.fdc_chip)
+
+
+def _legs(machine, until, laid, own, not_ran, observing, drive_arm, carry, gpip, budget=boot.SLICE_INSNS):
     """`machine` run to `until`, leg by leg — a leg stopped at an answered entry continues from its answer, one stopped at
-    an observed entry (where `observing`) from where it stands — each leg profiled: `(Shore of the legs joined, its own
-    cycles `own`'s summed)`."""
+    an observed entry (where `observing`) from where it stands — each leg profiled and run THROUGH THE FDC MODEL, port A
+    and the chip carried leg to leg (every leg is a run): `(Shore of the legs joined, its own cycles `own`'s summed, the
+    carry it leaves)`."""
     legs, spent, answers, laid_runs = [], 0, [], []
     stops = {until} | ANSWERED | (OBSERVED if observing else frozenset())
     while True:
+        declared = floppy_declared(drive_arm, carry, gpip)
         if laid:
-            done = boot.run(machine, stops, laid=laid)
+            done = boot.run(machine, stops, budget=budget, laid=laid, **declared)
             spent += _vet_who_ran(machine.label, own, not_ran)
         else:
             emu.prof_enable(True)
             emu.prof_reset()
             try:
-                done = boot.run(machine, stops)
+                done = boot.run(machine, stops, budget=budget, **declared)
                 spent += _spans_cycles(own)
             finally:
                 emu.prof_enable(False)
+        carry = carried(done, carry)
         legs.append(done)
         if done.stop == until:
             break
@@ -282,41 +368,55 @@ def _legs(machine, until, laid, own, not_ran, observing):
     joined = legs[0]
     for later in legs[1:]:
         joined = boot_hwinit.joined(joined, later)
-    return Shore(_with_stores(joined, laid_runs), spent, tuple(answers))
+    return Shore(_with_stores(joined, laid_runs), spent, tuple(answers)), carry
 
 
-def _run(machine, until, laid, own, not_ran):
+def _run(machine, until, laid, own, not_ran, drive_arm, carry, gpip, budget=boot.SLICE_INSNS):
     """THE SHORE: run once with every observed entry a stop — for the LEDGER — and once without — for the PRICE: a leg
     resumed where it stopped counts its step-off segment again (measured: +1 instruction, +40 cycles an arrival, on both
     shores alike), so the price and the machine are the plain run's. The two are held to leave the same machine and
     the same answers (refused by name otherwise)."""
-    watched = _legs(machine, until, laid, own, not_ran, observing=True)
-    plain = _legs(machine, until, laid, own, not_ran, observing=False)
-    if (watched.slice.machine, watched.slice.stored) != (plain.slice.machine, plain.slice.stored) \
+    args = (machine, until, laid, own, not_ran)
+    watched, _carry = _legs(*args, observing=True, drive_arm=drive_arm, carry=carry, gpip=gpip, budget=budget)
+    plain, left = _legs(*args, observing=False, drive_arm=drive_arm, carry=carry, gpip=gpip, budget=budget)
+    if (watched.slice.machine, watched.slice.stored, watched.slice.fdc_events, watched.slice.fdc_chip) \
+            != (plain.slice.machine, plain.slice.stored, plain.slice.fdc_events, plain.slice.fdc_chip) \
             or [asked for asked in watched.answers if asked[0] not in OBSERVED_NAMES] != list(plain.answers):
         raise boot.Refused(f"{machine.label}: the run watched at its observed entries is not the run unwatched")
-    return plain._replace(answers=watched.answers)
+    return plain._replace(answers=watched.answers), left
 
 
-def the_rom_s(machine, laid=None):
+def _budget(drive_arm):
+    return boot.SLICE_INSNS if drive_arm == CAPTURE_DRIVES or drive_arm == B_ABSENT else TIMEOUT_ARM_INSNS
+
+
+def entry_carry(machine):
+    """THE CARRY INTO `$fc0452` on `machine`: port A from the ROM's chained boot, MR's chip (`Carry`)."""
+    return Carry(port_a_at_start(machine), None)
+
+
+def the_rom_s(machine, laid=None, drive_arm=CAPTURE_DRIVES):
     """The ROM's own slice on `machine` from its machine at `$fc0452` to `$fc047a` (`laid`: with an overlay it must not
-    reach — the ROM's shore with and without it)."""
-    return _run(start_of(machine), SPAN[1], laid, THE_ROM_S_SPANS, (our_span(laid),) if laid else ())
+    reach — the ROM's shore with and without it), the floppy through the FDC model on `drive_arm`'s drives."""
+    shore, _left = _run(start_of(machine), SPAN[1], laid, THE_ROM_S_SPANS, (our_span(laid),) if laid else (),
+                        drives(drive_arm), entry_carry(machine), gpip_of(machine), _budget(drive_arm))
+    return shore
 
 
-def our_side(machine, code=None):
+def our_side(machine, code=None, drive_arm=CAPTURE_DRIVES):
     """OUR slice on `machine` from the same machine, on its overlay (the product, or `code`), entered at our entry where
     the ROM's stands; refused by name if it ran a cycle of the ROM's slice or of the routines it ports."""
     laid = overlay(code)
     entered = boot.entered_at(start_of(machine), product().base)
     entered = entered._replace(label=f"{entered.label}; {laid.label}")
-    shore = _run(entered, SPAN[1], laid, (our_span(laid),), THE_ROM_S_SPANS)
+    shore, _left = _run(entered, SPAN[1], laid, (our_span(laid),), THE_ROM_S_SPANS, drives(drive_arm),
+                        entry_carry(machine), gpip_of(machine), _budget(drive_arm))
     assert shore.own, f"{entered.label}: the run never executed our code"
     return shore
 
 
 # ---- WHAT IS HELD ------------------------------------------------------------------------------------------------------------
-SURFACES, LEDGERS = boot_hwinit.SURFACES, boot_hwinit.LEDGERS
+SURFACES, LEDGERS = (*boot_hwinit.SURFACES, "fdc_chip"), boot_hwinit.LEDGERS
 STACK_RESIDUE = next((base, base + size) for base, size, _name in midboot_snapshot.MASK
                      if base + size == midboot_snapshot.BIOS_STACK_TOP)
 
@@ -350,20 +450,24 @@ def differences(the_rom_s, ours):
     for surface in LEDGERS:
         if getattr(rom, surface) != getattr(mine, surface):
             found.append(f"{surface}: {len(getattr(rom, surface) or ())} against ours {len(getattr(mine, surface) or ())}")
+    if rom.fdc_chip != mine.fdc_chip:
+        found.append("fdc_chip: the FDC/DMA chip the two shores left differs")
     if ours.answers != the_rom_s.answers:
         found.append(f"answers: the ROM's {the_rom_s.answers}, ours {ours.answers}")
     return found
 
 
 # ---- THE END SURFACE: the mid-boot capture ------------------------------------------------------------------------------------
-# WHAT THE CAPTURE HOLDS THAT NO SHORE DOES, by class (measured on COLD — the capture is a power-on's boot): D1's flat
-# megabyte (the cold arm's own memctrl, `$08` where the capture's ST holds `$05`: in D6 and its two stores) and D4's lower
-# floppy driver (its scratch D2 and A1, and its own state in [$9f6, $a54): the retry count, the request, the error codes,
-# the register save area, the drives' records — the bytes no answer lays).
-END_REGISTERS_OWED = {"d6": "D1: the cold arm's memctrl on the flat megabyte", "d2": "D4: the lower floppy driver's scratch",
-                      "a1": "D4: the lower floppy driver's record of the drive"}
-# ...memctrl itself and its copy in D6's low byte where the BIOS framed D6 below savptr ($93a) on a call GEMDOS made.
+# WHAT THE CAPTURE HOLDS THAT NO SHORE DOES (measured on COLD — the capture is a power-on's boot): D1's flat megabyte
+# ALONE — the cold arm's own memctrl, `$08` where the capture's ST holds `$05`: in D6, memctrl itself, D6's copy where the
+# BIOS framed D6 below savptr ($93a) on a call GEMDOS made, and D6's low byte in the LOWER FLOPPY DRIVER'S register save
+# area (`$a28`: its `movem.l d3-d7/a3-a6` keeps the caller's D6 at `$a34`). D4's class — the lower driver's own state in
+# [$9f6, $a54) and its scratch D2 / A1 — is GONE since the driver runs as the ROM's through the kit's FDC model (R-D4-3),
+# PSG port A carried from the ROM's own stores (R-D4-2: D2 is port A's value before the driver's last select).
+END_REGISTERS_OWED = {"d6": "D1: the cold arm's memctrl on the flat megabyte"}
 MEMCTRL_COPIES = (CONSTANTS["SYSVAR_MEMCTRL"], 0x91b)
+LOWER_DRIVER_SAVED_D6_LOW = 0xa37       # $a28 + 3 longs (d3, d4, d5) + 3: D6's low byte in the driver's save area
+END_APART = (*MEMCTRL_COPIES, LOWER_DRIVER_SAVED_D6_LOW)
 LOWER_DRIVER_STATE = (0x9f6, 0xa54)
 
 
