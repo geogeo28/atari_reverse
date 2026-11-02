@@ -6,6 +6,7 @@
  * (detected via a sentinel return address), and leaves final memory in the shared buffer.
  */
 #include <stdint.h>
+#include <string.h>
 #include "m68k.h"
 /* The oracle's CPU takes no trace exception — a stated modelling decision (TRAP_MODEL.md, "The CPU
  * configuration"), set by -DM68K_EMULATE_TRACE=0 in kit.mk's OCFLAGS. m68k.h pulls in m68kconf.h,
@@ -25,6 +26,7 @@
  * unit that includes os.h, and a build flag can be forgotten where an adjacent #define cannot. */
 #define OS_NO_REFUSAL_TALLY 1
 #include "os.h"
+#include "fdc.h"   /* the FDC/DMA transaction model (Phase 17), wired below the PSG's */
 
 static uint8_t *g_mem;
 static uint32_t g_size;
@@ -1168,10 +1170,139 @@ static int in_rom(unsigned int a, unsigned int n) {
  * a project that has never heard of one pays one predictable compare per memory access. */
 #define SCHED_READ_TICK(a) do { if (g_sched_read_n) sched_read_fire(a); } while (0)
 
+/* --- the FDC/DMA TRANSACTION MODEL (TRAP_MODEL.md, "Phase 17"; include/fdc.h) ---------------------
+ * The WD1772 and the DMA chip, zero-time, as src/fdc.c models them — wired here, and ONLY WHILE A CASE
+ * HAS ARMED IT (ruling R-D4-1). Unarmed, `g_fdc_armed` is the one extra compare an I/O access pays, and
+ * every access takes the path it took before this block existed: $ff8604 reads are the declared map's
+ * (or a counted unmodeled 0), writes are dropped into the Phase-10 ledger, $fffa01 is Phase 7's slot.
+ *
+ * ARMED, the model owns the DMA block $ff8600..$ff860f (an access it does not model there is refused,
+ * not passed through) and BIT 5 OF GPIP (R-D4-3); a word or long read covering GPIP is refused. The other
+ * seven GPIP bits are still the case's Phase-7 declaration of the slot (refused as unseeded when
+ * undeclared, exactly as hw_read refuses them), but a poll is served and LEDGERED here, run-length, and
+ * never in Phase 7's per-read slot ledger, which one timeout (262,143 polls) would overflow sixty times. Writes to the
+ * model's registers still land in the Phase-10 write ledger too: a command store is a compared fact
+ * whichever model consumed it.
+ *
+ * WHAT A RUN STARTS FROM. The chip a run starts from is the DECLARED one (`osh_fdc_declare`; arming
+ * declares MR's power-on chip), re-installed by every run as every other model's seed is — two runs of
+ * one declaration start identical whatever ran between them. What the run LEFT is `osh_fdc_chip_now`,
+ * which a harness carries into the next slice by declaring it (R-D4-2). The drive bays are the case's
+ * (`osh_fdc_drive`) and persist until it changes them or disarms. */
+static void logw(uint32_t a);
+static fdc_device g_fdc;
+static fdc_chip   g_fdc_declared;    /* the chip each run starts from */
+static int        g_fdc_armed;
+/* Declarations a run would silently bypass while armed — an io_seed constant or sequence on a register
+ * the model owns, or a sequence on GPIP (whose bit 5 is the model's) — refused rather than ignored. */
+static uint32_t   g_fdc_conflicts;
+static uint32_t   g_fdc_conflict_first;
+
+static void fdc_stored(uint32_t addr) { logw(addr); }
+
+/* PSG port A as the chip's pins see it: the direct path's register file, known or not. */
+static int fdc_port_a(uint8_t *value) {
+    if (!(g_psg_known & (1u << FDC_PSG_PORT_A)))
+        return 0;
+    *value = g_psg_file[FDC_PSG_PORT_A];
+    return 1;
+}
+
+static fdc_bus fdc_bus_now(void) {
+    fdc_bus bus = { g_mem, g_ram_end, fdc_stored, fdc_port_a };
+    return bus;
+}
+
+static void fdc_note_conflict(uint32_t addr) {
+    if (!g_fdc_conflicts++)
+        g_fdc_conflict_first = addr;
+}
+
+static void fdc_enter_run_shim(void) {
+    g_fdc_conflicts = 0;
+    g_fdc_conflict_first = 0;
+    if (!g_fdc_armed) {
+        g_fdc.log_n = g_fdc.log_dropped = 0;    /* an unarmed run's ledger is empty, not the last one's */
+        g_fdc.refused = g_fdc.refused_at = 0;
+        return;
+    }
+    fdc_enter_run(&g_fdc, &g_fdc_declared);
+    for (uint32_t i = 0; i < g_io_n; i++)
+        if (fdc_owns(g_io_addr[i], 1)) fdc_note_conflict(g_io_addr[i]);
+    for (uint32_t i = 0; i < g_io_seq_n; i++)
+        if (fdc_owns(g_io_seq_addr[i], 1) || g_io_seq_addr[i] == FDC_MFP_GPIP)
+            fdc_note_conflict(g_io_seq_addr[i]);
+}
+
+/* GPIP while armed: the case's declared byte, bit 5 the chip's — Phase 7's unseeded and stale rules
+ * kept for the declared half, its per-read ledger replaced by the model's run-length one. */
+static unsigned int fdc_gpip_read(void) {
+    uint32_t bit = 1u << OS_HW_SLOT_MFP_GPIP;
+    uint8_t declared = 0;
+    if (g_hw_known & bit) declared = g_hw_file[OS_HW_SLOT_MFP_GPIP];
+    else                  g_hw_unseeded |= bit;
+    if (g_hw_written & bit) g_hw_stale |= bit;
+    return fdc_gpip(&g_fdc, declared);
+}
+
+static int fdc_takes(uint32_t bus_addr, unsigned width) { return g_fdc_armed && fdc_owns(bus_addr, width); }
+
+/* A word or long read covering GPIP while armed: the model owns bit 5 of a BYTE, and the even half of
+ * such a word is no register it serves — refused by name rather than composed (R-D4-3). */
+static int fdc_gpip_wide(uint32_t bus_addr, unsigned width) {
+    if (!g_fdc_armed || !fdc_covers_gpip(bus_addr, width))
+        return 0;
+    fdc_refuse_gpip_wide(&g_fdc, bus_addr, width);
+    return 1;
+}
+
+static unsigned int fdc_bus_read(uint32_t bus_addr, unsigned width) {
+    fdc_bus bus = fdc_bus_now();
+    return fdc_read(&g_fdc, &bus, bus_addr, width);
+}
+
+static void fdc_bus_write(uint32_t bus_addr, unsigned width, uint32_t value) {
+    fdc_bus bus = fdc_bus_now();
+    fdc_write(&g_fdc, &bus, bus_addr, width, value);
+}
+
+/* ARMING: on = the model owns its registers from the next run, the chip declared as MR leaves it and
+ * both bays empty-and-absent until the case fills them; off = every path back to the unarmed one, and
+ * the bays forgotten, so no image pointer outlives the case that lent it. Either way the chip a previous
+ * case LEFT is dropped too (MR's again), so no stale chip can be read back as this case's. */
+void osh_fdc_arm(int on) {
+    g_fdc_armed = on != 0;
+    memset(g_fdc.drive, 0, sizeof g_fdc.drive);
+    fdc_power_on(&g_fdc_declared);
+    fdc_power_on(&g_fdc.chip);
+}
+int      osh_fdc_armed(void)       { return g_fdc_armed; }
+uint32_t osh_fdc_chip_bytes(void)  { return (uint32_t)sizeof(fdc_chip); }
+uint32_t osh_fdc_image_bytes(void) { return FDC_IMAGE_BYTES; }
+void     osh_fdc_power_on(uint8_t *out)        { fdc_chip chip; fdc_power_on(&chip); memcpy(out, &chip, sizeof chip); }
+void     osh_fdc_declare(const uint8_t *chip)  { memcpy(&g_fdc_declared, chip, sizeof g_fdc_declared); }
+void     osh_fdc_chip_now(uint8_t *out)        { memcpy(out, &g_fdc.chip, sizeof g_fdc.chip); }
+uint32_t osh_fdc_drive(uint32_t drive, uint8_t *image, uint32_t bytes, uint32_t present, uint32_t inserted,
+                       uint32_t write_protected, uint32_t read_only) {
+    return fdc_insert(&g_fdc, drive, image, bytes, present, inserted, write_protected, read_only);
+}
+uint32_t        osh_fdc_log_count(void)     { return g_fdc.log_n; }
+uint32_t        osh_fdc_log_max(void)       { return FDC_LOG_MAX; }
+uint32_t        osh_fdc_log_dropped(void)   { return g_fdc.log_dropped; }
+const uint8_t  *osh_fdc_log_kinds(void)     { return g_fdc.log_kind; }
+const uint32_t *osh_fdc_log_a(void)         { return g_fdc.log_a; }
+const uint32_t *osh_fdc_log_b(void)         { return g_fdc.log_b; }
+uint32_t        osh_fdc_refused(void)       { return g_fdc.refused; }
+uint32_t        osh_fdc_refused_at(void)    { return g_fdc.refused_at; }
+uint32_t        osh_fdc_conflicts(void)     { return g_fdc_conflicts; }
+uint32_t        osh_fdc_conflict_first(void){ return g_fdc_conflict_first; }
+
 unsigned int m68k_read_memory_8(unsigned int a) {
     SCHED_READ_TICK(a);
     if (a < g_ram_end) return g_mem[a];
     uint32_t lo = a & BUS_ADDR_MASK;               /* the 68000 aliases $ffff88xx to $ff88xx */
+    if (g_fdc_armed && lo == FDC_MFP_GPIP) return fdc_gpip_read();   /* Phase 17, armed only */
+    if (fdc_takes(lo, 1)) return fdc_bus_read(lo, 1);
     if (lo == OS_PSG_PORT_SELECT) return psg_read_back();
     /* The seeded-hardware model (Phase 7). Ahead of the audio-capture mode, which no longer has a
      * switch of its own here: it arms this same model with a seed (see hw_enter_run). */
@@ -1195,6 +1326,8 @@ unsigned int m68k_read_memory_16(unsigned int a) {
     SCHED_READ_TICK(a);
     note_width_access(a);
     if (a + 1 < g_ram_end) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
+    if (fdc_gpip_wide(a & BUS_ADDR_MASK, 2)) return 0;                              /* Phase 17, armed only */
+    if (fdc_takes(a & BUS_ADDR_MASK, 2)) return fdc_bus_read(a & BUS_ADDR_MASK, 2);
     unsigned int declared;
     if (io_serve(a, 2, &declared)) return declared;   /* the device first; see read_memory_8 */
     if (in_rom(a, 2)) return (unsigned)(g_mem[a] << 8 | g_mem[a + 1]);
@@ -1206,6 +1339,8 @@ unsigned int m68k_read_memory_32(unsigned int a) {
     SCHED_READ_TICK(a);
     note_width_access(a);
     if (a + 3 >= g_ram_end) {
+        if (fdc_gpip_wide(a & BUS_ADDR_MASK, 4)) return 0;                            /* Phase 17, armed only */
+        if (fdc_takes(a & BUS_ADDR_MASK, 4)) return fdc_bus_read(a & BUS_ADDR_MASK, 4);   /* refused: a long */
         unsigned int declared;
         if (io_serve(a, 4, &declared)) return declared;   /* the device first; see read_memory_8 */
         if (in_rom(a, 4))
@@ -1303,6 +1438,7 @@ void m68k_write_memory_8(unsigned int a, unsigned int v) {
     }
     if (a < g_ram_end) { g_mem[a] = (uint8_t)v; logw(a); return; }
     if (in_rom(a, 1)) { g_rom_stores++; return; }   /* ROM MODE: a store to ROM changes nothing */
+    if (fdc_takes(a & BUS_ADDR_MASK, 1)) fdc_bus_write(a & BUS_ADDR_MASK, 1, v);   /* ...and ledgered below */
     psg_note_unmodeled(a, 1);   /* the odd aliases $ff8801/$ff8803, whose decoding is not modeled */
     hw_note_write(a, 1);        /* dropped like any hardware write, but it makes a seed stale */
     io_note_written(a, 1, v);   /* ...and a DECLARED I/O byte LATCHES it, or goes stale (Phase 15) */
@@ -1312,6 +1448,7 @@ void m68k_write_memory_16(unsigned int a, unsigned int v) {
     note_width_access(a);
     if (a + 1 < g_ram_end) { g_mem[a] = (uint8_t)(v >> 8); g_mem[a + 1] = (uint8_t)v; logw(a); logw(a + 1); return; }
     if (in_rom(a, 2)) { g_rom_stores++; return; }
+    if (fdc_takes(a & BUS_ADDR_MASK, 2)) fdc_bus_write(a & BUS_ADDR_MASK, 2, v);   /* ...and ledgered below */
     psg_note_unmodeled(a, 2);                      /* only the byte PSG protocol is modeled */
     hw_note_write(a, 2);
     io_note_written(a, 2, v);
@@ -1321,6 +1458,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) {
     note_width_access(a);
     if (a + 3 >= g_ram_end) {
         if (in_rom(a, 4)) { g_rom_stores++; return; }
+        if (fdc_takes(a & BUS_ADDR_MASK, 4)) fdc_bus_write(a & BUS_ADDR_MASK, 4, v);   /* ...and ledgered below */
         psg_note_unmodeled(a, 4);
         hw_note_write(a, 4);
         io_note_written(a, 4, v);
@@ -1491,6 +1629,7 @@ static void enter_from_reset(void) {
     hw_enter_run();
     io_enter_run();
     sched_enter_run();
+    fdc_enter_run_shim();   /* after io_enter_run: it reads the declarations it may conflict with */
 }
 
 /* The Malloc arena's base and the bump pointer walking up from it. The BASE is per project and is

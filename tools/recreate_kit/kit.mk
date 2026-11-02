@@ -104,16 +104,19 @@ $(GENDIR)/m68kops.c: $(MUSASHI)/m68kmake.c $(MUSASHI)/m68k_in.c
 # which would make the behavioural pin over that flag look non-vacuous when it was never rebuilt.
 # The GEM/VDI model and the raster core underneath it are SHARED SOURCES, compiled into the oracle
 # here and swept into every candidate by SRC above — that is what makes "both sides draw the same
-# pixels" true by construction rather than by two transcriptions agreeing (include/raster.h). They
-# are the only kit `src/` files the oracle links: the rest (the refusal tally, the Dosound and event
-# ledgers, the heap) are the CANDIDATE's halves of models the shim mirrors itself.
-ORACLE_SHARED_SRC := $(KIT)/src/gem.c $(KIT)/src/raster.c
+# pixels" true by construction rather than by two transcriptions agreeing (include/raster.h). The
+# FDC/DMA model (include/fdc.h, TRAP_MODEL.md "Phase 17") is the third, for the same reason; the shim
+# wires it, a candidate links it unwired until a host-C row needs the device. These three are the only
+# kit `src/` files the oracle links: the rest (the refusal tally, the Dosound and event ledgers, the
+# heap) are the CANDIDATE's halves of models the shim mirrors itself.
+ORACLE_SHARED_SRC := $(KIT)/src/gem.c $(KIT)/src/raster.c $(KIT)/src/fdc.c
 
 # move16_guard.c is the one CPU correction the oracle carries over upstream Musashi (it says why it is
 # not an edit of the untracked clone): `$F620..$F627` take the Line-F exception on the 68000.
 ORACLE_CPU_FIX := $(KIT)/oracle/move16_guard.c
 
-$(ORACLE): $(KIT)/oracle/shim.c $(ORACLE_CPU_FIX) $(KIT)/include/os.h $(KIT)/include/raster.h $(ORACLE_SHARED_SRC) \
+$(ORACLE): $(KIT)/oracle/shim.c $(ORACLE_CPU_FIX) $(KIT)/include/os.h $(KIT)/include/raster.h $(KIT)/include/fdc.h \
+           $(ORACLE_SHARED_SRC) \
            $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/kit.mk
 	$(CC) $(OCFLAGS) -shared \
 	  $(MUSASHI)/m68kcpu.c $(GENDIR)/m68kops.c $(MUSASHI)/softfloat/softfloat.c $(KIT)/oracle/shim.c $(ORACLE_CPU_FIX) \

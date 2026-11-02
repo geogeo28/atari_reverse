@@ -8,7 +8,7 @@ Unicorn's ColdFire-derived core, which mis-handles byte memory read-modify-write
 import contextlib
 import ctypes
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional, Union
 
 import loader   # bound by recreate_kit.project.load() before this module is first imported
 from recreate_kit import os_map    # the poked-input block + the pure overlap arithmetic below
@@ -589,6 +589,38 @@ for _symbol in ("osh_io_seq_count", "osh_io_seq_max", "osh_io_seq_pool_max", "os
 IO_SEQ_MAX = _LIB.osh_io_seq_max()
 IO_SEQ_POOL_MAX = _LIB.osh_io_seq_pool_max()
 
+# ...and the FDC/DMA TRANSACTION MODEL (TRAP_MODEL.md, Phase 17; include/fdc.h). Required, not probed:
+# `fdc_arm` is the only door to the device, and an .so without it would leave a case that believes it
+# armed the model reading $ff8604 as an unmodeled 0 — every floppy transfer it vouched for invented.
+_FDC_MODEL_ABI = ("osh_fdc_arm", "osh_fdc_armed", "osh_fdc_chip_bytes", "osh_fdc_image_bytes",
+                  "osh_fdc_power_on", "osh_fdc_declare", "osh_fdc_chip_now", "osh_fdc_drive",
+                  "osh_fdc_log_count", "osh_fdc_log_max", "osh_fdc_log_dropped", "osh_fdc_log_kinds",
+                  "osh_fdc_log_a", "osh_fdc_log_b", "osh_fdc_refused", "osh_fdc_refused_at",
+                  "osh_fdc_conflicts", "osh_fdc_conflict_first")
+_missing_fdc_model = [sym for sym in _FDC_MODEL_ABI if not hasattr(_LIB, sym)]
+if _missing_fdc_model:
+    raise _stale_oracle(
+        "/".join(_missing_fdc_model),
+        "so it predates the FDC/DMA model: `fdc_arm` would arm nothing and every floppy register a "
+        "case meant the model to serve would answer an unmodeled 0.")
+_LIB.osh_fdc_arm.argtypes = [ctypes.c_int]
+_LIB.osh_fdc_drive.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+                               ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+for _symbol in ("osh_fdc_power_on", "osh_fdc_declare", "osh_fdc_chip_now"):
+    getattr(_LIB, _symbol).argtypes = [_u8p]
+for _symbol in ("osh_fdc_chip_bytes", "osh_fdc_image_bytes", "osh_fdc_drive", "osh_fdc_log_count",
+                "osh_fdc_log_max", "osh_fdc_log_dropped", "osh_fdc_refused", "osh_fdc_refused_at",
+                "osh_fdc_conflicts", "osh_fdc_conflict_first"):
+    getattr(_LIB, _symbol).restype = ctypes.c_uint32
+_LIB.osh_fdc_log_kinds.restype = _u8p
+_LIB.osh_fdc_log_a.restype = _u32p
+_LIB.osh_fdc_log_b.restype = _u32p
+# Read from the .so rather than restated (IO_SEED_MAX's argument): the chip's saved size, the one
+# geometry the medium may have, and the ledger's cap are fdc.h's, and a second copy here could drift.
+FDC_CHIP_BYTES = _LIB.osh_fdc_chip_bytes()
+FDC_IMAGE_BYTES = _LIB.osh_fdc_image_bytes()
+FDC_LOG_MAX = _LIB.osh_fdc_log_max()
+
 for _symbol in ("osh_io_unmodeled_reads", "osh_io_unmodeled_first"):
     if not hasattr(_LIB, _symbol):
         raise _stale_oracle(
@@ -764,6 +796,9 @@ def _bench_result(status, out, entry, max_insns):
     """The reported shape of one bench segment, or the raise for a run that stopped at neither the
     sentinel nor the door. ``entry`` names the function in that message."""
     _vet_bench_schedule(status, entry)
+    fdc_refused = fdc_causes()
+    if fdc_refused:              # the FDC model's refusals sink a bench segment as they sink a run (Phase 17)
+        raise RuntimeError(f"recon fn @ {entry:#x}: " + "; also, ".join(fdc_refused))
     if status == BENCH_INSNS_EXHAUSTED:
         raise RuntimeError(f"recon fn @ {entry:#x} did not return to the sentinel within "
                            f"{max_insns} instructions")
@@ -1623,6 +1658,175 @@ def io_events():
     return [(addrs[i], widths[i], vals[i]) for i in range(n)]
 
 
+# ---- the FDC/DMA TRANSACTION MODEL (TRAP_MODEL.md, Phase 17) -----------------------------------------
+# fdc.h's ledger kinds and refusal codes, by name. Mirrors of an enum the .so does not export; each is
+# held to fdc.h's own text by test/test_fdc_model.py, so a renumbered enum reddens there.
+FDC_EVENTS = {1: "command", 2: "done", 3: "hang", 4: "forced", 5: "dma_in", 6: "dma_out", 7: "read", 8: "poll",
+              9: "hdc"}
+FDC_REFUSALS = {
+    1: "an access to the DMA block $ff8600..$ff860f the model does not serve (detail: width << 24 | address) — "
+       "a byte access to $ff8604/$ff8606 is a bus error on the ST; a long, a word to an address byte or an offset "
+       "that is no register is a decode the model does not claim",
+    2: "a command outside the seven the model serves (step, read address, read track, the multi-sector bit)",
+    3: "a command or a status read with PSG port A never known to the run, so no drive or side is selected — "
+       "declare register 14 with psg_seed, or run the store that selects it",
+    4: "a DMA transfer that leaves the RAM",
+    5: "a DMA transfer against the direction bit of the mode word",
+    6: "a written track's ID or data field an 80x2x9 .ST cannot hold (detail: track << 16 | side << 8 | sector)",
+    7: "a read of an HDC (ACSI) register — no ACSI device is modelled",
+    8: "a read of the DMA sector count, which is write-only",
+    9: "a sector written with a DMA sector count of zero",
+    10: "a disk image that is not 80 tracks x 2 sides x 9 sectors of 512 bytes",
+    11: "a Write Track whose DMA count holds less than one revolution (detail: the count) — the chip would write "
+        "on with lost data, which the model does not invent",
+    12: "a written track that is not sectors 1..9 exactly once (detail: the mask of the sectors found)",
+    13: "a write to a disk image the case lent read-only (an immutable `bytes`)",
+    14: "a word or long read covering GPIP $fffa01 while the FDC model owns its bit 5",
+}
+FDC_REFUSE_GEOMETRY = 10             # the one refusal Python itself raises (fdc_arm), by its fdc.h code
+
+
+class FdcDrive(NamedTuple):
+    """One drive bay as a case declares it. ``image``: the disk in it — exactly ``FDC_IMAGE_BYTES`` (80x2x9,
+    R-D4-1) — or None for an empty bay. A ``bytearray`` is lent WRITABLE (a write or a write track changes it
+    in place); a ``bytes`` is lent READ-ONLY (the model reads a private copy, and any command that would write
+    it is refused by name). ``present``: whether a drive is connected at all (a missing one gives a restore
+    its seek error)."""
+    image: Optional[Union[bytes, bytearray]] = None
+    present: bool = True
+    write_protected: bool = False
+
+
+FDC_ABSENT = FdcDrive(present=False)
+
+# The ctypes views over the images the oracle holds raw pointers into, kept alive while it is armed.
+_fdc_views = []
+
+
+def _fdc_bay_view(number, bay):
+    """`(view or None, read_only)` for one bay, or a ValueError naming what is wrong with it — made BEFORE
+    anything is armed, so a refused declaration leaves the model as it was."""
+    if not isinstance(bay, FdcDrive):
+        raise ValueError(f"drive {'AB'[number]}: an emu.FdcDrive, not {type(bay).__name__}")
+    if bay.image is None:
+        return None, False
+    if not isinstance(bay.image, (bytes, bytearray)):
+        raise ValueError(f"drive {'AB'[number]}: the image is a bytes (read-only) or a bytearray (writable), "
+                         f"not {type(bay.image).__name__}")
+    if len(bay.image) != FDC_IMAGE_BYTES:
+        raise ValueError(f"drive {'AB'[number]}: {FDC_REFUSALS[FDC_REFUSE_GEOMETRY]} ({len(bay.image)} bytes; "
+                         f"the model holds {FDC_IMAGE_BYTES}) — ruling R-D4-1 admits that geometry alone")
+    if isinstance(bay.image, bytes):
+        return (ctypes.c_uint8 * len(bay.image)).from_buffer_copy(bay.image), True
+    return (ctypes.c_uint8 * len(bay.image)).from_buffer(bay.image), False
+
+
+def fdc_arm(drive_a=FDC_ABSENT, drive_b=FDC_ABSENT, chip=None):
+    """ARM the FDC/DMA model: from the next run on, the model owns the DMA block $ff8600..$ff860f and GPIP
+    bit 5 (TRAP_MODEL.md, Phase 17). ``drive_a``/``drive_b`` are ``FdcDrive``s; ``chip`` the chip state every
+    run starts from — bytes of ``fdc_state()``'s shape, or None for MR's power-on chip. Stays armed until
+    ``fdc_disarm``. EVERY input is checked before anything is armed: a refused one is a ``ValueError`` that
+    leaves the model DISARMED — never half-armed, never still holding the previous case's bays."""
+    try:
+        views = [_fdc_bay_view(number, bay) for number, bay in enumerate((drive_a, drive_b))]
+        declared = None if chip is None else _chip_buffer(chip)
+    except ValueError:
+        fdc_disarm()
+        raise
+    _LIB.osh_fdc_arm(1)
+    _fdc_views[:] = [view for view, _read_only in views if view is not None]
+    for number, (bay, (view, read_only)) in enumerate(zip((drive_a, drive_b), views)):
+        pointer = None if view is None else ctypes.addressof(view)
+        refused = _LIB.osh_fdc_drive(number, pointer, FDC_IMAGE_BYTES if view is not None else 0, int(bay.present),
+                                     int(view is not None), int(bay.write_protected), int(read_only))
+        assert not refused, f"drive {'AB'[number]}: the oracle refused a bay this file vetted ({refused})"
+    if declared is not None:
+        _LIB.osh_fdc_declare(declared)
+
+
+def fdc_disarm():
+    """Every path back to the unarmed one, the drive bays forgotten and the chip back to MR's."""
+    _LIB.osh_fdc_arm(0)
+    _fdc_views.clear()
+
+
+def fdc_armed():
+    return bool(_LIB.osh_fdc_armed())
+
+
+def _chip_buffer(data=None):
+    buffer = (ctypes.c_uint8 * FDC_CHIP_BYTES)()
+    if data is not None:
+        if len(data) != FDC_CHIP_BYTES:
+            raise ValueError(f"a chip state is {FDC_CHIP_BYTES} bytes (fdc.h's fdc_chip), not {len(data)}")
+        ctypes.memmove(buffer, bytes(data), FDC_CHIP_BYTES)
+    return buffer
+
+
+def fdc_power_on_state():
+    """The chip as MR (power-on) leaves it, as ``fdc_state()``'s bytes."""
+    buffer = _chip_buffer()
+    _LIB.osh_fdc_power_on(buffer)
+    return bytes(buffer)
+
+
+def _vet_fdc_armed(what):
+    if not fdc_armed():
+        raise RuntimeError(f"emu.{what} with the FDC model DISARMED: there is no chip to carry — arm it first "
+                           f"(emu.fdc_arm(..., chip=...) declares a carried chip as it arms)")
+
+
+def fdc_declare(chip):
+    """The chip every following run starts from — what a harness carries from one slice to the next
+    (R-D4-2): the ``fdc_state()`` an earlier run left. ARMED ONLY: arming re-declares MR's chip, so a
+    declaration made before it would be silently discarded — refused instead."""
+    _vet_fdc_armed("fdc_declare")
+    _LIB.osh_fdc_declare(_chip_buffer(chip))
+
+
+def fdc_state():
+    """The chip (and the heads) as the most recent run LEFT it: opaque bytes, loaded whole by
+    ``fdc_declare``. REFUSED while disarmed (no chip to carry) and after a run the model refused (its chip
+    describes nothing: a refusal may come after the DMA advanced)."""
+    _vet_fdc_armed("fdc_state")
+    if _LIB.osh_fdc_refused():
+        raise RuntimeError("emu.fdc_state after a run the FDC model REFUSED: that run's chip describes nothing "
+                           "and is not carried")
+    buffer = _chip_buffer()
+    _LIB.osh_fdc_chip_now(buffer)
+    return bytes(buffer)
+
+
+def fdc_events():
+    """The FDC's ORDERED TRANSACTION LEDGER from the most recent run, ``(kind, a, b)`` with ``kind`` a
+    name of ``FDC_EVENTS`` — compared exactly between shores (R-D4-3). A ``poll`` entry's ``b`` is how
+    many consecutive GPIP polls were served the byte ``a``: counted, not listed."""
+    n = _LIB.osh_fdc_log_count()
+    if not n:
+        return []
+    kinds, first, second = _LIB.osh_fdc_log_kinds(), _LIB.osh_fdc_log_a(), _LIB.osh_fdc_log_b()
+    return [(FDC_EVENTS[kinds[i]], first[i], second[i]) for i in range(n)]
+
+
+def fdc_causes():
+    """Why the most recent run cannot be vouched for by the FDC model, as sentences — empty for a run
+    it served (and for every unarmed one)."""
+    causes = []
+    refused = _LIB.osh_fdc_refused()
+    if refused:
+        causes.append(f"the FDC/DMA model refused {FDC_REFUSALS.get(refused, f'(code {refused})')} "
+                      f"(detail {_LIB.osh_fdc_refused_at():#x})")
+    if _LIB.osh_fdc_conflicts():
+        causes.append(f"it declared {_LIB.osh_fdc_conflicts()} I/O byte(s) the ARMED FDC model owns, the first "
+                      f"at {_LIB.osh_fdc_conflict_first():#x} — an io_seed constant or sequence on "
+                      f"$ff8600..$ff860f, or a sequence on GPIP $fffa01, which the model would silently "
+                      f"bypass; declare GPIP's other bits with hw_seed (R-D4-3)")
+    if _LIB.osh_fdc_log_dropped():
+        causes.append(f"its FDC transactions overflowed the ledger — {_LIB.osh_fdc_log_dropped()} past "
+                      f"FDC_LOG_MAX ({FDC_LOG_MAX}) were DROPPED, so fdc_events() is truncated")
+    return causes
+
+
 def schedule_entries(schedule):
     """``[{...}]`` -> the flattened uint32 array BOTH sides take (os.h, "SCHEDULED WRITES").
 
@@ -2377,6 +2581,7 @@ def run(image, entry, regs=None, max_insns=200_000, stop_pc=0, psg_seed=None, hw
     if _LIB.osh_sched_refused():
         causes.append(f"{_LIB.osh_sched_refused()} of its scheduled store(s) could not be made — "
                       f"the store leaves the {loader.IMAGE_SIZE:#x}-byte image")
+    causes.extend(fdc_causes())
     if causes:
         raise RuntimeError(f"function @ {entry:#x} hit unmodeled OS behaviour: "
                            + "; also, ".join(causes)

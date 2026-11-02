@@ -1319,6 +1319,24 @@ def _vet_audio_capture_off(entry):
         f"tools/recreate_kit/TRAP_MODEL.md.")
 
 
+def _vet_fdc_disarmed(entry):
+    """Reject a differential made while the oracle's FDC/DMA model is ARMED (TRAP_MODEL.md, Phase 17).
+
+    The model is wired into the ORACLE alone (ruling R-D4-1: a candidate links src/fdc.c unwired until
+    a host-C row needs the device), so a differential with it armed would compare a candidate whose
+    $ff8604 reads answer the declared map's 0 against an original served a working floppy — a red that
+    says nothing, or, for a routine that never touches the drive, a green that hides an armed device
+    nobody meant. Process-global like the audio-capture mode, hence a vet rather than a convention. A
+    floppy routine's two shores run on the oracle (a ROM project's slices and blobs), where the model
+    serves both alike."""
+    if not emu.fdc_armed():
+        return
+    raise AssertionError(
+        f"function @ {entry:#x}: the oracle's FDC/DMA model is ARMED, and the candidate has no device "
+        f"wired (TRAP_MODEL.md, Phase 17) — a differential would compare a working floppy against an "
+        f"unmodeled one. Disarm it first: `emu.fdc_disarm()`.")
+
+
 def _seed_candidate(reset, encode, seed, available):
     """Install one model's seed in the candidate and clear its ledger — the shape ALL THREE use.
 
@@ -2580,6 +2598,7 @@ def differential(entry, regs, glue, stop_pc=0, exclude=None, max_insns=200_000, 
     it here: the candidate's poll at an undeclared site is refused rather than uncounted.
     """
     _vet_audio_capture_off(entry)
+    _vet_fdc_disarmed(entry)
     waived = _vet_hw_waiver(entry, hw_waiver)
     _vet_schedule_is_runnable(entry, schedule, wait_sites)
     pokes = regs.pop("_pokes", None)

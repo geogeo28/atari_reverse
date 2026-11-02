@@ -1420,6 +1420,10 @@ Rows are keyed by **the modeled set** rather than by one address, because the se
 
 ### The explicit NON-GOAL: the FDC/DMA registers (`$ff8604`+)
 
+(Since 2026-11-01 they have a model of their own — Phase 17, the FDC/DMA TRANSACTION MODEL, ARMED per
+case. The argument below is why it had to be a transaction rather than a seed, and it still governs
+every unarmed run.)
+
 They are **not** in the modeled set and Phase 7 does not put them there. The reason is structural
 rather than a matter of effort, and stating it exactly matters now that the modeled set contains a
 counter: **the criterion is not "the value never changes on the machine" — it is that a per-run
@@ -3767,6 +3771,135 @@ one on `$fffa01`, which is exactly what this phase serves — and is deliberatel
 project is the unchanged control for this model and for Phase 15's, and its `STATUS.md` still records
 the surviving mutant its slicing leaves.
 
+## Phase 17 — the FDC/DMA TRANSACTION MODEL (the WD1772 and the DMA chip, zero-time, ARMED per case)
+
+Ruling D4 (2026-11-01), in four parts: **R-D4-1 "Instant 'done', shared kit C"** — a zero-time WD1772 +
+DMA in shared kit C, armed only, a missing or empty drive per Hatari and the datasheet, 80x2x9 media
+only, byte access to `$ff8604`/`$ff8606` refused, the unmodelled arms REFUSED or listed by name;
+**R-D4-2 "Carry both, from ROM runs"** — the chip saveable and loadable whole (a harness carries it, and
+PSG port A, between slices); **R-D4-3** — an ordered FDC ledger compared exactly, repeated GPIP polls
+counted not listed, GPIP bit 5 the model's while armed and the other bits the existing declaration's, a
+declaration on the model's registers refused while armed; **R-D4-4** — the kit first, on its own, the
+first project's wiring after it.
+
+### The transaction Phase 7 excluded, and why it needs no time
+
+Phase 7's non-goal stands as an argument: a per-run constant, and a Phase-16 list, describe what a
+register yields, never what a COMMAND the run wrote makes the next read mean. This model is that
+transaction — a device record (`include/fdc.h`'s `fdc_device`) that a store to `$ff8604` drives.
+
+What made it buildable without a time source was a measurement, not a modelling choice: every wait TOS
+1.02's floppy driver makes is an INSTRUCTION-COUNT loop on GPIP bit 5 (`move.l #$40000,d7` — `#$60000`
+with the motor off — then `subq.l #1,d7 / beq timeout / btst #5,$fffa01 / bne`), none an `_hz_200`
+one; the driver reads `_hz_200` only to stamp a drive's last access on its way out. So the chip can be
+ZERO-TIME: a command it can complete completes inside the store that issues it, and the first poll after
+it sees INTRQ. A command it can NEVER complete without index pulses — a spin-up, or an ID search, with
+no drive or no disk — HANGS (busy, no INTRQ) until a force-interrupt, which is exactly the driver's own
+timeout arm. Asserting INTRQ only after N polls instead was measured on TOS 1.02's boot: N moved nothing
+a run can observe but cycles and a countdown residue left in dead stack, and the true N is rotational
+latency no capture pins — so zero time it is.
+
+### Modeled
+
+| register | width | semantics |
+| --- | --- | --- |
+| `$ff8606` write | word | the mode: A1A0 (the FDC register `$ff8604` reaches), bit 3 HDC, bit 4 the sector count, bit 8 the direction — TOGGLING bit 8 resets the DMA (count 0, error clear) |
+| `$ff8606` read | word | the DMA status: bit 0 no error, bit 1 count ≠ 0, bits 3-7 the last FDC byte's residue (Hatari, verified on an STF); bits 8-15 kept 0 — UNCONFIRMED, and no modelled driver reads past bit 0 |
+| `$ff8604` write | word | by the mode: the count, an HDC byte (ledgered; no ACSI device), or the FDC's command / track / sector / data register (TR and SR ignored while busy) |
+| `$ff8604` read | word | status (clears INTRQ), TR, SR or DR; the upper byte 0; the count and an HDC register REFUSED |
+| `$ff8604` long write | long | `move.l`: the data word, then the mode word (the ACSI idiom) |
+| `$ff8609/b/d` | byte | the 24-bit DMA address, read and written; bit 0 of the low byte not wired |
+| anything else in `$ff8600..$ff860f` | any | REFUSED by name: another width, a word to an address byte (which a 68000 lands on the odd byte), an offset that is no register |
+| `$fffa01` read | byte | the case's Phase-7 declaration, **bit 5 the chip's** (¬INTRQ); a word or long read covering it REFUSED |
+
+The commands: restore, seek, seek-verify (type I), read sector and write sector (type II), write track
+(type III) and force-interrupt. **Spin-up**: with h clear and the motor off, the selected drive must
+have a disk turning or the command hangs. **Type I status** is LIVE from the drive selected at the read
+(TR00 from its head, WPRT set for a protected disk or an empty bay); a restore with no drive steps 255
+times and ends in the SEEK ERROR, TR 0; a seek moves the head by DR − TR (clamped to the stops); a
+verify needs a disk and finds no ID field when TR ≠ the head (a `.ST`'s IDs carry the physical track).
+A force-interrupt clears busy and returns the status register to type I. **Type II**: WPRT before any
+write; record-not-found when the sector is off the track or TR ≠ the head; otherwise 512 bytes between
+RAM and the image, the address +512, the count −1 — and **every byte the DMA stores joins the run's
+write-set**, so a diff of what a run stored sees it as it sees the CPU's. **Write track** takes one
+revolution (6,250 bytes) and decodes `$F5 $FE t s n z` ID fields with their `$F5 $FB` data fields back
+into sectors — and only a track an 80x2x9 `.ST` holds EXACTLY: sectors 1..9 once each, each ID followed
+by its own data field before the next ID, every ID on this track and side with size 512, no `$F5..$F7`
+in the data. Anything else is REFUSED BY NAME (it is never answered with an invented status), and so is
+a DMA count holding less than one revolution — the chip would write on with lost data, an arm the model
+does not invent. All of it is checked BEFORE the DMA moves: a refused track leaves RAM, image, address
+and count where they were. Drive and side come from PSG port A's pins (register 14 of the direct path's
+file): port A never known to the run is a refusal.
+
+### Armed only, and what a run starts from
+
+`emu.fdc_arm(drive_a, drive_b, chip=None)` arms it — each drive an `emu.FdcDrive(image, present,
+write_protected)`: `image` a `bytearray` (lent WRITABLE, changed in place by a write) or a `bytes` (lent
+READ-ONLY: the model reads a private copy and any command that would write it is refused by name), None
+for an empty bay; `emu.FDC_ABSENT` for no drive. Every input is checked BEFORE anything is armed, and a
+refused one is a `ValueError` that leaves the model DISARMED. `emu.fdc_disarm()` returns every path to
+the unarmed one and forgets the bays, so no image pointer outlives its case. **Unarmed, nothing
+changed**: a `$ff8604` read is the declared map's byte or the counted unmodeled 0, a write lands in the
+Phase-10 ledger, `$fffa01` is Phase 7's slot.
+
+The chip a run starts from is DECLARED (arming declares MR's power-on chip; `emu.fdc_declare(bytes)`
+another) and re-installed by every run, as every other model's seed is. What a run LEFT is
+`emu.fdc_state()` — opaque bytes, the chip and the heads, no padding, loaded whole by `fdc_declare`:
+the carry R-D4-2 rules a harness makes from one slice to the next. Both REFUSE while disarmed (there is
+no chip to carry, and arming would discard a declaration made before it — `fdc_arm(chip=...)` is that
+door), and `fdc_state` refuses after a REFUSED run: its chip describes nothing (a refusal may come after
+the DMA advanced), so a refused run is never carried. The drive bays are the case's, never the chip's.
+
+### The ledger, and the refusals
+
+`emu.fdc_events()` is the ordered transaction ledger: `command`, `done`, `hang`, `forced`, `dma_in`,
+`dma_out`, `read`, `poll`, `hdc`. A `poll` entry carries how many CONSECUTIVE polls were served one byte
+— one timeout is 262,143 identical polls, which Phase 7's per-read slot ledger (4,096) would overflow, so
+while armed a GPIP read is ledgered here and only here; Phase 7's unseeded and stale rules still hold for
+the declared seven bits. Register stores still land in the Phase-10 write ledger as well. A command the
+model refused never logs `done`.
+
+A run the model cannot describe is REFUSED by name (`emu.FDC_REFUSALS`), through `emu.run`'s causes and
+every bench segment's result: an access to the block the model does not serve, a command outside the
+seven (step, read address, read track, the multi-sector bit), port A unknown, a transfer off the RAM or
+against the direction, a sector written with a zero count, a Write Track short of a revolution or not
+exactly the nine sectors, an unrepresentable ID or data field, a write to a read-only image, a read of
+the count or of an HDC register, a wide read over GPIP, an `io_seed` constant or sequence on the block —
+or a sequence on GPIP — while armed (the CONFLICT: the model would silently bypass it), and a ledger
+overflow. `emu.fdc_arm` refuses any image that is not 737,280 bytes (80x2x9) as a `ValueError`.
+
+`harness.differential` REFUSES to run while the model is armed: the candidate links `src/fdc.c` (kit.mk's
+SRC sweep) but nothing wires it yet — no reconstruction drives the floppy from host C — so an armed
+differential would compare a floppy against none. A floppy routine's two shores run on the oracle (a ROM
+project's slices and blobs), where the model serves both alike. The candidate wiring arrives with the
+first host-C row that needs the device.
+
+### The honest limit — UNPINNED, by name (R-D4-1)
+
+Everything that needs time: the motor turning OFF (9 index pulses — once on, it stays on), the INDEX
+status bit (always 0), a disk inserted or ejected mid-run (the WPRT transitions a driver's media-change
+logic watches), rotational latency. And: CRC errors and copy-protection tracks (an 80x2x9 `.ST` cannot
+hold them — a Write Track that would make one is refused), the DMA's FIFO prefetch (after a write track
+the address has advanced one revolution and the count the sectors started), force-interrupt conditions
+other than immediate (any condition asserts INTRQ at once), the heads' power-on position (declared 0, as
+Hatari's), the DMA status's bits 8-15, and any ACSI device (an HDC byte is ledgered, an HDC read
+refused — a probe that waits on `_hz_200` for one still needs time, D3).
+
+### What is pinned
+
+`test/test_fdc_model.py` over `test/fdc_model_probe.c`: the chip layer directly — every command and
+status bit, the DMA's address wrap / count / status / residue, drive and side select, the absent drive's
+seek error with the motor on and its hang with it off, the empty drive's hang and live WPRT, the force
+that returns type I, write track's decode and every one of its refusals (short count, eight sectors, a
+repeated ID, another side, an ID without data, other track, `$F5` data, off RAM), the read-only image,
+every block access refused, polls counted, the ledger's cap, the geometry — and the wiring through the
+oracle with a minimal 68000 driver of the probe's own: a sector read landing and joining the write-set,
+a timeout reached by the driver's own count-down, the carried chip and its per-run reinstall, GPIP
+undeclared / stale / sequenced / read wide, the `move.l` hook, a conflict, a byte access, a word into the
+address bytes, the bays forgotten across a re-arm, unarmed and disarmed = today. `test/test_fdc_wiring.py`:
+`emu`'s arming (and its exception safety), save/load and its refusals, the read-only image, the ledger
+overflow and the bench refusal, and `harness`'s refusal, on the kit's miniature project.
+
 ## Still unmodeled (an honest raise is the right answer)
 
 **A SEQUENCE of bytes one address yields, one per read, is MODELED** as of 2026-09-15 — Phase 16,
@@ -3786,7 +3919,9 @@ one byte passes every drivable case.
 **What a sequence still does not model** is a value that changes because of something the RUN does,
 rather than in an order the case can write down in advance: the FDC/DMA **transaction** Phase 7's
 non-goal really excludes, where a command written to `$ff8606` decides what the next read of
-`$ff8604` means. TOS 1.02's floppy VBL service is the worked example and it stays halted — but for a
+`$ff8604` means. **That transaction is MODELED as of 2026-11-01 — Phase 17, armed per case**, which is
+where the argument now lives; a sequence still does not describe it, and the paragraph below is the
+state before it. TOS 1.02's floppy VBL service is the worked example and it stays halted — but for a
 DIFFERENT reason than its two reads of `$ff8604`, which a list describes: it drives the drive-select
 bits through the YM2149's port A, which is Phase 6's direct path and a floppy wave's first piece of
 work (`projects/tos102us/recreate/src/bios/vbl.c` says so where the halt is).

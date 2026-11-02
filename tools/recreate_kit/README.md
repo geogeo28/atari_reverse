@@ -406,6 +406,29 @@ select latch span runs, and why none of it narrows the differential's guarantee 
 has no 68000 code to run the mode against) plus one case in
 `projects/joust/recreate/test/test_os_traps.py` for the mixed-path guard.
 
+### Opt-in: the FDC/DMA model (floppy)
+
+A zero-time WD1772 and the ST's DMA chip, in shared kit C (`include/fdc.h`, `src/fdc.c`), wired into the oracle
+and **armed per case** (ruling D4, 2026-11-01). Armed, it owns the DMA block `$ff8600..$ff860f` and GPIP bit 5: a command the
+chip can complete completes at once, one that needs index pulses (no drive, no disk) hangs until the driver's own
+timeout forces it, and a sector transfer lands in RAM as stores the run's write-set sees. **Unarmed, every access
+takes the path it took before.** The contract — the commands, the status bits, what is refused, what is unpinned and
+why no time source is needed — is `TRAP_MODEL.md`, "Phase 17".
+
+| call | what it does |
+|---|---|
+| `emu.fdc_arm(drive_a, drive_b, chip=None)` | arm; each drive an `emu.FdcDrive(image, present=True, write_protected=False)` (`image` 737,280 bytes — 80x2x9 only — a `bytearray` lent writable or a `bytes` lent read-only, whose writes are refused; None for an empty bay; `emu.FDC_ABSENT` for no drive); `chip` the chip runs start from (default MR's power-on chip). A refused input is a `ValueError` that leaves the model disarmed |
+| `emu.fdc_disarm()` / `emu.fdc_armed()` | back to the unarmed paths, the bays forgotten / is it armed? |
+| `emu.fdc_state()` / `emu.fdc_declare(chip)` / `emu.fdc_power_on_state()` | the chip the last run LEFT, as opaque bytes / declare the chip every following run starts from — the CARRY between slices (both refused while disarmed; `fdc_state` refused after a refused run) / MR's chip |
+| `emu.fdc_events()` | the ordered transaction ledger: `(kind, a, b)`, repeated GPIP polls counted in one `poll` entry |
+| `emu.fdc_causes()` | why the last run could not be described (it also sinks `emu.run` and a bench segment, by name) |
+
+GPIP's other seven bits stay the case's `hw_seed` declaration of `$fffa01`; an `io_seed` on the model's registers
+(or a sequence on GPIP) while armed is refused rather than bypassed; and `harness.differential()` refuses to run while
+it is armed, because no candidate wires the device yet. Pinned by `test/test_fdc_model.py` (a C probe: the chip, and a
+minimal 68000 driver of its own through the oracle) and `test/test_fdc_wiring.py` (this table, on the miniature
+project).
+
 Three regions of the image are **harness-poked inputs** rather than program memory, so that
 hardware whose real value is time-varying still reaches both cores identically:
 `OS_CON_PENDING`/`OS_CON_CHAR` (the pending console keystroke — `harness.console_key()`),
@@ -1167,6 +1190,10 @@ entry SR; the register set every run reports back (`D0..D7`/`A0..A6` — the obs
 differential sees through); and the two seeded read models, whose probes also link `src/psg.c` /
 `src/hw.c` so they can run the **candidate** side against the oracle's — a miniature differential,
 with mutant reconstructions as its negative control.
+`test_fdc_model.py` (the FDC/DMA model, Phase 17) takes the same shape with no candidate side: its probe
+drives `src/fdc.c` directly and runs a minimal 68000 floppy driver of its own through `osh_run`; its Python
+surface (`emu.fdc_*`, `harness.differential`'s refusal while armed) is `test_fdc_wiring.py`, on the miniature
+project below.
 
 Four more — `test_psg_differential.py`, `test_hw_differential.py`, `test_write_ledger.py` and
 `test_base_image.py` — go one step further and run the **real harness**: `test/kit_smoke_project.py` builds a throwaway project in a temp directory — a

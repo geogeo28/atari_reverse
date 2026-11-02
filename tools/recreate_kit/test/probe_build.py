@@ -26,11 +26,13 @@ SHIM = KIT / "oracle" / "shim.c"
 
 MUSASHI = KIT / "oracle" / "musashi"
 GENDIR = KIT / "oracle" / "build"
-# ...plus the two SHARED sources kit.mk's $(ORACLE) rule links into the oracle: the GEM/VDI model
-# and the raster core it draws through. shim.c calls gem_dispatch(), so a probe built without them
-# does not link. (And the CPU correction it calls, oracle_guard_move16(), for the same reason.)
+# ...plus the three SHARED sources kit.mk's $(ORACLE) rule links into the oracle: the GEM/VDI model,
+# the raster core it draws through, and the FDC/DMA model (Phase 17). shim.c calls gem_dispatch() and
+# fdc_read()/fdc_write(), so a probe built without them does not link. (And the CPU correction it
+# calls, oracle_guard_move16(), for the same reason.)
 ORACLE_SRC = (MUSASHI / "m68kcpu.c", GENDIR / "m68kops.c", MUSASHI / "softfloat" / "softfloat.c",
-              SHIM, KIT / "oracle" / "move16_guard.c", KIT / "src" / "gem.c", KIT / "src" / "raster.c")
+              SHIM, KIT / "oracle" / "move16_guard.c", KIT / "src" / "gem.c", KIT / "src" / "raster.c",
+              KIT / "src" / "fdc.c")
 
 
 def compile_probe(probe_src, tmpdir, extra_src=()):
