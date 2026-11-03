@@ -5,7 +5,8 @@
  *   $fc173a  the probe: the drive's record (A: $a4c, B: $a50) given `seekrate`, its track cleared; the common entry;
  *            the drive selected, the track UNKNOWN; a restore — or, failing, a seek to 10 and a restore again
  *   $fc1c48  the common entry: the request copied in, `flock` taken, the retries set, the record chosen (where its
- *            track is unknown, a HALT in P4a: no probe reaches that arm — its record is cleared first; P4b ports it)
+ *            track is unknown, found again: no probe reaches that arm — its record is cleared first; hdv_boot's Floprd
+ *            with drive A: absent and B: present does, R-P4b-1)
  *   $fc1ccc  the exits: on an error the media marked MAYBE changed and `$a26` the result, else 0; either way the head
  *            sought to the record's track once more ($fc1cdc) before the glue's tail
  *
@@ -33,15 +34,16 @@
 
 #include "addrs.h"
 #include "hw.h"
-#include "recreate.h"
 #include "boot/sysvars.h"
 #include "boot/floppy.h"
 
-register uint32_t port_a_new __asm__("d1");
-register uint32_t port_a_old __asm__("d2");
+register uint32_t handed_d1 __asm__("d1");      /* the ROM's D1: port A's byte the last select wrote, or the error the
+                                                 * decode chose (`$fc1836`) — what the caller is handed back */
+register uint32_t handed_d2 __asm__("d2");      /* the ROM's D2: port A's byte the last select read */
 register uint16_t fdc_command __asm__("d6");    /* the ROM's D6: the type-I command a wait issues */
 register uint16_t fdc_status __asm__("d7");     /* the ROM's D7: the status the wait reads back */
 register uint16_t *record __asm__("a1");
+register uint16_t *bad_list __asm__("a2");      /* the ROM's A2: Flopver's cursor into its list of bad sectors */
 register volatile uint16_t *dma_mode __asm__("a5");
 
 #define LOW_BYTE 0xffu
@@ -109,8 +111,8 @@ static inline void select_port_a(uint8_t selects)
     hw_write8(PSG_PORT_SELECT, PSG_PORT_A);
     uint8_t held = io_read8(PSG_PORT_SELECT);
     uint8_t merged = (held & PORT_A_KEPT_BITS) | selects;
-    port_a_old = (port_a_old & ~LOW_BYTE) | held;
-    port_a_new = (port_a_new & ~LOW_BYTE) | merged;
+    handed_d2 = (handed_d2 & ~LOW_BYTE) | held;
+    handed_d1 = (handed_d1 & ~LOW_BYTE) | merged;
     hw_write8(PSG_PORT_DATA, merged);
     __asm__ volatile ("move.w %0,%%sr" : : "d"(interrupted) : "memory", "cc");
 }
@@ -187,10 +189,10 @@ static void select_drive(void)
     set_sector_and_address();
 }
 
-/* `$fc1c48`: the request copied in, `flock` taken, the record chosen. ITS UNKNOWN-TRACK RECOVERY (`$fc1caa..$fc1cca`: a
- * negative track found again by a restore, else a seek to 10 and a restore, else `$ff00`) IS NOT PORTED IN P4a: no P4a
- * entry reaches it — the probe clears the record's track first, held per call by `test_boot_floppy.py` — so it HALTS
- * (`recreate_not_reconstructed`: `trap #7` on the machine) rather than ship untested; P4b's Floprd reaches and pins it. */
+/* `$fc1c48`: the request copied in, `flock` taken, the record chosen — and where its track is UNKNOWN (negative: the probe
+ * that failed left `$ff00`), found again ($fc1caa..$fc1cca): select, restore; else a seek to 10 and a restore; else the
+ * track unknown still. The probe never takes that arm (it clears the record's track first); hdv_boot's Floprd on a machine
+ * whose drive A: is absent and B: present does (ruling R-P4b-1: the one arm of any run that reaches it). */
 static inline void common_entry(const uint8_t *args, int16_t error)
 {
     dma_mode = (volatile uint16_t *)FDC_DMA_MODE;
@@ -206,9 +208,15 @@ static inline void common_entry(const uint8_t *args, int16_t error)
     *ram16(FLOPPY_COUNT) = arg16(args, FLOPPY_ARG_COUNT);
     *ram16(FLOPPY_RETRIES) = FLOPPY_RETRIES_EACH;
     record = *ram16(FLOPPY_DRIVE) ? ram16(FLOPPY_RECORD_B) : ram16(FLOPPY_RECORD_A);
-    if ((int16_t)record[FLOPPY_RECORD_TRACK] < 0)
-        recreate_not_reconstructed("the common entry's unknown-track recovery ($fc1caa..$fc1cca): P4b, where Floprd "
-                                   "reaches it — the probe clears the record's track before it enters");
+    if ((int16_t)record[FLOPPY_RECORD_TRACK] >= 0)
+        return;
+    select_drive();
+    record[FLOPPY_RECORD_TRACK] = 0;
+    if (!restore())
+        return;
+    if (!seek(FLOPPY_PROBE_RETRY_TRACK) && !restore())
+        return;
+    record[FLOPPY_RECORD_TRACK] = FLOPPY_UNKNOWN_TRACK;
 }
 
 /* `$fc1cdc`: either exit's last seek, to the record's track — then the glue's tail. */
@@ -244,6 +252,180 @@ uint32_t floppy_probe(void)
         return leave_with(0);
     if (seek(FLOPPY_PROBE_RETRY_TRACK) || restore())
         return leave_with_the_error();
+    return leave_with(0);
+}
+
+/* ---- P4b: the read side ------------------------------------------------------------------------------------------------ */
+
+/* `$fc1d7a`: a seek WITH verify to the request's track, the error the seek's first — 0 where the head is there and its ID
+ * read clean (the record's track then the request's), else nonzero: the wait timed out, or record-not-found / CRC. */
+static int seek_verify(void)
+{
+    *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_SEEK_ERROR;
+    *dma_mode = FDC_MODE_DATA;
+    fdc_write(*ram16(FLOPPY_TRACK));
+    fdc_command = WD1772_SEEK_VERIFY;
+    if (type_one())
+        return 1;
+    record[FLOPPY_RECORD_TRACK] = *ram16(FLOPPY_TRACK);
+    return fdc_status & (WD1772_STATUS_RECORD_NOT_FOUND | WD1772_STATUS_CRC_ERROR);
+}
+
+/* `$fc1d46`: the second-last retry's recalibrate — a restore, the track register 0, a seek to 5, then the seek-verify; its
+ * result unread (Floprd and Flopver retry whatever it found). */
+static void recalibrate(void)
+{
+    *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_SEEK_ERROR;
+    if (restore())
+        return;
+    record[FLOPPY_RECORD_TRACK] = 0;
+    *dma_mode = FDC_MODE_TRACK;
+    fdc_write(0);
+    *dma_mode = FDC_MODE_DATA;
+    fdc_write(FLOPPY_RECALIBRATE_TRACK);
+    fdc_command = WD1772_SEEK;
+    if (type_one())
+        return;
+    record[FLOPPY_RECORD_TRACK] = FLOPPY_RECALIBRATE_TRACK;
+    seek_verify();
+}
+
+/* `$fc1836`: a type-II status decoded into the error the exit returns, D1 the ROM's register for it — write-protect -13,
+ * record-not-found -8, CRC -4, else the entry's own (`$a24`, moved over the CRC's `moveq`: D1's high word stays -1). */
+static void decode_status(uint16_t status)
+{
+    if (status & WD1772_STATUS_WRITE_PROTECT)
+        handed_d1 = (uint32_t)FLOPPY_WRITE_PROTECTED;
+    else if (status & WD1772_STATUS_RECORD_NOT_FOUND)
+        handed_d1 = (uint32_t)FLOPPY_RECORD_NOT_FOUND;
+    else if (status & WD1772_STATUS_CRC_ERROR)
+        handed_d1 = (uint32_t)FLOPPY_CRC_ERROR;
+    else
+        handed_d1 = ((uint32_t)FLOPPY_CRC_ERROR & ~0xffffu) | *ram16(FLOPPY_DEFAULT_ERROR);
+    *ram16(FLOPPY_ERROR) = (uint16_t)handed_d1;
+}
+
+/* One sector read through the DMA ($fc17a0..$fc17f8, Flopver's $fc1b3a..$fc1b8c): the DMA reset and its count 1, the read
+ * command, the wait — the POLL BEFORE the count down here, 262,144 polls to a timeout — then the DMA's status and the
+ * FDC's. 0 done; else FLOPPY_TRANSFER_TIMED_OUT (forced) or the FDC's status (the DMA's error bit as 0). `settled_count`:
+ * Flopver writes the count through the settled write, Floprd straight ($fc17ac: `move.w #1,$ff8604`). */
+#define FLOPPY_TRANSFER_TIMED_OUT 0x10000u
+#define FLOPPY_TRANSFER_READ      0x20000u   /* (or'd over a status read back: a read, whatever its status) */
+static uint32_t read_one_sector(int settled_count)
+{
+    *dma_mode = FDC_MODE_SECTOR_COUNT;
+    *dma_mode = FDC_MODE_SECTOR_COUNT | FDC_MODE_WRITE;
+    *dma_mode = FDC_MODE_SECTOR_COUNT;
+    if (settled_count)
+        fdc_write(1);
+    else
+        hw_write16(FDC_DMA_ACCESS, 1);
+    *dma_mode = FDC_MODE_STATUS;
+    fdc_write(WD1772_READ_SECTOR);
+    uint32_t budget = FDC_WAIT_MOTOR_ON;
+    do {
+        if (!(hw_read8(MFP_GPIP) & MFP_GPIP_FDC_INTRQ)) {
+            *dma_mode = FDC_MODE_SECTOR_COUNT;
+            if (!(*dma_mode & DMA_STATUS_NO_ERROR))
+                return 0;           /* (the ROM retries on a DMA error with the status unread: a zero status, retried) */
+            *dma_mode = FDC_MODE_STATUS;
+            return fdc_read() | FLOPPY_TRANSFER_READ;
+        }
+    } while (--budget != 0);
+    fdc_status = force_interrupt();
+    return FLOPPY_TRANSFER_TIMED_OUT;
+}
+
+/* The retry rule both readers share ($fc181e / $fc1baa): the second-last retry recalibrates first; 0 while retries are
+ * left (`$9f6` decremented, still >= 0). */
+static int another_try(void)
+{
+    if (*ram16(FLOPPY_RETRIES) == 1)
+        recalibrate();
+    return (int16_t)--*ram16(FLOPPY_RETRIES) >= 0;
+}
+
+/* `$fc1782`: XBIOS 8 — `count` sectors from (`track`, `side`, `sector`) into `buffer`, one at a time; each sector's
+ * failure retried from the select, the error the last decoded (or the seek's, or -2 a timeout). */
+uint32_t floppy_floprd(void)
+{
+    register const uint8_t *args_in_a0 __asm__("a0");
+    __asm__ ("" : "=a"(args_in_a0));
+    common_entry(args_in_a0, FLOPPY_READ_ERROR);       /* (the single-drive alert ran first, in the glue) */
+    for (;;) {
+        select_drive();
+        if (!seek_verify()) {
+            for (;;) {
+                *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_GENERAL_ERROR;
+                uint32_t read = read_one_sector(0);
+                if (read == FLOPPY_TRANSFER_TIMED_OUT) {
+                    *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_TIMED_OUT;
+                    break;
+                }
+                if (!read)
+                    break;
+                if ((uint8_t)read & WD1772_TYPE_II_ERRORS) {
+                    decode_status((uint8_t)read & WD1772_TYPE_II_ERRORS);
+                    break;
+                }
+                *ram16(FLOPPY_RETRIES) = FLOPPY_RETRIES_EACH;
+                ++*ram16(FLOPPY_SECTOR);
+                *ram32(FLOPPY_BUFFER) += FLOPPY_SECTOR_BYTES;
+                if (!--*ram16(FLOPPY_COUNT))
+                    return leave_with(0);
+                set_sector_and_address();
+            }
+        }
+        if (!another_try())
+            return leave_with_the_error();
+    }
+}
+
+/* `$fc1afe`: the verify core — each sector of the request read into the buffer past its first 512 bytes, retried as
+ * Floprd's from the DMA address (no reselect); one that exhausts its retries LISTED at the buffer (A2 its cursor); the
+ * list ended by 0, the buffer given back. */
+static void verify_sectors(void)
+{
+    *ram16(FLOPPY_DEFAULT_ERROR) = (uint16_t)FLOPPY_READ_ERROR;
+    bad_list = (uint16_t *)*ram32(FLOPPY_BUFFER);
+    *ram32(FLOPPY_BUFFER) += FLOPPY_SECTOR_BYTES;
+    do {
+        *ram16(FLOPPY_RETRIES) = FLOPPY_RETRIES_EACH;
+        *dma_mode = FDC_MODE_SECTOR;
+        fdc_write(*ram16(FLOPPY_SECTOR));
+        for (;;) {
+            const uint8_t *buffer = ram8(FLOPPY_BUFFER);
+            hw_write8(FDC_DMA_ADDRESS_LO, buffer[3]);
+            hw_write8(FDC_DMA_ADDRESS_MID, buffer[2]);
+            hw_write8(FDC_DMA_ADDRESS_HI, buffer[1]);
+            uint32_t read = read_one_sector(1);
+            if (read != FLOPPY_TRANSFER_TIMED_OUT && read) {
+                decode_status((uint8_t)read);
+                if (!((uint8_t)read & WD1772_TYPE_II_ERRORS))
+                    break;
+            }
+            if (!another_try()) {
+                *bad_list++ = *ram16(FLOPPY_SECTOR);
+                break;
+            }
+        }
+        ++*ram16(FLOPPY_SECTOR);
+    } while (--*ram16(FLOPPY_COUNT));
+    *ram32(FLOPPY_BUFFER) -= FLOPPY_SECTOR_BYTES;
+    *bad_list = 0;
+}
+
+/* `$fc1ae2`: XBIOS 19 — the request's sectors verified (`verify_sectors`): 0 whatever it listed; the seek-verify's error
+ * where the head cannot get there. */
+uint32_t floppy_flopver(void)
+{
+    register const uint8_t *args_in_a0 __asm__("a0");
+    __asm__ ("" : "=a"(args_in_a0));
+    common_entry(args_in_a0, FLOPPY_READ_ERROR);       /* (the single-drive alert ran first, in the glue) */
+    select_drive();
+    if (seek_verify())
+        return leave_with_the_error();
+    verify_sectors();
     return leave_with(0);
 }
 

@@ -55,10 +55,12 @@ def cold_pair():
 # ---- THE STATIC LINK CHECK AND THE STEERING (R-CH-1's (d)) ---------------------------------------------------------------
 # EVERY `jmp.l` INTO THE ROM WINDOW EACH PRODUCT HOLDS, read off the code (objdump of each ELF; the blob's in its two
 # boot entries) — typed here once, as the pin: B2's and B3's entries, the display's two paths and its sync-wait jump; and
-# since D4 P4a our lower floppy driver's jump laid at the probe's ROM entry, to the glue's first byte (R-P4-2).
+# since D4 P4a our lower floppy driver's jumps laid at the ROM entries it ports (the probe; since P4b Floprd and Flopver),
+# each to its glue entry (R-P4-2).
 EVERY_JMP_INTO_THE_ROM = {"head": {}, "blob": {0xfc03b6: 1, 0xfc03e0: 1}, "display": {0xfc0452: 2, 0xfc0e1a: 1},
                           "late": {0xfc047a: 1}, "launch": {0xfc0030: 1}, "floppy": {},
-                          "floppy jump 0xfc173a": {0xfc3e80: 1}}
+                          "floppy jump 0xfc173a": {0xfcc430: 1}, "floppy jump 0xfc1782": {0xfcc400: 1},
+                          "floppy jump 0xfc1ae2": {0xfcc418: 1}}
 NOT_A_SLICE_START = 0xfc0454            # inside B6's own span: an exit there is no slice's start
 APPENDED_EXIT = 0xfc0460
 
@@ -396,7 +398,7 @@ def test_our_driver_s_dead_frames_lie_in_b6_s_last_probe_s_frame_span_where_the_
     LAST probe (drive B:'s) — from 20 bytes under its entry SP (the ROM's depth, ours the same) to that SP — and the ROM's
     own B6 run stores every one of them (so they are frames, not state)."""
     rom, _ours = cold_pair
-    last_probe, _called = boot_floppy.b6_calls(boot.COLD)[-1]
+    last_probe, _called = boot_floppy.b6_calls(boot.COLD)[1]      # drive B:'s (Floprd's own frames lie above it)
     entry_sp = last_probe.machine.registers["isp"]
     assert bc.B6_LAST_PROBE_FRAMES == (entry_sp - boot_floppy.ROM_PROBE_FRAME_BYTES, entry_sp)
     lo, hi = bc.B6_LAST_PROBE_FRAMES
@@ -462,17 +464,17 @@ def test_a_foreign_xbios_vector_is_still_refused(what):
 # ---- ITS PRICE (ruling D9): the table's rows --------------------------------------------------------------------------------
 # Each chain's OWN cycles, pinned EXACTLY: (ours, the ROM's) — its only surface is cost. Ours +16 in every chain since the
 # floppy ran through the FDC model (ruling D4): B6's two `lea`s that call hdv_boot at the ROM's depth. Since D4 P4a (R-P4-3)
-# B6 runs OUR lower floppy driver's probe: ours +18,422 (the driver's two calls, in place), the ROM's +18,864 (its own two
-# calls: its whole driver less the Floprd both run, `bc.replaced_calls`).
+# B6 runs OUR lower floppy driver: since P4b its probes AND hdv_boot's Floprd — ours +30,780 over D4's (the driver's three
+# calls, in place), the ROM's +31,152 (its own three: its whole driver, none of it run by ours, `bc.replaced_calls`).
 OWN = {
-    "boot chain, WARM": (2556630, 2582756),
-    "boot chain, COLD": (5474706, 5500832),
-    "boot chain, WARM, mono, ST low, blitter ABSENT": (2556690, 2582812),
-    "boot chain, WARM, colour, ST low, blitter PRESENT": (2556630, 2582756),
-    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2556660, 2582782),
-    "boot chain, COLD, mono, ST low, blitter ABSENT": (5474766, 5500888),
-    "boot chain, COLD, colour, ST low, blitter PRESENT": (5474706, 5500832),
-    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5474736, 5500858),
+    "boot chain, WARM": (2568988, 2595044),
+    "boot chain, COLD": (5487064, 5513120),
+    "boot chain, WARM, mono, ST low, blitter ABSENT": (2569048, 2595100),
+    "boot chain, WARM, colour, ST low, blitter PRESENT": (2568988, 2595044),
+    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2569018, 2595070),
+    "boot chain, COLD, mono, ST low, blitter ABSENT": (5487124, 5513176),
+    "boot chain, COLD, colour, ST low, blitter PRESENT": (5487064, 5513120),
+    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5487094, 5513146),
 }
 
 
@@ -543,3 +545,12 @@ def test_b3_in_the_chain_reads_the_carried_port_a_not_its_battery_s_seed(cold_pa
         b3 = steps[bc.STEP_NAMES.index(bc.B3)]
         first_read = next(entry for entry in b3.ledgers["psg_events"] if entry[1] == addrs.PSG_PORT_A)
         assert first_read[2] == PORT_A_AT[bc.HEAD]
+
+
+def test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6(pair):
+    """THE SPAN OUR LOWER DRIVER'S BODY IS LAID OVER IS FREE (D4 P4b: the VDI's GDP text, `[$fcc400, $fcd000)`): the ROM's
+    own boot spends no cycle there in any step, and ours none but in B6, where our driver lies there."""
+    _chain, rom, ours = pair
+    assert all(step.spent["our floppy"] == 0 for step in rom)
+    assert all(step.spent["our floppy"] == 0 for step in ours if step.name != bc.B6)
+    assert ours[bc.STEP_NAMES.index(bc.B6)].spent["our floppy"] > 0

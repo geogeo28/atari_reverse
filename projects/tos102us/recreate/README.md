@@ -1950,7 +1950,7 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   the rest held equal step by step: **0.990** WARM, **0.995** COLD (own cycles moved: ours +18,422, the ROM's
   +18,864), own cycles pinned exactly.
 
-### THE FLOPPY'S LOWER DRIVER IN C — the probe `$fc173a` and its primitives (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a)
+### THE FLOPPY'S LOWER DRIVER IN C — the probe, Floprd and Flopver (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a + P4b)
 
 **Rulings it stands on** (2026-11-02):
 - **R-P4-2 "Jump at ROM entries".** A 6-byte `jmp` is laid at each ported ROM entry, so every caller reaches ours
@@ -1970,7 +1970,7 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   - the recalibrate and seek-verify move to P4b (no P4a call reaches them).
 
 ```
-make bootfloppy        # build/bootfloppy/floppy.{elf,bin} — the body at FLOPPY_LAID_AT ($fc3e80, Prtblk's text past B6)
+make bootfloppy        # build/bootfloppy/floppy.{elf,bin} — the body at FLOPPY_LAID_AT ($fcc400, the VDI's GDP text, since P4b)
 ```
 
 ```python
@@ -1984,11 +1984,9 @@ boot_late.our_side(machine, floppy=True) / priced(machine, floppy=True) / laid_w
 **The C and its glue.**
 - **`floppy.c`** is the probe, the common entry, select and port A's read-modify-write, the settled `$ff8604`
   accesses, the type-I wait, force, restore, seek, the two exits and the media-change mark.
-  - The common entry's UNKNOWN-TRACK RECOVERY (`$fc1caa..$fc1cca`) is **not ported**: a halt
-    (`recreate_not_reconstructed`, `trap #7`). No P4a call reaches it, because the probe clears the record's track
-    first. A test holds this on every call: the ROM spends no cycle in the recovery, and ours none at the halt. P4b's
-    Floprd reaches it and ports it.
-  - The product is 674 bytes.
+  - The common entry's UNKNOWN-TRACK RECOVERY (`$fc1caa..$fc1cca`) was a halt at P4a; **P4b ports it** (below). No
+    probe reaches it, because the probe clears the record's track first.
+  - The product was 674 bytes at P4a (2,366 since P4b).
 - **`floppy_entry.S`** has three parts:
   - the entry: the ROM's own `movem.l d3-d7/a3-a6,$a28`;
   - the tail: `$fc1cf2..$fc1d28`, its two `d16(a5)` operands spelt `abs.w`;
@@ -2057,7 +2055,7 @@ shores, measured.
 - **B6 with our driver:** 0.86445 (134,344 / 155,410), held in its battery.
 - **The chain:** 0.98988 WARM, 0.99525 COLD.
 
-**Unpinned by name in P4a: P4b's obligations.** hdv_init's request is all zeros (buffer 0, sector / track / side 0,
+**Unpinned by name in P4a: P4b's obligations** (the DMA high byte and the side bit pinned since P4b, below). hdv_init's request is all zeros (buffer 0, sector / track / side 0,
 count 0), and port A's bit 3 is never set. So these are not reached:
 - **the DMA address's high byte from the request's:** the reviewer's `dma_hi_from_top_byte` survives;
 - **port A's kept bits `$f8`:** `port_a_kept_f0` survives;
@@ -2065,7 +2063,120 @@ count 0), and port A's bit 3 is never set. So these are not reached:
 - **the IPL-7 RAISE around port A's RMW:** `ipl_raise_dropped` is caught only by the cycle pins. No interrupt is
   delivered in a run (D3). By contrast, `port_a_unmasked` (the mask OR-ed into the SAVED SR) is killed by SR.
 
-The recovery halt is the other P4b item.
+The recovery halt was the other P4b item: ported since (below).
+
+**P4b: THE READ SIDE.** `floppy.c` gains five things:
+- **Floprd** (`$fc1782`) and **Flopver** (`$fc1ae2`, its verify core `$fc1afe`);
+- the **recalibrate** (`$fc1d46`) and the **seek-verify** (`$fc1d7a`);
+- the **error decode** (`$fc1836`);
+- **one sector's read** shared by both readers. Its wait polls FIRST and counts down after: 262,144 polls to a timeout.
+  Floprd writes the DMA count straight, Flopver through the settled write, as the ROM does.
+
+A jump is laid at each new entry (R-P4-2).
+
+**The single-drive alert** (`$fc1ebe`) ships as the ROM's bytes in `floppy_entry.S`, its `bsr $fc07e8` spelt
+`jsr (abs).l`. Floprd's and Flopver's glue runs it **before** the common entry's `movem`. The critical-error handler it
+calls may change the caller's registers, and the save must see what the handler left.
+- On a one-drive machine, a request for the other letter gets `etv_critic(-17, drive)`, `$9fa` −1, the letter
+  remembered.
+- Then **the caller's own drive argument is rewritten to 0**. That is ROM behaviour, kept.
+
+**THE RECOVERY, AND ITS ONE ARM** (rulings R-P4b-1 "Add A-absent/B-present" and R-P4b-2 "Late boot only"). The common
+entry's unknown-track recovery (`$fc1caa..$fc1cca`) is ported. It runs only where the request's drive has a negative
+record track, which only a failed probe leaves.
+- **The probe never reaches it:** it clears the track first.
+- **The other drive arms never reach it:** on them every Floprd / Flopver asks after a known track (on a one-drive
+  machine the alert rewrites the request to drive A:).
+- **One arm reaches it:** `boot_late.A_ABSENT_B_PRESENT`, drive A: absent and B: present, the fifth drive arm. There
+  hdv_boot's Floprd takes it.
+
+What is held:
+- the ROM spends 132 cycles in its text on that row alone;
+- A:'s record is left `$ff00`;
+- D0 is −6;
+- restore, seek 10 and restore, on both shores.
+
+**The arm is B6-only by ruling**, as every drive arm is. A chain row on it would leave gem_entry apart in four more
+dead-frame bytes than R-P4-5's 11: `$7504..$7506` and `$7514`, because the ROM's recovery frames are 28 bytes deep and
+ours 24.
+
+**WHERE THE BODY LIES.** At P4b the body is 2,366 bytes, too large for Prtblk's 1 KB. So it is laid over **the VDI's GDP
+text `[$fcc400, $fcd000)`**: rounded boxes, arcs, ellipses, wide lines, circles.
+- That is VDI code GEM first runs after gem_entry. Every run that lays the driver ends before it.
+- `test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6` holds this on all 8 chains, both shores.
+- `test_the_rom_s_run_is_the_same_with_our_body_laid` holds it for B6's battery.
+- **It stays in `$fc0000..$fcffff` on purpose.** A return into our body that a dead frame keeps past gem_entry, among
+  R-P4-5's bytes, then holds the ROM's own high byte `$fc`. Over the desk's text (`$fe....`) the chain's gem_entry set
+  grew a twelfth byte, `$7511`; that was measured and backed out.
+
+**THE STAGED CALL (R-P4-1 "Yes, staged calls"):** `boot_floppy.STAGED`, `staged_arrival`. It takes B6's machine at its
+Floprd arrival (COLD; the drive arm named), lays the call's arguments where Floprd's stand, and enters the entry named. The
+return is hdv_boot's, and each shore gets **its own writable copy** of the capture's blank disk, compared after the run
+(`Shore.images`).
+
+The 12 staged arms:
+- Floprd:
+  - 9 sectors on track 5, side 1;
+  - track 79, side 1, sector 9;
+  - sector 10, then sector 0: record not found and the recalibrate;
+  - track 80: the seek-verify fails;
+  - drive B: empty: four seek-verify timeouts of 262,143 polls;
+  - drive B: on one drive: the alert.
+- Flopver:
+  - 9 sectors;
+  - sectors 8..10, one listed;
+  - sectors 10 and 11, both listed: the per-sector retry reset, review RP4b's R2;
+  - track 5, side 1;
+  - drive B: empty.
+
+The buffer is `$30000`. **This pins P4a's open DMA-high-byte and side-bit obligations.**
+
+**THE PRICE OF A CALL** (`boot_floppy.priced`):
+- ours: every cycle in our jump and body;
+- the ROM's: every cycle in its lower driver;
+- **the rest** (the critical-error handler the alert calls, 68 cycles) is held equal and is in neither column;
+- our call is refused by name if it spends a cycle in the ROM's driver text: `NEVER_RUN`, and `ROM_TEXT_STILL_RUN`.
+
+That keeps the slices' in-place price honest (review RP4a's N6).
+
+**What is held.** Everything P4a's rows hold, plus each shore's disks after the run, and:
+- the 9-sector read landing the disk's track 5 / side 1 at `$30000`;
+- `$ff8609` written 3;
+- port A's side bit low;
+- the alert's three stores;
+- each error arm's D0 / D1;
+- the recalibrate's command order;
+- Flopver's list (10, 0) and A2 its cursor;
+- the timeouts' poll counts;
+- the staged arguments laid exactly.
+
+**Unpinned by name.** Each of these mutants is caught by the cycle pins alone, because the model cannot reach the arm:
+- the read-sector timeout (−2, and the poll-first count's last poll);
+- the DMA's error bit;
+- CRC (−4);
+- **the write-protect decode (−13)**: Floprd masks bit 6, and a read never sets it. P4c's Flopwr reaches it.
+- Floprd's per-sector retry reset;
+- Floprd's lost-data default. Flopver's clean-read default is pinned behaviourally.
+- the recovery's clearing of the track before its restore;
+- a critical-error handler that changes the caller's registers, which is foreign code;
+- port A's kept bits `$f8`: no ROM run sets bit 3;
+- the IPL-7 raise (D3).
+
+The design's write-protected-disk arms belong to P4c.
+
+The sweeps' survivors are `port_a_kept_f0`, `alert_after_the_save` (equivalent with the default handler) and the fix
+pass's `harness_arm_b_empty` (equivalent: B:'s disk is never read on that arm) (`p4b/handback.md`, `fix_handback.md`).
+
+**Tier 3.** 29 arrival rows.
+
+| rows | ratio |
+|---|---|
+| the probes | 0.9748–1.0000 |
+| Floprd / Flopver | 0.9826–**1.0194** (the 9-sector Floprd) |
+| B6 with our driver | **0.87480** (146,702 / 167,698) |
+| the recovery row | 1.0000 (36,214,820 / 36,215,726) |
+| the chain WARM | **0.990** (0.98996) |
+| the chain COLD | **0.995** (0.99527) |
 
 ## Writing a case
 
@@ -4886,7 +4997,8 @@ recreate/
 │                       `src/boot/late/late.c` with `include/boot/late.h`: boot B6, [$fc0452,$fc047a) and the five
 │                       routines it calls in C, target only, its own rule into `build/bootlate/` at LATE_LAID_AT;
 │                       `src/boot/floppy/` (`floppy.c` + `floppy_entry.S`) with `include/boot/floppy.h`: boot D4
-│                       P4a, the floppy's lower driver's probe $fc173a and its primitives in C, target only, its
+│                       P4a + P4b, the floppy's lower driver's probe $fc173a, Floprd $fc1782, Flopver $fc1ae2
+│                       and their primitives in C, target only, its
 │                       own rule into `build/bootfloppy/` at FLOPPY_LAID_AT)
 ├── atari/              what SHIPS: target.mk (the flags and include paths EVERY 68000 build uses),
 │                       shim_include/ (the target halves of the kit's off-target headers), the
@@ -4932,7 +5044,8 @@ recreate/
 │                       COLD, the answered entries, END = the mid-boot capture); `boot_chain.py` /
 │                       `test_boot_chain.py` (BOOT CH: our boot chained from the reset to gem_entry against the
 │                       ROM's own, the steering and its link check, END = both captures); `boot_floppy.py` /
-│                       `test_boot_floppy.py` (BOOT D4 P4a: the lower driver's probe calls at their arrivals)
+│                       `test_boot_floppy.py` (BOOT D4 P4a + P4b: the lower driver's calls at their arrivals and
+│                       the staged calls, R-P4-1)
 │                       and `test_boot_rom_data.py` (its ROM-data census)
 ├── tools/              boot_snapshot.py (the snapshot), addrs.py (addrs.h as Python), preinit_snapshot.py (the
 │                       pre-init machines, `--cross-check`), accessory_disk.py (the test accessory and the floppies: accessories, DESKTOP.INF, files),

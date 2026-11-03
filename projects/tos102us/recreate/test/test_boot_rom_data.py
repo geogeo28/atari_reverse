@@ -25,8 +25,8 @@ BOOT_LAUNCH = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "launch", 
 BOOT_DISPLAY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "display", rom_data.INCLUDE / "boot")
 # ...and B6's (`src/boot/late/`, linked by its own rule into `build/bootlate/`).
 BOOT_LATE = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "late", rom_data.INCLUDE / "boot")
-# ...and the lower floppy driver's (D4 P4a: `src/boot/floppy/`, linked by its own rule into `build/bootfloppy/`): it uses
-# no ROM address as a value — its jump at each ROM entry is laid by the harness, and its C reaches RAM and the chips alone.
+# ...and the lower floppy driver's (D4 P4a: `src/boot/floppy/`, linked by its own rule into `build/bootfloppy/`): its jump
+# at each ROM entry is laid by the harness and its C reaches RAM and the chips alone; its glue calls one ROM routine (P4b).
 BOOT_FLOPPY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "floppy", rom_data.INCLUDE / "boot")
 SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY, BOOT_LATE, BOOT_FLOPPY)
 ROM_ADDRESSES_AS_DATA = {
@@ -96,6 +96,9 @@ ROM_ADDRESSES_AS_DATA = {
     # nothing extracted).
     "late.c": {"ROM_CARTRIDGE_HOOKS": CODE, "ROM_GEMDOS_INIT": CODE, "GEMDOS_DSETDRV": CODE, "BIOS_RTC_PROBE": CODE,
                "ROM_RTC_READ": CODE, "ROM_ACSI_READ_BOOT_SECTOR": CODE, "ROM_LAUNCH": CODE, "ROM_OS_HEADER": TABLE},
+    # The lower floppy driver's glue (D4 P4b, `src/boot/floppy/floppy_entry.S`): the single-drive alert calls the
+    # critical-error handler through the BIOS's own `move.l etv_critic,-(sp) / rts` ($fc07e8), in place.
+    "floppy_entry.S": {"ROM_FLOPPY_CRITICAL_CALL": CODE},
 }
 
 

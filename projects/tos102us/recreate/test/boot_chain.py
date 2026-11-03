@@ -144,7 +144,8 @@ BLOB_BOOT_ENTRIES = {boot_sysvars.ENTRY_SYMBOL: (),
 # `jmp $fc03b6`, B3's called entry its `jmp $fc03e0`; the display's `jmp $fc0452` on each of its two paths (colour, mono)
 # and its `jmp $fc0e1a` into the sync wait (the mono switch's, R-B5-1: no slice start); the late C's `jmp $fc047a`; the
 # launch's `jmp $fc0030` (the ROM's own, after a GEM that returned: no chain's). The head holds none: it is the ROM's
-# head transcribed to its last byte and FALLS THROUGH at its end. Our floppy driver's body none (it returns by `rts`);
+# head transcribed to its last byte and FALLS THROUGH at its end. Our floppy driver's body none (it returns by `rts`; its
+# one call into the ROM, the single-drive alert's `jsr ($fc07e8).l`, is a `jsr` — the ROM-data census pins it, CODE);
 # each jump laid at a ROM entry it ports, its one `jmp` to the glue's entry — inside the ROM window, our body laid there.
 EXPECTED_EXITS = {"head": {}, "blob": {boot.HARDWARE_INIT_CALLED: 1, boot.IKBD_RESET_DONE: 1},
                   "display": {boot.INTERRUPTS_OPENED: 2, boot_display.SYNC_WAIT: 1}, "late": {boot.MIDBOOT: 1},
@@ -448,7 +449,8 @@ def rom_port_a_entering_b6(chain):
 
 
 def _floppy(chain):
-    """B6's floppy in the chain: the capture's drives, GPIP's other bits the chain's B5 arm's."""
+    """B6's floppy in the chain: the capture's drives, GPIP's other bits the chain's B5 arm's. (The other drive arms — R-P4b-1's
+    drive A: absent, B: present among them — run in B6's battery alone, ruling R-P4b-2 "Late boot only".)"""
     return boot_late.drives(boot_late.CAPTURE_DRIVES), boot_display.GPIP_OF[chain.arm.monitor]
 
 

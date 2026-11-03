@@ -117,26 +117,33 @@ ANSWER_LABEL = ("D3 THE WAITING ROUTINES ANSWERED AT THEIR ENTRIES on both shore
                 "probe and hdv_boot's Floprd unanswered; a zero-time WD1772 + DMA, the capture's blank disk lent "
                 "read-only in drive A:; the chip and PSG port A carried from the ROM's own runs")
 
-# ---- THE FDC/DMA MODEL'S DRIVES (R-D4-1, R-D4-3): the capture's own, and the three arms the ROM's lower driver takes ------
+# ---- THE FDC/DMA MODEL'S DRIVES (R-D4-1, R-D4-3): the capture's own, and the four arms the ROM's lower driver takes -------
 # THE CAPTURE'S (Hatari's default machine): the blank disk in drive A:, drive B: connected and EMPTY — its probe succeeds
 # (a restore needs no index pulse once A:'s spin-up turned the motor on), so both drives count, as the capture's do.
 Drives = namedtuple("Drives", "name drive_a drive_b")
 CAPTURE_DRIVES = "the capture's drives"
 B_ABSENT, A_ABSENT, A_EMPTY = "drive B: absent", "no drive at all", "drive A: empty"
-DRIVE_ARMS = (CAPTURE_DRIVES, B_ABSENT, A_ABSENT, A_EMPTY)
+# ...and (ruling R-P4b-1 "Add A-absent/B-present", 2026-11-02) DRIVE A: ABSENT, B: PRESENT holding the capture's disk: A:'s
+# probe fails (the record's track left $ff00), B:'s counts — one drive — and hdv_boot's Floprd of drive 0 takes the common
+# entry's UNKNOWN-TRACK RECOVERY ($fc1caa..$fc1cca), the one arm of any run that does. B6's battery alone runs it, as every
+# drive arm (ruling R-P4b-2 "Late boot only": a chain on it would leave gem_entry apart in four more dead-frame bytes).
+A_ABSENT_B_PRESENT = "drive A: absent, B: present"
+DRIVE_ARMS = (CAPTURE_DRIVES, B_ABSENT, A_ABSENT, A_EMPTY, A_ABSENT_B_PRESENT)
 
 
 @functools.cache
 def drives(arm=CAPTURE_DRIVES):
     """The two bays of `arm` (`DRIVE_ARMS`): THE CAPTURE'S; DRIVE B: ABSENT (its restore steps 255 times and fails: one
     drive counted); NO DRIVE AT ALL (A:'s spin-up never ends — the ROM's own count-down times out, `$D0` forces it);
-    DRIVE A: EMPTY, B: absent (A:'s spin-up and hdv_boot's seek-verify hang on no index pulse: the ROM's own timeouts).
+    DRIVE A: EMPTY, B: absent (A:'s spin-up and hdv_boot's seek-verify hang on no index pulse: the ROM's own timeouts);
+    DRIVE A: ABSENT, B: PRESENT with the disk (A:'s spin-up times out; hdv_boot's Floprd recovers A:'s unknown track).
     The disk is THE CAPTURE'S BLANK DISK, lent read-only (`bytes`): a write to it is refused by the model."""
     disk = bytes(the_disk())
     bays = {CAPTURE_DRIVES: (emu.FdcDrive(disk), emu.FdcDrive(None)),
             B_ABSENT: (emu.FdcDrive(disk), emu.FDC_ABSENT),
             A_ABSENT: (emu.FDC_ABSENT, emu.FDC_ABSENT),
-            A_EMPTY: (emu.FdcDrive(None), emu.FDC_ABSENT)}
+            A_EMPTY: (emu.FdcDrive(None), emu.FDC_ABSENT),
+            A_ABSENT_B_PRESENT: (emu.FDC_ABSENT, emu.FdcDrive(disk))}
     return Drives(arm, *bays[arm])
 
 
@@ -509,7 +516,8 @@ slice's and its ported callees') and `rest` (each run's other cycles: the ROM's 
 def priced(machine, floppy=False):
     """`machine`'s slice PRICED: both shores run, every held surface equal (refused by name otherwise). With `floppy`
     (R-P4-3: our lower floppy driver laid too) the ROM's own takes the driver's text it runs BEYOND what ours still runs
-    of it (Floprd's, unported: the ROM's on both shores), read off each plain run's profile — the calls ours replaces.
+    of it (none since P4b: the probes and Floprd are ours; Flopwr's and Flopfmt's until P4c), read off each plain run's
+    profile — the calls ours replaces.
     WHAT IT DEPENDS ON (review RP4a's N6): our C never runs the ROM's driver text on its own behalf — such cycles would
     leave our column for the ROM's discount unseen. Every ported entry has arrival rows holding the WHOLE call in our
     spans (`boot_floppy.priced`: own == the call's cycles)."""

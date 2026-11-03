@@ -562,7 +562,12 @@ ARMS = {bl.B_ABSENT: dict(nflops=1, timeouts=(), instructions=17_008),
         bl.A_ABSENT: dict(nflops=0, timeouts=((bl.WD1772_RESTORE, FLOPPY_SPIN_UP_COUNT - 1),), instructions=1_587_388),
         bl.A_EMPTY: dict(nflops=1, timeouts=((bl.WD1772_RESTORE, FLOPPY_SPIN_UP_COUNT - 1),
                                              *[(bl.WD1772_SEEK_VERIFY, FLOPPY_WAIT_COUNT - 1)] * 4),
-                         instructions=5_785_168)}
+                         instructions=5_785_168),
+        # R-P4b-1: A:'s spin-up times out (no drive), B:'s probe counts; hdv_boot's Floprd recovers A:'s unknown track
+        # (the restore's, the seek's, the restore's waits on no drive, then the seek-verify's) and fails -6
+        bl.A_ABSENT_B_PRESENT: dict(nflops=1, timeouts=((bl.WD1772_RESTORE, FLOPPY_SPIN_UP_COUNT - 1),
+                                                       *[(bl.WD1772_SEEK_VERIFY, FLOPPY_WAIT_COUNT - 1)] * 3),
+                                    instructions=4_736_178)}
 
 
 @pytest.fixture(scope="module", params=sorted(ARMS))
@@ -625,8 +630,9 @@ def test_with_our_driver_the_slice_is_priced_on_each_shore_s_own_cycles(machine)
     assert priced.own == OWN_CYCLES_WITH_OUR_DRIVER and priced.own[0] / priced.own[1] <= BAR
 
 
-# ours, the ROM's: OWN_CYCLES + the two probe calls in place (ours 18,422, the ROM's 18,864).
-OWN_CYCLES_WITH_OUR_DRIVER = (134_344, 155_410)
+# ours, the ROM's: OWN_CYCLES + the driver's calls in place — the two probes and, since P4b, hdv_boot's Floprd (ours
+# 30,780, the ROM's 31,152).
+OWN_CYCLES_WITH_OUR_DRIVER = (146_702, 167_698)
 
 
 def test_with_our_driver_the_end_surface_is_still_the_capture_but_d1():

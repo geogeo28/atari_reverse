@@ -12,21 +12,31 @@
  * `layouts.parse_constants` (`test/boot_floppy.py`), so a value is spelt once.
  *
  * WHERE IT IS LAID (rulings "ROM-window overlay" and "Own link rule", 2026-10-29; R-P4-2 "Jump at ROM entries",
- * 2026-11-02): the body over a COPY of the image's ROM bytes no run that lays it executes or reads — Prtblk's text
- * (XBIOS 36, unported) past B6's late slice — and LINKED THERE by its own Makefile rule (`build/bootfloppy/`); and at
+ * 2026-11-02): the body over a COPY of the image's ROM bytes no run that lays it executes or reads — SINCE P4b the VDI's
+ * GDP text `[$fcc400, $fcd000)` (rounded boxes, arcs, ellipses, wide lines, circles: VDI code GEM's own init first opens a
+ * workstation for, after gem_entry — every run that lays the driver, B6, the chain's B6, the driver's arrival and staged
+ * rows, ends before; held by `test_boot_floppy.py`). P4a's 674 bytes fit Prtblk's text, P4b's 2.3 KB do not; and the span
+ * stays in $fc0000..$fcffff ON PURPOSE: a return into our body that a dead frame keeps past gem_entry (R-P4-5's bytes)
+ * holds the ROM's own high byte `$fc` there — over the desk's text ($fe....) the chain's gem_entry set grew a twelfth
+ * byte, `$7511` (measured) — and LINKED THERE by its own Makefile rule (`build/bootfloppy/`); and at
  * each ported ROM entry a 6-byte `jmp` to its glue, laid over the ROM's own first instruction there, so every caller —
  * the XBIOS table, hdv_init's `jsr`, every harness answer keyed by the entry — reaches ours unchanged.
  */
 #ifndef TOS102US_BOOT_FLOPPY_H
 #define TOS102US_BOOT_FLOPPY_H
 
-#define FLOPPY_LAID_AT            0xfc3e80   /* the body's first byte: past B6's late slice ([$fc3d00, $fc3e64)) */
-#define FLOPPY_LAID_LIMIT         0xfc4278   /* ...and inside Prtblk's text, which ends here ($fc31fa..$fc4278) */
+#define FLOPPY_LAID_AT            0xfcc400   /* the body's first byte, over the VDI's GDP text (P4b: Prtblk's 1 KB too small) */
+#define FLOPPY_LAID_LIMIT         0xfcd000   /* ...3 KB of it: gdp_rbox's tail .. do_circ, past the launch twin's [$fcc000, $fcc27e) */
 
 /* ---- the ROM's entries ([$fc173a, $fc1f08): the lower driver) ------------------------------------------------------ */
 #define ROM_FLOPPY_PROBE          0xfc173a   /* hdv_init's per-drive probe: `jsr` at $fc0f82, 12(sp) the drive */
 #define ROM_FLOPPY_FLOPRD         0xfc1782   /* XBIOS 8 — and the probe's end */
 #define ROM_FLOPPY_LOWER_END      0xfc1f08   /* past `$fc1ef6`'s `rts`: the driver's last byte */
+#define ROM_FLOPPY_FLOPWR         0xfc1858   /* XBIOS 9 — and Floprd's end (its error decode $fc1836 the last of it) */
+#define ROM_FLOPPY_FLOPVER        0xfc1ae2   /* XBIOS 19 ... */
+#define ROM_FLOPPY_VBL            0xfc1bc4   /* ...its verify core ($fc1afe) ending here, at the floppy's VBL service */
+#define ROM_FLOPPY_PRIMITIVES     0xfc1c48   /* the common entry: from here to the driver's end, the shared primitives */
+#define ROM_FLOPPY_CRITICAL_CALL  0xfc07e8   /* `move.l etv_critic,-(sp) / rts`: the single-drive alert's call */
 #define FLOPPY_ENTRY_JUMP_BYTES   6          /* `jmp abs.l`: the stub laid at a ported entry (R-P4-2) */
 
 /* ---- its RAM --------------------------------------------------------------------------------------------------------- */
@@ -48,6 +58,8 @@
 #define FLOPPY_RECORD_TRACK       0          /* word */
 #define FLOPPY_RECORD_SEEK_RATE   2          /* word: `seekrate` copied in by the probe; its low 2 bits the step rate */
 #define FLOPPY_MEDIA_MODE         0x755a     /* byte per drive: the media-change mode (1 maybe, 2 changed) */
+#define FLOPPY_WP_SEEN            0x9fa      /* word: the write-protect latches or'd (the VBL's); -1 by the alert */
+#define FLOPPY_SINGLE_DRIVE_LETTER 0x7dc4    /* word: the letter a one-drive machine's drive last stood for */
 #define SYSVAR_NFLOPS             0x4a6      /* word: the drives hdv_init counted */
 
 /* ---- the request: the caller's arguments, offsets from its first (Floprd's layout; the probe's caller pushes the same
@@ -66,6 +78,15 @@
 #define FLOPPY_MEDIA_MAYBE        1          /* `moveq #1,d0` at the error exit */
 #define FLOPPY_UNKNOWN_TRACK      0xff00     /* the record's track while the head's place is not known */
 #define FLOPPY_PROBE_RETRY_TRACK  10         /* `moveq #10,d7`: the seek a failed restore retries from */
+#define FLOPPY_RECALIBRATE_TRACK  5          /* `move.w #5,d7`: the recalibrate's seek after its restore */
+#define FLOPPY_GENERAL_ERROR      (-1)       /* `move.w #-1,$a26`: each sector's error before its read */
+#define FLOPPY_TIMED_OUT          (-2)       /* `move.w #-2,$a26`: a read's wait timed out */
+#define FLOPPY_CRC_ERROR          (-4)       /* the decode's: CRC */
+#define FLOPPY_RECORD_NOT_FOUND   (-8)       /* ...record not found */
+#define FLOPPY_READ_ERROR         (-11)      /* `moveq #-11,d0`: Floprd's and Flopver's own error */
+#define FLOPPY_WRITE_PROTECTED    (-13)      /* ...write-protected */
+#define FLOPPY_INSERT_DISK        (-17)      /* `move.w #-17,-(sp)`: the alert's etv_critic code */
+#define FLOPPY_SECTOR_BYTES       512
 
 /* ---- the DMA chip's mode words (`$ff8606`) and its register window (`$ff8604`) --------------------------------------- */
 #define FDC_DMA_ACCESS            0xff8604   /* word: the FDC register (or the sector count) the mode selects */
@@ -76,14 +97,23 @@
 #define FDC_MODE_TRACK            0x82
 #define FDC_MODE_SECTOR           0x84
 #define FDC_MODE_DATA             0x86
+#define FDC_MODE_SECTOR_COUNT     0x90       /* the DMA's sector count (read direction); toggling bit 8 resets the DMA */
+#define FDC_MODE_WRITE            0x100      /* the write direction */
+#define DMA_STATUS_NO_ERROR       1          /* `$ff8606` read, bit 0 */
 
 /* ---- the WD1772's commands and status bits --------------------------------------------------------------------------- */
 #define WD1772_RESTORE            0x00
 #define WD1772_SEEK               0x10
+#define WD1772_SEEK_VERIFY        0x14       /* `moveq #20,d6` */
+#define WD1772_READ_SECTOR        0x80
 #define WD1772_FORCE_INTERRUPT    0xd0
 #define WD1772_STEP_RATE_MASK     3          /* the record's rate, or'd into a type-I command */
 #define WD1772_STATUS_MOTOR       0x80
 #define WD1772_STATUS_TRACK_00    0x04
+#define WD1772_STATUS_WRITE_PROTECT 0x40
+#define WD1772_STATUS_RECORD_NOT_FOUND 0x10
+#define WD1772_STATUS_CRC_ERROR   0x08
+#define WD1772_TYPE_II_ERRORS     0x1c       /* `and.b #$1c,d0`: RNF, CRC, lost data */
 #define MFP_GPIP_FDC_INTRQ        0x20       /* GPIP bit 5: the FDC's interrupt line, LOW when a command is done */
 
 /* ---- the waits: INSTRUCTION COUNTS, not time (`move.l #$40000,d7`; `#$60000` with the motor off) ---------------------- */

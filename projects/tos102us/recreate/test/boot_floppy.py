@@ -1,7 +1,9 @@
 r"""THE FLOPPY'S LOWER DRIVER ON BOTH SHORES (D4 phase P4, `test_boot_floppy.py`): the ROM's `[$fc173a, $fc1f08)` against
 OUR C (`src/boot/floppy/`), each ROM entry it ports reached through a 6-byte `jmp` laid over the ROM's own first
 instruction there, so every caller — the XBIOS table, hdv_init's `jsr`, every harness answer keyed by the entry —
-reaches ours unchanged. P4a ports the DRIVE PROBE (`$fc173a`) and the primitives it runs on.
+reaches ours unchanged. P4a ports the DRIVE PROBE (`$fc173a`) and the primitives it runs on; P4b FLOPRD (`$fc1782`) and
+FLOPVER (`$fc1ae2`) with the recalibrate, the seek-verify, the error decode, the single-drive alert and the common entry's
+unknown-track recovery (reached on drive A: absent and B: present alone, ruling R-P4b-1).
 
 THE USER'S RULINGS IT STANDS ON: D4 (2026-11-01, R-D4-1..4: the kit's zero-time FDC/DMA model, armed per run; the chip
 and PSG port A carried from the ROM's own runs; the model's ordered ledger held exactly); "ROM-window overlay" and "Own
@@ -10,12 +12,13 @@ driver entry address in the test image, 12 cycles a call, priced; R-P4-3 "Both" 
 PRICED AT ITS ARRIVAL (`ARRIVALS`, `priced`), and the chained boot runs our driver (`boot_chain`), B6's battery keeping
 its rows with the ROM's driver beside the new ones (`boot_late.our_side(..., floppy=True)`). The orchestrator's calls
 under standing policy: the settle an asm idiom inside the C (the SECTOR_SUM precedent), target-only C, the stack bound
-held by making the C fit.
+held by making the C fit. And R-P4-1 "Yes, staged calls" (P4b): A STAGED CALL — B6's machine at its Floprd arrival, the
+call's arguments laid on its stack, the entry named, a writable copy of the capture's blank disk per shore (`STAGED`).
 
 A DRIVER CALL AT ITS ARRIVAL (`arrivals`, `the_rom_s` / `ours`): B6's ROM run from its machine at `$fc0452` through the
 FDC model on one drive arm (`boot_late.DRIVE_ARMS`), stopped where hdv_init's `jsr` arrives at the probe — the machine
 there, the carry (port A, the chip) — and from that one machine, BOTH SHORES run to the call's return: the ROM's own
-probe, and ours entered at the same address (our jump laid there, our body laid in Prtblk's text). The ROM's run then
+probe, and ours entered at the same address (our jump laid there, our body over the VDI's GDP text). The ROM's run then
 goes on from where its call returned, to the next arrival.
 
 WHAT IS HELD (`differences`): the stop; EVERY register (D0 the result, D1 / D2 port A's bytes over the caller's upper
@@ -24,14 +27,16 @@ stored OUTSIDE the call's own dead frames — `[FRAMES_APART_FROM, its entry SP)
 stack byte for byte below (`boot_chain.FRAMES_APART_FROM`): a store of ours below it is a difference, which is how the
 29-byte bound is held — so the 36 bytes the glue saves at `$a28` are held exactly; every ordered ledger (the hardware
 writes, the declared reads, the modelled reads, the PSG's accesses, the FDC model's transactions with the polls each
-wait made, counted); the chip the model left. Instructions and cycles are the price: each shore's whole call.
+wait made, counted); the chip the model left; the disks each shore's drives hold after (a staged call's own copies).
+Instructions and cycles are the price: each shore's OWN — ours every cycle in our jump and body, the ROM's every cycle in
+its driver — and the REST beside them (the critical-error handler the single-drive alert calls) held equal.
 """
 import functools
 import struct
 from collections import namedtuple
 from pathlib import Path
 
-from harness import emu
+from harness import addrs, emu
 
 import boot
 import boot_late
@@ -46,19 +51,26 @@ JMP_CYCLES = 12                         # `jmp abs.l` on a 68000: the stub's pri
 ROM_PROBE_FRAME_BYTES = 20              # the ROM's probe stores this far under its entry SP (measured; ours the same)
 ROM_TIMEOUT_FRAME_BYTES = 24            # ...and its force-interrupt one call deeper, where a wait times out (ours 20)
 
-# ---- THE ROM'S DRIVER, AND WHAT P4a PORTS OF IT ------------------------------------------------------------------------------
+# ---- THE ROM'S DRIVER, AND WHAT P4a / P4b PORT OF IT -----------------------------------------------------------------------
 LOWER_DRIVER = (CONSTANTS["ROM_FLOPPY_PROBE"], CONSTANTS["ROM_FLOPPY_LOWER_END"])
-PROBE = CONSTANTS["ROM_FLOPPY_PROBE"]
-PROBE_SPAN = (PROBE, CONSTANTS["ROM_FLOPPY_FLOPRD"])
-# EACH PORTED ENTRY: the ROM's address, where our jump is laid, and the glue's symbol it jumps to.
-PORTED = {PROBE: "floppy_probe_entry"}
+PROBE, FLOPRD, FLOPVER = CONSTANTS["ROM_FLOPPY_PROBE"], CONSTANTS["ROM_FLOPPY_FLOPRD"], CONSTANTS["ROM_FLOPPY_FLOPVER"]
+PROBE_SPAN = (PROBE, FLOPRD)
+# EACH PORTED ENTRY: the ROM's address, where our jump is laid, and the glue's symbol it jumps to (P4a the probe; P4b
+# Floprd and Flopver).
+PORTED = {PROBE: "floppy_probe_entry", FLOPRD: "floppy_floprd_entry", FLOPVER: "floppy_flopver_entry"}
+# ...AND EACH ONE'S OWN TEXT in the ROM: the probe to Floprd; Floprd with its error decode to Flopwr; Flopver with its verify
+# core to the VBL service.
+PORTED_SPANS = {PROBE: PROBE_SPAN, FLOPRD: (FLOPRD, CONSTANTS["ROM_FLOPPY_FLOPWR"]),
+                FLOPVER: (FLOPVER, CONSTANTS["ROM_FLOPPY_VBL"])}
+PRIMITIVES = (CONSTANTS["ROM_FLOPPY_PRIMITIVES"], CONSTANTS["ROM_FLOPPY_LOWER_END"])
 STUB_BYTES = CONSTANTS["FLOPPY_ENTRY_JUMP_BYTES"]
-# THE ROM'S TEXT OUR SHORE MUST NEVER RUN: each ported routine's own text past the jump laid over its first instruction
-# (the primitives it shares with the routines still the ROM's — Floprd's — are theirs to run).
-NEVER_RUN = tuple((entry + STUB_BYTES, PROBE_SPAN[1]) for entry in PORTED)
-# ...AND THE ROM'S DRIVER TEXT OURS STILL RUNS: all of it but the jumps laid over it (Floprd and the primitives it calls are
-# the ROM's on both shores until P4b) — what a slice's price reads OFF the ROM's own driver cycles to leave the calls ours
-# replaces (`boot_late.priced`, `boot_chain.priced`).
+# THE ROM'S TEXT OUR SHORE MUST NEVER RUN: each ported routine's own text past the jump laid over its first instruction,
+# and — since P4b, when no routine of the ROM's that calls them runs on our shore (Flopwr and Flopfmt are called by no run
+# that lays the driver) — the primitives.
+NEVER_RUN = (*(tuple((entry + STUB_BYTES, PORTED_SPANS[entry][1]) for entry in sorted(PORTED))), PRIMITIVES)
+# ...AND THE ROM'S DRIVER TEXT OURS STILL RUNS: all of it but the jumps laid over it (none of it on any run of ours since
+# P4b; Flopwr's and Flopfmt's until P4c) — what a slice's price reads OFF the ROM's own driver cycles to leave the calls
+# ours replaces (`boot_late.priced`, `boot_chain.priced`).
 def _without_the_jumps(span):
     lo, hi, kept = *span, []
     for entry in sorted(PORTED):
@@ -70,7 +82,10 @@ def _without_the_jumps(span):
 ROM_TEXT_STILL_RUN = _without_the_jumps(LOWER_DRIVER)
 
 LABEL = ("THE FLOPPY'S LOWER DRIVER, OURS (R-P4-2 \"Jump at ROM entries\"): a 6-byte `jmp` laid at each ported ROM entry, "
-         "our body over Prtblk's text")
+         "our body over the VDI's GDP text [$fcc400, $fcd000)")
+STAGED_LABEL = ("A STAGED CALL — A LABELLED STAGING (ruling R-P4-1 \"Yes, staged calls\"): B6's machine at its Floprd "
+                "arrival, the call's arguments LAID on its stack and its entry the one named, a WRITABLE copy of the "
+                "capture's blank disk in each shore's drive A:")
 
 
 Product = namedtuple("Product", "base code symbols elf")
@@ -78,7 +93,7 @@ Product = namedtuple("Product", "base code symbols elf")
 
 @functools.cache
 def product():
-    """`Product` of `build/bootfloppy/` — refused by name unless it lies at its laid address and ends inside Prtblk's text
+    """`Product` of `build/bootfloppy/` — refused by name unless it lies at its laid address and ends inside its span
     (`make bootfloppy`)."""
     binary, elf = PRODUCT_DIRECTORY / "floppy.bin", PRODUCT_DIRECTORY / "floppy.elf"
     assert binary.is_file() and elf.is_file(), f"{PRODUCT_DIRECTORY} is not built: `make bootfloppy`"
@@ -109,20 +124,29 @@ def our_spans(laid=None):
 
 
 # ---- THE ARRIVALS: B6's ROM run, stopped at each call of a ported entry ---------------------------------------------------
-Arrival = namedtuple("Arrival", "machine carry returns_to drive_arm gpip")
-Arrival.__doc__ = """One call of a ported entry as the ROM's own B6 run makes it: the `machine` standing at the entry, the
-`carry` (port A, the chip) the run hands it, the address it `returns_to` (the long at its SP), the `drive_arm` and the
-`gpip` byte its run declares."""
+Arrival = namedtuple("Arrival", "machine carry returns_to drive_arm gpip writable", defaults=(False,))
+Arrival.__doc__ = """One call of a ported entry as the ROM's own B6 run makes it — or as a case stages it there (R-P4-1): the
+`machine` standing at the entry, the `carry` (port A, the chip) the run hands it, the address it `returns_to` (the long at
+its SP), the `drive_arm` and the `gpip` byte its run declares; `writable`: each shore lent its OWN WRITABLE COPY of the
+drives' disks (a staged call's; R-P4-1), else the capture's disk read-only."""
 
 
-def _declared(arrival):
-    return boot_late.floppy_declared(boot_late.drives(arrival.drive_arm), arrival.carry, arrival.gpip)
+def _bays(arrival):
+    drives = boot_late.drives(arrival.drive_arm)
+    bays = (drives.drive_a, drives.drive_b)
+    if arrival.writable:
+        bays = tuple(bay._replace(image=bytearray(bay.image)) if bay.image is not None else bay for bay in bays)
+    return bays
 
 
 def _call(arrival, laid=None):
-    """One shore's run of `arrival`'s call to its return (`laid`: our driver laid, our jump at the entry)."""
-    return boot.run(arrival.machine, {arrival.returns_to}, budget=boot_late.TIMEOUT_ARM_INSNS, laid=laid,
-                    **_declared(arrival))
+    """One shore's run of `arrival`'s call to its return (`laid`: our driver laid, our jump at the entry): `(Slice, the
+    drives' images after it)`."""
+    bays = _bays(arrival)
+    done = boot.run(arrival.machine, {arrival.returns_to}, budget=boot_late.TIMEOUT_ARM_INSNS, laid=laid,
+                    psg_seed={addrs.PSG_PORT_A: arrival.carry.port_a},
+                    hw_seed={addrs.MFP_GPIP: arrival.gpip}, fdc=boot.Fdc(*bays, arrival.carry.chip))
+    return done, tuple(None if bay.image is None else bytes(bay.image) for bay in bays)
 
 
 def rom_calls(standing, until, drive_arm, carry, gpip):
@@ -142,7 +166,7 @@ def rom_calls(standing, until, drive_arm, carry, gpip):
         machine = done.machine
         returns_to = struct.unpack_from(">I", machine.ram, machine.registers["isp"])[0] & boot.BUS
         arrival = Arrival(machine, carry, returns_to, drive_arm, gpip)
-        called = _call(arrival)
+        called, _images = _call(arrival)
         calls.append((arrival, called))
         standing, carry = called.machine, boot_late.carried(called, carry)
 
@@ -154,41 +178,102 @@ def b6_calls(machine, drive_arm=boot_late.CAPTURE_DRIVES):
                      boot_late.gpip_of(machine))
 
 
-# THE ROWS (R-P4-3, the new kind): each probe call B6 makes — both drives — on COLD with each drive arm, and on WARM with
-# the capture's drives (the driver does not read WARM against COLD; the arms are P3's, run on COLD).
+# THE ROWS (R-P4-3, the new kind): each call B6 makes — both drives' probes and hdv_boot's Floprd of the boot sector (none
+# with no drive at all: hdv_boot reads `_nflops` 0 and calls nothing) — on COLD with each drive arm, and on WARM with the
+# capture's drives (the driver does not read WARM against COLD; the arms are P3's, run on COLD) ...
+B6_FLOPRD_ARMS = (boot_late.CAPTURE_DRIVES, boot_late.B_ABSENT, boot_late.A_EMPTY, boot_late.A_ABSENT_B_PRESENT)
+B6_FLOPRD_INDEX = 2
 ARRIVALS = {
     **{f"the probe of drive {'AB'[index]}:, {arm}, COLD": (boot.COLD, arm, index) for arm in boot_late.DRIVE_ARMS
        for index in (0, 1)},
     **{f"the probe of drive {'AB'[index]}:, {boot_late.CAPTURE_DRIVES}, WARM": (boot.WARM, boot_late.CAPTURE_DRIVES, index)
        for index in (0, 1)},
+    **{f"Floprd of the boot sector, {arm}, COLD": (boot.COLD, arm, B6_FLOPRD_INDEX) for arm in B6_FLOPRD_ARMS},
+    f"Floprd of the boot sector, {boot_late.CAPTURE_DRIVES}, WARM": (boot.WARM, boot_late.CAPTURE_DRIVES, B6_FLOPRD_INDEX),
 }
+# ...AND THE STAGED CALLS (R-P4-1): from B6's machine at its Floprd arrival (COLD; the arm named), `entry` called with these
+# arguments — buffer, filler, drive, sector, track, side, count (Floprd's and Flopver's shape) — the buffer above the boot's
+# RAM in use, so its address's high byte is not 0 (it pins the DMA address's high byte).
+STAGED_BUFFER = 0x30000
+Staged = namedtuple("Staged", "drive_arm entry drive sector track side count")
+STAGED = {
+    "Floprd, 9 sectors from track 5 side 1 sector 1": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 1, 5, 1, 9),
+    "Floprd, track 79 side 1 sector 9": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 9, 79, 1, 1),
+    "Floprd, sector 10 (record not found, the recalibrate)": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 10, 0, 0, 1),
+    "Floprd, sector 0 (record not found)": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 0, 0, 0, 1),
+    "Floprd, track 80 (the seek-verify fails)": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 1, 80, 0, 1),
+    "Floprd of drive B:, empty (the seek-verify's timeouts)": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 1, 1, 0, 0, 1),
+    "Floprd of drive B: on one drive (the single-drive alert)": Staged(boot_late.B_ABSENT, FLOPRD, 1, 1, 0, 0, 1),
+    "Flopver, track 0 side 0, 9 sectors": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 1, 0, 0, 9),
+    "Flopver, sectors 8 to 10 (one listed)": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 8, 0, 0, 3),
+    # ...and two sectors that both fail (10, 11: no such sector on a 9-sector track): the SECOND sector's retries reset
+    # per sector — three reads and the recalibrate again, both listed (review RP4b's R2).
+    "Flopver, sectors 10 and 11 (both listed)": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 10, 0, 0, 2),
+    "Flopver, track 5 side 1, 2 sectors": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 1, 5, 1, 2),
+    "Flopver of drive B:, empty (the seek-verify fails)": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 1, 1, 0, 0, 1),
+}
+ARRIVALS.update({f"STAGED (R-P4-1): {name}": staged for name, staged in STAGED.items()})
+STAGED_ARGUMENTS = ">IIHHHHH"                # buffer, filler, drive, sector, track, side, count — past the return
 
 
+def staged_arrival(staged):
+    """THE STAGED CALL (R-P4-1): B6's machine standing at its Floprd arrival on `staged.drive_arm` (COLD), `staged`'s
+    arguments laid where Floprd's stand and its entry the one named; each shore's disks its own writable copies."""
+    floprd, _called = b6_calls(boot.COLD, staged.drive_arm)[B6_FLOPRD_INDEX]
+    ram = bytearray(floprd.machine.ram)
+    struct.pack_into(STAGED_ARGUMENTS, ram, floprd.machine.registers["isp"] + 4, STAGED_BUFFER, 0, staged.drive,
+                     staged.sector, staged.track, staged.side, staged.count)
+    machine = floprd.machine._replace(ram=bytes(ram), registers={**floprd.machine.registers, "pc": staged.entry},
+                                      label=f"{floprd.machine.label}; {STAGED_LABEL}")
+    return floprd._replace(machine=machine, writable=True)
+
+
+def entry_of(name):
+    """The ROM entry `name`'s call enters — read off its row, running nothing (the tier-3 table names its rows by it)."""
+    spec = ARRIVALS[name]
+    if isinstance(spec, Staged):
+        return spec.entry
+    return FLOPRD if spec[2] == B6_FLOPRD_INDEX else PROBE
+
+
+@functools.cache
 def arrival_of(name):
-    machine, drive_arm, index = ARRIVALS[name]
-    return b6_calls(machine, drive_arm)[index]
+    """`name`'s arrival: a call B6's run makes (`Arrival`), or a staged one."""
+    spec = ARRIVALS[name]
+    if isinstance(spec, Staged):
+        return staged_arrival(spec)
+    machine, drive_arm, index = spec
+    return b6_calls(machine, drive_arm)[index][0]
 
 
-Shore = namedtuple("Shore", "slice own")
+Shore = namedtuple("Shore", "slice own images")
 
 
 def the_rom_s(name):
-    """The ROM's own call at `name`'s arrival: its whole run its own."""
-    _arrival, called = arrival_of(name)
-    return Shore(called, called.cycles)
+    """The ROM's own call at `name`'s arrival: its own cycles every cycle in its lower driver (the critical-error handler the
+    single-drive alert calls — the OS both run — in neither column)."""
+    arrival = arrival_of(name)          # (made before the profile opens: B6's run to it is no part of the call)
+    emu.prof_enable(True)
+    emu.prof_reset()
+    try:
+        called, images = _call(arrival)
+        own = emu.prof_cycles(*LOWER_DRIVER)
+    finally:
+        emu.prof_enable(False)
+    return Shore(called, own, images)
 
 
 def ours(name, code=None):
     """OUR call from the same machine, our driver laid (or `code` as its body), entered at the same ROM address — refused
     by name if it ran a cycle of the ROM's ported text; its own cycles every cycle in our spans."""
-    arrival, _called = arrival_of(name)
+    arrival = arrival_of(name)
     laid = pieces(code)
-    called = _call(arrival, laid=boot.overlays(*laid))
-    for lo, hi in NEVER_RUN:
+    called, images = _call(arrival, laid=boot.overlays(*laid))
+    for lo, hi in (*NEVER_RUN, *ROM_TEXT_STILL_RUN):
         spent = emu.prof_cycles(lo, hi)
         if spent:
-            raise boot.Refused(f"{name}: our call executed the ROM's ported text [{lo:#x}, {hi:#x}) — {spent} cycles of it")
-    return Shore(called, sum(emu.prof_cycles(lo, hi) for lo, hi in our_spans(laid)))
+            raise boot.Refused(f"{name}: our call executed the ROM's driver text [{lo:#x}, {hi:#x}) — {spent} cycles of it")
+    return Shore(called, sum(emu.prof_cycles(lo, hi) for lo, hi in our_spans(laid)), images)
 
 
 # ---- WHAT IS HELD -------------------------------------------------------------------------------------------------------------
@@ -212,7 +297,7 @@ def differences(name, rom, mine):
     """Every surface our call `mine` differs from the ROM's `rom` on, by name (none: held equal)."""
     found = []
     one, other = rom.slice, mine.slice
-    span = frames(arrival_of(name)[0].machine.registers["isp"])
+    span = frames(arrival_of(name).machine.registers["isp"])
     if other.stop != one.stop:
         found.append(f"stop: the ROM's {one.stop:#x}, ours {other.stop:#x}")
     theirs, yours = one.machine.registers, other.machine.registers
@@ -232,17 +317,23 @@ def differences(name, rom, mine):
             found.append(f"{ledger}: the ROM's and ours differ")
     if one.fdc_chip != other.fdc_chip:
         found.append("fdc_chip: the FDC/DMA chip the two shores left differs")
+    if rom.images != mine.images:
+        found.append("images: the disks the two shores left differ")
     return found
 
 
-Priced = namedtuple("Priced", "the_rom_s ours own")
+Priced = namedtuple("Priced", "the_rom_s ours own rest")
 
 
 def priced(name):
     """The call at `name`'s arrival PRICED: both shores run, every held surface equal (refused by name otherwise); each
-    shore's own cycles its whole call (ours: every cycle in our jump and our body, held to be the whole call)."""
+    shore's own cycles — ours every cycle in our jump and our body, the ROM's every cycle in its lower driver — and THE
+    REST, each call's other cycles (the critical-error handler the single-drive alert calls: the OS both run), held equal.
+    With `ours` refused by name where it spent a cycle in the ROM's driver text, that is what keeps the slices' price in
+    place honest (review RP4a's N6)."""
     rom, mine = the_rom_s(name), ours(name)
     found = differences(name, rom, mine)
     assert not found, f"{name}: ours differs from the ROM's — {'; '.join(found)}"
-    assert mine.own == mine.slice.cycles, f"{name}: ours spent {mine.slice.cycles - mine.own} cycles outside our driver"
-    return Priced(rom.slice, mine.slice, (mine.own, rom.own))
+    rest = (mine.slice.cycles - mine.own, rom.slice.cycles - rom.own)
+    assert rest[0] == rest[1], f"{name}: beside its own, ours spent {rest[0]} cycles, the ROM's {rest[1]}"
+    return Priced(rom.slice, mine.slice, (mine.own, rom.own), rest[0])
