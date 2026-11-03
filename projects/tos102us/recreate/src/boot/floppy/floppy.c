@@ -17,6 +17,9 @@
  * say an empty loop that must run, so it is the ROM's own helper (`floppy_settle`, the glue), called as the ROM's
  * routines call it — the SECTOR_SUM precedent (`late.c`). The force-interrupt's 16 `dbf`s likewise (`dbf_delay`).
  *
+ * P4b adds Floprd ($fc1782) and Flopver ($fc1ae2) with the recalibrate, the seek-verify, the decode and the recovery;
+ * P4c Flopwr ($fc1858) and Flopfmt ($fc1916) with the track builder, its fill and the bad-magic ROM bug kept.
+ *
  * THE REGISTERS — THE ROM'S CONTRACT, ALL OF IT OBSERVABLE (the BIOS / XBIOS dispatcher hands a caller D1, D2, A0-A2 as
  * the routine leaves them; hdv_init's run goes on with them): D1 and D2 keep the caller's upper bytes and take, in their
  * low byte, the port-A byte the last select WROTE and the one it READ (`port_a_new`, `port_a_old`: the ROM's `move.b`s
@@ -34,6 +37,7 @@
 
 #include "addrs.h"
 #include "hw.h"
+#include "recreate.h"
 #include "boot/sysvars.h"
 #include "boot/floppy.h"
 
@@ -229,10 +233,16 @@ static inline uint32_t leave_with(uint32_t result)
     return result;
 }
 
+/* `$fc1ef6`: the request's drive's media-change mode. */
+static inline void mark_media(uint8_t mode)
+{
+    ram8(FLOPPY_MEDIA_MODE)[(int16_t)*ram16(FLOPPY_DRIVE)] = mode;
+}
+
 /* `$fc1ccc`: the error exit — the media marked maybe changed (`$fc1ef6`), `$a26` the result. */
 static inline uint32_t leave_with_the_error(void)
 {
-    ram8(FLOPPY_MEDIA_MODE)[(int16_t)*ram16(FLOPPY_DRIVE)] = FLOPPY_MEDIA_MAYBE;
+    mark_media(FLOPPY_MEDIA_MAYBE);
     return leave_with((uint32_t)(int32_t)(int16_t)*ram16(FLOPPY_ERROR));
 }
 
@@ -292,7 +302,7 @@ static void recalibrate(void)
 
 /* `$fc1836`: a type-II status decoded into the error the exit returns, D1 the ROM's register for it — write-protect -13,
  * record-not-found -8, CRC -4, else the entry's own (`$a24`, moved over the CRC's `moveq`: D1's high word stays -1). */
-static void decode_status(uint16_t status)
+static inline __attribute__((always_inline)) void decode_status_inline(uint16_t status)
 {
     if (status & WD1772_STATUS_WRITE_PROTECT)
         handed_d1 = (uint32_t)FLOPPY_WRITE_PROTECTED;
@@ -303,6 +313,13 @@ static void decode_status(uint16_t status)
     else
         handed_d1 = ((uint32_t)FLOPPY_CRC_ERROR & ~0xffffu) | *ram16(FLOPPY_DEFAULT_ERROR);
     *ram16(FLOPPY_ERROR) = (uint16_t)handed_d1;
+}
+
+/* The decode out of line for its once-a-call users; the verify core's per-sector loop takes it inline, as it was while
+ * Flopver was its only caller (out of line, the 9-sector verify measured 1.036 against 1.015 inline). */
+static void decode_status(uint16_t status)
+{
+    decode_status_inline(status);
 }
 
 /* One sector read through the DMA ($fc17a0..$fc17f8, Flopver's $fc1b3a..$fc1b8c): the DMA reset and its count 1, the read
@@ -336,13 +353,19 @@ static uint32_t read_one_sector(int settled_count)
     return FLOPPY_TRANSFER_TIMED_OUT;
 }
 
+/* `(int16_t)--$9f6 >= 0`: a retry left. */
+static inline int a_retry_left(void)
+{
+    return (int16_t)--*ram16(FLOPPY_RETRIES) >= 0;
+}
+
 /* The retry rule both readers share ($fc181e / $fc1baa): the second-last retry recalibrates first; 0 while retries are
  * left (`$9f6` decremented, still >= 0). */
 static int another_try(void)
 {
     if (*ram16(FLOPPY_RETRIES) == 1)
         recalibrate();
-    return (int16_t)--*ram16(FLOPPY_RETRIES) >= 0;
+    return a_retry_left();
 }
 
 /* `$fc1782`: XBIOS 8 — `count` sectors from (`track`, `side`, `sector`) into `buffer`, one at a time; each sector's
@@ -400,7 +423,7 @@ static void verify_sectors(void)
             hw_write8(FDC_DMA_ADDRESS_HI, buffer[1]);
             uint32_t read = read_one_sector(1);
             if (read != FLOPPY_TRANSFER_TIMED_OUT && read) {
-                decode_status((uint8_t)read);
+                decode_status_inline((uint8_t)read);
                 if (!((uint8_t)read & WD1772_TYPE_II_ERRORS))
                     break;
             }
@@ -427,6 +450,195 @@ uint32_t floppy_flopver(void)
         return leave_with_the_error();
     verify_sectors();
     return leave_with(0);
+}
+
+
+/* ---- P4c: the write side ----------------------------------------------------------------------------------------------- */
+
+/* A write through the DMA ($fc188a / $fc1a6c): the write direction's reset ($190, $90, $190), the count settled, the
+ * command in the write direction settled, the wait — the POLL BEFORE the count down, 262,144 polls to a timeout. 0 done,
+ * 1 timed out (forced). */
+static int write_and_wait(uint16_t count, uint16_t command)
+{
+    *dma_mode = FDC_MODE_SECTOR_COUNT | FDC_MODE_WRITE;
+    *dma_mode = FDC_MODE_SECTOR_COUNT;
+    *dma_mode = FDC_MODE_SECTOR_COUNT | FDC_MODE_WRITE;
+    fdc_write(count);
+    *dma_mode = FDC_MODE_STATUS | FDC_MODE_WRITE;
+    fdc_write(command);
+    uint32_t budget = FDC_WAIT_MOTOR_ON;
+    do {
+        if (!(hw_read8(MFP_GPIP) & MFP_GPIP_FDC_INTRQ))
+            return 0;
+    } while (--budget != 0);
+    fdc_status = force_interrupt();
+    return 1;
+}
+
+/* `$fc1858`: XBIOS 9 — `count` sectors from `buffer` to (`track`, `side`, `sector`); the boot sector's write marks the
+ * media CHANGED first; a write-protected disk the immediate error (no retry); else retried as Floprd's, but a failed
+ * seek-verify recalibrates at once ($fc1906). */
+uint32_t floppy_flopwr(void)
+{
+    register const uint8_t *args_in_a0 __asm__("a0");
+    __asm__ ("" : "=a"(args_in_a0));
+    common_entry(args_in_a0, FLOPPY_WRITE_ERROR);      /* (the single-drive alert ran first, in the glue) */
+    if (!((uint16_t)(*ram16(FLOPPY_SECTOR) - 1) | *ram16(FLOPPY_TRACK) | *ram16(FLOPPY_SIDE)))
+        mark_media(FLOPPY_MEDIA_CHANGED);
+    for (;;) {
+        select_drive();
+        if (seek_verify()) {
+            recalibrate();
+        } else {
+            for (;;) {
+                *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_GENERAL_ERROR;
+                if (write_and_wait(1, WD1772_WRITE_SECTOR))
+                    break;
+                *dma_mode = FDC_MODE_STATUS | FDC_MODE_WRITE;
+                uint16_t status = fdc_read();
+                decode_status(status);
+                if (status & WD1772_STATUS_WRITE_PROTECT)
+                    return leave_with_the_error();
+                if ((uint8_t)status & WD1772_WRITE_ERRORS)
+                    break;
+                *ram16(FLOPPY_RETRIES) = FLOPPY_RETRIES_EACH;
+                ++*ram16(FLOPPY_SECTOR);
+                *ram32(FLOPPY_BUFFER) += FLOPPY_SECTOR_BYTES;
+                if (!--*ram16(FLOPPY_COUNT))
+                    return leave_with(0);
+                set_sector_and_address();
+            }
+            if (*ram16(FLOPPY_RETRIES) == 1)
+                recalibrate();
+        }
+        if (!a_retry_left())
+            return leave_with_the_error();
+    }
+}
+
+/* `$fc1ada`: `byte` `count` times — the ROM's own `move.b d0,(a2)+ / dbf d1,*`, AN ASM IDIOM inside the C (ruling R-P4c-2
+ * "Accept inline idiom", 2026-11-03: as the settle and SECTOR_SUM): GCC's loop is a pointer compare, 24 cycles a byte
+ * against the ROM's 18, and this loop is most of Flopfmt (measured: the whole call 1.34 in plain C, 1.02 so — the data
+ * field's loop, a different ROM loop ($fc1a10) the ruling does not cover, stays plain C). Its counter is D1, the ROM's
+ * register, handed back to the caller holding the last fill's -1 in its low word. */
+static inline uint8_t *fill(uint8_t *at, uint8_t byte, uint16_t count)
+{
+    __asm__ volatile ("move.w %2,%%d1\n"
+                      "1:\tmove.b %1,(%0)+\n\t"
+                      "dbf %%d1,1b"
+                      : "+a"(at) : "d"(byte), "g"((uint16_t)(count - 1)) : "memory", "cc");
+    return at;
+}
+
+/* One sector of the track ($fc19b6..$fc1a28): gap, ID field (track, side, `sector`, size 512), gap, data field filled
+ * with the virgin word, gap. */
+static uint8_t *build_sector(uint8_t *at, uint8_t sector)
+{
+    at = fill(at, TRACK_SYNC_BYTE, TRACK_SYNC_BYTES);
+    at = fill(at, TRACK_MARK_PREFIX, TRACK_MARK_PREFIXES);
+    *at++ = TRACK_ID_MARK;
+    *at++ = (uint8_t)*ram16(FLOPPY_TRACK);
+    *at++ = (uint8_t)*ram16(FLOPPY_SIDE);
+    *at++ = sector;
+    *at++ = TRACK_SECTOR_SIZE_CODE;
+    *at++ = TRACK_CRC_BYTES;
+    at = fill(at, TRACK_GAP_BYTE, TRACK_GAP_AFTER_ID);
+    at = fill(at, TRACK_SYNC_BYTE, TRACK_SYNC_BYTES);
+    at = fill(at, TRACK_MARK_PREFIX, TRACK_MARK_PREFIXES);
+    *at++ = TRACK_DATA_MARK;
+    const uint8_t high = ram8(FLOPPY_FORMAT_VIRGIN)[0], low = ram8(FLOPPY_FORMAT_VIRGIN)[1];
+    for (const uint8_t *end = at + FLOPPY_SECTOR_BYTES; at != end;) {   /* the data field: the virgin word, 256 times */
+        *at++ = high;
+        *at++ = low;
+    }
+    *at++ = TRACK_CRC_BYTES;
+    return fill(at, TRACK_GAP_BYTE, TRACK_GAP_AFTER_DATA);
+}
+
+/* `$fc198c`: the track built in the buffer, then written (Write Track, the DMA count 31), the DMA's status and the FDC's
+ * read back: 0 written, else nonzero (timed out, the DMA's error, or write-protect / lost data). The sectors in the
+ * interleave's order, both loops tested at the bottom as the ROM's ($fc19b0..$fc1a44): for each start 1, 2, ... (another
+ * while <= interleave) the sectors start, start + interleave, ... (another while <= sectors a track) — so each pass builds
+ * its first sector unconditionally: an interleave above the sectors a track builds sectors past them (interleave 10 of 9:
+ * a sector 10), and an interleave of 0 never ends, as the ROM's. A NEGATIVE interleave (the caller's skew table,
+ * $fc1aa8) is NOT RECONSTRUCTED: no real caller's table exists to hold it on. */
+static int build_and_write_track(void)
+{
+    *ram16(FLOPPY_DEFAULT_ERROR) = (uint16_t)FLOPPY_WRITE_ERROR;
+    uint8_t *at = fill((uint8_t *)*ram32(FLOPPY_BUFFER), TRACK_GAP_BYTE, TRACK_GAP_FIRST);
+    int16_t interleave = (int16_t)*ram16(FLOPPY_FORMAT_INTERLEAVE);
+    int16_t sectors = (int16_t)*ram16(FLOPPY_FORMAT_SPT);
+    if (interleave < 0)
+        recreate_not_reconstructed("Flopfmt's skew table ($fc1aa8): no real caller's table to hold it on");
+    int16_t first = 1;
+    do {
+        int16_t sector = first;
+        do {
+            at = build_sector(at, (uint8_t)sector);
+            sector += interleave;
+        } while (sector <= sectors);
+    } while (++first <= interleave);
+    at = fill(at, TRACK_GAP_BYTE, TRACK_GAP_LAST);
+    bad_list = (uint16_t *)at;              /* A2: the builder's cursor (the ROM's register), handed back on its errors */
+    const uint8_t *buffer = ram8(FLOPPY_BUFFER);
+    hw_write8(FDC_DMA_ADDRESS_LO, buffer[3]);
+    hw_write8(FDC_DMA_ADDRESS_MID, buffer[2]);
+    hw_write8(FDC_DMA_ADDRESS_HI, buffer[1]);
+    if (write_and_wait(FDC_FORMAT_COUNT, WD1772_WRITE_TRACK))
+        return 1;
+    *dma_mode = FDC_MODE_SECTOR_COUNT | FDC_MODE_WRITE;
+    if (!(*dma_mode & DMA_STATUS_NO_ERROR))
+        return 1;
+    *dma_mode = FDC_MODE_STATUS | FDC_MODE_WRITE;
+    uint16_t status = fdc_read();
+    decode_status(status);
+    return (uint8_t)status & WD1772_FORMAT_ERRORS;
+}
+
+/* `$fc1916`: XBIOS 10 — one track formatted (the magic checked first, in the glue: anything else is the stale error exit,
+ * `floppy_stale_exit`), the media marked CHANGED, the head sought without verify, the track built and written, then its
+ * sectors verified (P4b's core): -16 where the verify listed one. */
+uint32_t floppy_flopfmt(void)
+{
+    register const uint8_t *args_in_a0 __asm__("a0");
+    __asm__ ("" : "=a"(args_in_a0));
+    const uint8_t *args = args_in_a0;
+    common_entry(args, FLOPPY_GENERAL_ERROR);          /* (the single-drive alert ran first, in the glue) */
+    select_drive();
+    *ram16(FLOPPY_FORMAT_SPT) = arg16(args, FLOPFMT_ARG_SPT);
+    *ram16(FLOPPY_FORMAT_INTERLEAVE) = arg16(args, FLOPFMT_ARG_INTERLEAVE);
+    *ram16(FLOPPY_FORMAT_VIRGIN) = arg16(args, FLOPFMT_ARG_VIRGIN);
+    *ram32(FLOPPY_FORMAT_SKEW) = *(const uint32_t *)(args + FLOPFMT_ARG_SKEW);
+    mark_media(FLOPPY_MEDIA_CHANGED);
+    if (seek(*ram16(FLOPPY_TRACK)))
+        return leave_with_the_error();
+    record[FLOPPY_RECORD_TRACK] = *ram16(FLOPPY_TRACK);
+    *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_GENERAL_ERROR;
+    if (build_and_write_track())
+        return leave_with_the_error();
+    *ram16(FLOPPY_COUNT) = *ram16(FLOPPY_FORMAT_SPT);
+    *ram16(FLOPPY_SECTOR) = 1;
+    verify_sectors();
+    bad_list = (uint16_t *)*ram32(FLOPPY_BUFFER);
+    if (*bad_list) {
+        *ram16(FLOPPY_ERROR) = (uint16_t)FLOPPY_BAD_SECTORS;
+        return leave_with_the_error();
+    }
+    return leave_with(0);
+}
+
+/* THE BAD-MAGIC ROM BUG, KEPT (the user, 2026-11-02): Flopfmt with any other magic branches to the error exit ($fc1ccc)
+ * with NOTHING set up — so the exit runs on the caller's registers: its A5 the base of `$a08` / `$a26` (and the glue's
+ * tail's `_hz_200`), its A6 the "mode register" every mode word is stored through (here `dma_mode`, which the glue makes
+ * the caller's A6), its A1 the "record" whose track the last seek writes to the FDC under whatever mode the chip holds;
+ * D0 the stale `$a26`. The caller's A5 at A0. */
+uint32_t floppy_stale_exit(void)
+{
+    register const uint8_t *base_in_a0 __asm__("a0");
+    __asm__ ("" : "=a"(base_in_a0));
+    const uint8_t *base = base_in_a0;
+    ram8(FLOPPY_MEDIA_MODE)[*(const int16_t *)(base + FLOPPY_DRIVE)] = FLOPPY_MEDIA_MAYBE;
+    return leave_with((uint32_t)(int32_t)*(const int16_t *)(base + FLOPPY_ERROR));
 }
 
 #endif /* RECREATE_HOST_DIFFERENTIAL */

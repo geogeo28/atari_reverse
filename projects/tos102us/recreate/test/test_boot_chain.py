@@ -55,11 +55,13 @@ def cold_pair():
 # ---- THE STATIC LINK CHECK AND THE STEERING (R-CH-1's (d)) ---------------------------------------------------------------
 # EVERY `jmp.l` INTO THE ROM WINDOW EACH PRODUCT HOLDS, read off the code (objdump of each ELF; the blob's in its two
 # boot entries) — typed here once, as the pin: B2's and B3's entries, the display's two paths and its sync-wait jump; and
-# since D4 P4a our lower floppy driver's jumps laid at the ROM entries it ports (the probe; since P4b Floprd and Flopver),
+# since D4 P4a our lower floppy driver's jumps laid at the ROM entries it ports (the probe; P4b Floprd, Flopver; P4c Flopwr,
+# Flopfmt),
 # each to its glue entry (R-P4-2).
 EVERY_JMP_INTO_THE_ROM = {"head": {}, "blob": {0xfc03b6: 1, 0xfc03e0: 1}, "display": {0xfc0452: 2, 0xfc0e1a: 1},
                           "late": {0xfc047a: 1}, "launch": {0xfc0030: 1}, "floppy": {},
-                          "floppy jump 0xfc173a": {0xfcc430: 1}, "floppy jump 0xfc1782": {0xfcc400: 1},
+                          "floppy jump 0xfc173a": {0xfcc4b0: 1}, "floppy jump 0xfc1782": {0xfcc400: 1},
+                          "floppy jump 0xfc1858": {0xfcc430: 1}, "floppy jump 0xfc1916": {0xfcc448: 1},
                           "floppy jump 0xfc1ae2": {0xfcc418: 1}}
 NOT_A_SLICE_START = 0xfc0454            # inside B6's own span: an exit there is no slice's start
 APPENDED_EXIT = 0xfc0460
@@ -548,7 +550,8 @@ def test_b3_in_the_chain_reads_the_carried_port_a_not_its_battery_s_seed(cold_pa
 
 
 def test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6(pair):
-    """THE SPAN OUR LOWER DRIVER'S BODY IS LAID OVER IS FREE (D4 P4b: the VDI's GDP text, `[$fcc400, $fcd000)`): the ROM's
+    """THE SPAN OUR LOWER DRIVER'S BODY IS LAID OVER IS FREE (D4 P4b, widened by R-P4c-1: the VDI's GDP text,
+    `[$fcc400, $fcd400)`): the ROM's
     own boot spends no cycle there in any step, and ours none but in B6, where our driver lies there."""
     _chain, rom, ours = pair
     assert all(step.spent["our floppy"] == 0 for step in rom)

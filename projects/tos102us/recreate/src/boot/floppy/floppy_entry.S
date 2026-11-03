@@ -24,8 +24,26 @@
 
 #define LAST_ACCESS_SHIFT 2     /* `lsl.w #2,d0`: a drive's long in the last-access table */
 #define DRIVE_B_LAST_ACCESS 4   /* `move.l ...,4(a0)`: drive B:'s long, stamped too where one drive was counted */
+#define FLOPFMT_MAGIC_AT (4 + FLOPFMT_ARG_MAGIC)   /* `22(sp)`: Flopfmt's magic, past the caller's return */
 
     .text
+/* The ROM's exit tail ($fc1cf2), THE TAIL above: `hz_200` the operand `_hz_200` is read through — absolute on our
+ * exits, off the caller's A5 on the bad-magic one. */
+    .macro  LEAVE hz_200
+    move.l  %d0,-(%sp)
+    move.w  (FLOPPY_DRIVE).l,%d0
+    lsl.w   #LAST_ACCESS_SHIFT,%d0
+    lea     (FLOPPY_LAST_ACCESS).l,%a0
+    move.l  \hz_200,(0,%a0,%d0.w)
+    cmpi.w  #1,(SYSVAR_NFLOPS).l
+    bne.s   1f
+    move.l  \hz_200,DRIVE_B_LAST_ACCESS(%a0)
+1:  move.l  (%sp)+,%d0
+    movem.l (FLOPPY_SAVE_AREA).l,%d3-%d7/%a3-%a6
+    clr.w   (SYSVAR_FLOCK).l
+    rts
+    .endm
+
     .globl  floppy_floprd_entry
     .type   floppy_floprd_entry,@function
 floppy_floprd_entry:                    /* the `jmp` at $fc1782: XBIOS 8 */
@@ -46,6 +64,40 @@ floppy_flopver_entry:                   /* the `jmp` at $fc1ae2: XBIOS 19 */
     bra.w   floppy_leave
     .size   floppy_flopver_entry,.-floppy_flopver_entry
 
+    .globl  floppy_flopwr_entry
+    .type   floppy_flopwr_entry,@function
+floppy_flopwr_entry:                    /* the `jmp` at $fc1858: XBIOS 9 */
+    bsr.w   floppy_single_drive_alert
+    movem.l %d3-%d7/%a3-%a6,(FLOPPY_SAVE_AREA).l
+    lea     4(%sp),%a0
+    bsr.w   floppy_flopwr
+    bra.w   floppy_leave
+    .size   floppy_flopwr_entry,.-floppy_flopwr_entry
+
+    /* XBIOS 10. ANY OTHER MAGIC: the ROM's `bne.w $fc1ccc` — the error exit run on the CALLER's registers, nothing set
+     * up (the user's ruling, 2026-11-02: the bug kept): `floppy_stale_exit` with the caller's A5 its base and the
+     * caller's A6 its mode register, then the ROM's tail with the caller's A5 for `_hz_200` (`d16(a5)` there, as the
+     * ROM's) and the registers restored from the STALE `$a28` image. */
+    .globl  floppy_flopfmt_entry
+    .type   floppy_flopfmt_entry,@function
+floppy_flopfmt_entry:                   /* the `jmp` at $fc1916 */
+    cmpi.l  #FLOPFMT_MAGIC,FLOPFMT_MAGIC_AT(%sp)
+    bne.w   floppy_flopfmt_bad_magic
+    bsr.w   floppy_single_drive_alert
+    movem.l %d3-%d7/%a3-%a6,(FLOPPY_SAVE_AREA).l
+    lea     4(%sp),%a0
+    bsr.w   floppy_flopfmt
+    bra.w   floppy_leave
+floppy_flopfmt_bad_magic:
+    move.l  %a5,-(%sp)                  /* the caller's A5, for the tail (this push runs the stale exit's frames 4 bytes
+                                         * deeper than the ROM's: still above the chain's floor, $74ff) */
+    movea.l %a5,%a0                     /* ...the stale exit's base */
+    movea.l %a6,%a5                     /* ...its "mode register": the caller's A6 */
+    bsr.w   floppy_stale_exit
+    movea.l (%sp)+,%a5
+    LEAVE   SYSVAR_HZ_200(%a5)          /* the ROM's tail reads `_hz_200` off A5: here the caller's */
+    .size   floppy_flopfmt_entry,.-floppy_flopfmt_entry
+
     .globl  floppy_probe_entry
     .type   floppy_probe_entry,@function
 floppy_probe_entry:
@@ -57,18 +109,7 @@ floppy_probe_entry:
     .globl  floppy_leave
     .type   floppy_leave,@function
 floppy_leave:
-    move.l  %d0,-(%sp)
-    move.w  (FLOPPY_DRIVE).l,%d0
-    lsl.w   #LAST_ACCESS_SHIFT,%d0
-    lea     (FLOPPY_LAST_ACCESS).l,%a0
-    move.l  (SYSVAR_HZ_200).w,(0,%a0,%d0.w)
-    cmpi.w  #1,(SYSVAR_NFLOPS).l
-    bne.s   1f
-    move.l  (SYSVAR_HZ_200).w,DRIVE_B_LAST_ACCESS(%a0)
-1:  move.l  (%sp)+,%d0
-    movem.l (FLOPPY_SAVE_AREA).l,%d3-%d7/%a3-%a6
-    clr.w   (SYSVAR_FLOCK).l
-    rts
+    LEAVE   (SYSVAR_HZ_200).w
     .size   floppy_leave,.-floppy_leave
 
     .globl  floppy_settle

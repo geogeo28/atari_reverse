@@ -1950,7 +1950,7 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   the rest held equal step by step: **0.990** WARM, **0.995** COLD (own cycles moved: ours +18,422, the ROM's
   +18,864), own cycles pinned exactly.
 
-### THE FLOPPY'S LOWER DRIVER IN C — the probe, Floprd and Flopver (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a + P4b)
+### THE FLOPPY'S LOWER DRIVER IN C — the probe, Floprd, Flopver, Flopwr and Flopfmt (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a + P4b + P4c)
 
 **Rulings it stands on** (2026-11-02):
 - **R-P4-2 "Jump at ROM entries".** A 6-byte `jmp` is laid at each ported ROM entry, so every caller reaches ours
@@ -1986,7 +1986,7 @@ boot_late.our_side(machine, floppy=True) / priced(machine, floppy=True) / laid_w
   accesses, the type-I wait, force, restore, seek, the two exits and the media-change mark.
   - The common entry's UNKNOWN-TRACK RECOVERY (`$fc1caa..$fc1cca`) was a halt at P4a; **P4b ports it** (below). No
     probe reaches it, because the probe clears the record's track first.
-  - The product was 674 bytes at P4a (2,366 since P4b).
+  - The product was 674 bytes at P4a, 2,366 at P4b (4,050 since P4c).
 - **`floppy_entry.S`** has three parts:
   - the entry: the ROM's own `movem.l d3-d7/a3-a6,$a28`;
   - the tail: `$fc1cf2..$fc1d28`, its two `d16(a5)` operands spelt `abs.w`;
@@ -2101,7 +2101,7 @@ dead-frame bytes than R-P4-5's 11: `$7504..$7506` and `$7514`, because the ROM's
 ours 24.
 
 **WHERE THE BODY LIES.** At P4b the body is 2,366 bytes, too large for Prtblk's 1 KB. So it is laid over **the VDI's GDP
-text `[$fcc400, $fcd000)`**: rounded boxes, arcs, ellipses, wide lines, circles.
+text `[$fcc400, $fcd000)`** (since P4c `[$fcc400, $fcd400)`, R-P4c-1, below): rounded boxes, arcs, ellipses, wide lines, circles.
 - That is VDI code GEM first runs after gem_entry. Every run that lays the driver ends before it.
 - `test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6` holds this on all 8 chains, both shores.
 - `test_the_rom_s_run_is_the_same_with_our_body_laid` holds it for B6's battery.
@@ -2154,7 +2154,7 @@ That keeps the slices' in-place price honest (review RP4a's N6).
 - the read-sector timeout (−2, and the poll-first count's last poll);
 - the DMA's error bit;
 - CRC (−4);
-- **the write-protect decode (−13)**: Floprd masks bit 6, and a read never sets it. P4c's Flopwr reaches it.
+- **the write-protect decode (−13)**: Floprd masks bit 6, and a read never sets it. Pinned since P4c on Flopwr's write-protected row.
 - Floprd's per-sector retry reset;
 - Floprd's lost-data default. Flopver's clean-read default is pinned behaviourally.
 - the recovery's clearing of the track before its restore;
@@ -2162,7 +2162,7 @@ That keeps the slices' in-place price honest (review RP4a's N6).
 - port A's kept bits `$f8`: no ROM run sets bit 3;
 - the IPL-7 raise (D3).
 
-The design's write-protected-disk arms belong to P4c.
+The design's write-protected-disk arms belong to P4c (below).
 
 The sweeps' survivors are `port_a_kept_f0`, `alert_after_the_save` (equivalent with the default handler) and the fix
 pass's `harness_arm_b_empty` (equivalent: B:'s disk is never read on that arm) (`p4b/handback.md`, `fix_handback.md`).
@@ -2173,10 +2173,79 @@ pass's `harness_arm_b_empty` (equivalent: B:'s disk is never read on that arm) (
 |---|---|
 | the probes | 0.9748–1.0000 |
 | Floprd / Flopver | 0.9826–**1.0194** (the 9-sector Floprd) |
+| Flopwr | 0.9963–1.0090 (the 2-sector write) |
+| Flopfmt | 0.9990 (the bad magic)–1.0211 (interleave 10, write-protected) |
 | B6 with our driver | **0.87480** (146,702 / 167,698) |
 | the recovery row | 1.0000 (36,214,820 / 36,215,726) |
 | the chain WARM | **0.990** (0.98996) |
 | the chain COLD | **0.995** (0.99527) |
+
+**P4c: THE WRITE SIDE.**
+- **Flopwr** (`$fc1858`):
+  - writing the boot sector marks the media CHANGED;
+  - a write-protected disk is the decode's −13 at once, with no retry;
+  - a failed seek-verify recalibrates at once.
+- **Flopfmt** (`$fc1916`):
+  - a seek without verify, then the track built by interleave (`$fc198c`) and written (Write Track, DMA count 31). Both
+    interleave loops test at the bottom, as the ROM's do, so each pass builds its first sector unconditionally: an
+    interleave of 10 over 9 sectors builds a sector 10 (pinned on a write-protected row, review RP4c's B1);
+  - then its sectors verified through P4b's core, with −16 where the core lists one.
+- **The shared write** (`write_and_wait`): the write direction's DMA reset `$190/$90/$190`, then the settled count and
+  command, then the poll-first wait (262,144 polls).
+- **The fill** (`$fc1ada`) is the ROM's `move.b d0,(a2)+ / dbf d1,*`, **an inline asm idiom inside the C**, like the
+  settle and SECTOR_SUM (**R-P4c-2 "Accept inline idiom"**). In plain C Flopfmt measured 1.34; with the idiom it is
+  1.02. Its counter is D1, which comes back holding the last fill's −1 in its low word, as the ROM's does.
+- **The ruling covers that loop only.** The data field's loop (`$fc1a10`, the virgin word 256 times) is plain C.
+- **The verify core's decode is inlined** (plain C) in its per-sector loop. With Flopfmt as the core's second caller,
+  GCC had put it out of line, and the 9-sector Flopver measured 1.036 instead of 1.015.
+- **The skew table** (a negative interleave) is a halt: no real caller's table exists to hold it on.
+
+**THE BAD-MAGIC ROM BUG, KEPT** (the user, 2026-11-02). Flopfmt with any other magic branches to the error exit with
+nothing set up. `floppy_entry.S`'s bad-magic glue and `floppy_stale_exit` run it on the caller's registers:
+- its A5 is the base of `$a08`, `$a26` and the tail's `_hz_200`;
+- its A6 is the mode register every mode word is stored through;
+- its A1 is the record whose track the exit's seek writes to the FDC under the chip's last mode;
+- D0 is the stale `$a26`, and the registers come back from the stale `$a28`.
+
+**The glue's push of the caller's A5 runs the stale exit's frames 4 bytes deeper than the ROM's.** They stay above the
+chain's floor, `$74ff`, and `test_the_reader_s_frames_lie_above_the_chain_s_floor` holds it. Both tails are one gas
+macro, `LEAVE`, which takes the operand `_hz_200` is read through.
+
+**Its staged row keeps B6's real Floprd-arrival registers** and lays only the arguments: A5 = 0, A6 = `$754e`
+(hdv_boot's link frame), A1 = `$a50` (drive B:'s record). Both shores store the mode words into that frame and issue the
+STRAY RESTORE.
+
+**WHERE THE BODY LIES (R-P4c-1 "Widen to $fcd400").** 4,050 bytes (to `$fcd3d2`) over `[$fcc400, $fcd400)`, still VDI text GEM runs only
+after gem_entry, ending before init_wk at `$fcd402`, on the `$fc` page.
+- `test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6` holds the span on the real product.
+- The alternative of shrinking the C (helpers out of line) grew the chain's gem_entry set to 16 bytes, so it was not
+  taken.
+
+**THE STAGING** gains Flopwr's 8 rows and Flopfmt's 9 (the bad magic at COLD's arrival and WARM's, where `_hz_200` is
+`$b32` and the tail's read of it shows; one with a virgin word of two different bytes, `$1234`, so the data field's byte
+order shows), with Flopfmt's own argument layout (`StagedFormat`). Drive A:'s disk is declared write-protected for the WP
+rows (`Arrival.protected`).
+
+**Tier 3.** 46 arrival rows.
+
+| rows | ratio |
+|---|---|
+| Flopwr | 0.9963–1.0090 |
+| Flopfmt | 1.0189–1.0211 |
+| Flopfmt's timeout | 1.0002 |
+| the bad magic | 0.9990 |
+
+B6 and the chains are unchanged.
+
+**Unpinned by name:**
+- the write's timeout;
+- the lost-data bit;
+- −16, the DMA error on a write track and Flopwr's retries reset after a good sector, held only by the rows' cycle counts;
+- interleave 0 (it never ends) and a sector count ≤ 0;
+- the skew table (a halt);
+- non-9-sector formats (refused by the model);
+- motor-off;
+- the bad-magic exit's caller-A5 base against an absolute read: both real arrivals have A5 = 0, so the two coincide.
 
 ## Writing a case
 

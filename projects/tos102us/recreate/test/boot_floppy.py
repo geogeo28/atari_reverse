@@ -54,13 +54,15 @@ ROM_TIMEOUT_FRAME_BYTES = 24            # ...and its force-interrupt one call de
 # ---- THE ROM'S DRIVER, AND WHAT P4a / P4b PORT OF IT -----------------------------------------------------------------------
 LOWER_DRIVER = (CONSTANTS["ROM_FLOPPY_PROBE"], CONSTANTS["ROM_FLOPPY_LOWER_END"])
 PROBE, FLOPRD, FLOPVER = CONSTANTS["ROM_FLOPPY_PROBE"], CONSTANTS["ROM_FLOPPY_FLOPRD"], CONSTANTS["ROM_FLOPPY_FLOPVER"]
+FLOPWR, FLOPFMT = CONSTANTS["ROM_FLOPPY_FLOPWR"], CONSTANTS["ROM_FLOPPY_FLOPFMT"]
 PROBE_SPAN = (PROBE, FLOPRD)
 # EACH PORTED ENTRY: the ROM's address, where our jump is laid, and the glue's symbol it jumps to (P4a the probe; P4b
 # Floprd and Flopver).
-PORTED = {PROBE: "floppy_probe_entry", FLOPRD: "floppy_floprd_entry", FLOPVER: "floppy_flopver_entry"}
+PORTED = {PROBE: "floppy_probe_entry", FLOPRD: "floppy_floprd_entry", FLOPVER: "floppy_flopver_entry",
+          FLOPWR: "floppy_flopwr_entry", FLOPFMT: "floppy_flopfmt_entry"}
 # ...AND EACH ONE'S OWN TEXT in the ROM: the probe to Floprd; Floprd with its error decode to Flopwr; Flopver with its verify
 # core to the VBL service.
-PORTED_SPANS = {PROBE: PROBE_SPAN, FLOPRD: (FLOPRD, CONSTANTS["ROM_FLOPPY_FLOPWR"]),
+PORTED_SPANS = {PROBE: PROBE_SPAN, FLOPRD: (FLOPRD, FLOPWR), FLOPWR: (FLOPWR, FLOPFMT), FLOPFMT: (FLOPFMT, FLOPVER),
                 FLOPVER: (FLOPVER, CONSTANTS["ROM_FLOPPY_VBL"])}
 PRIMITIVES = (CONSTANTS["ROM_FLOPPY_PRIMITIVES"], CONSTANTS["ROM_FLOPPY_LOWER_END"])
 STUB_BYTES = CONSTANTS["FLOPPY_ENTRY_JUMP_BYTES"]
@@ -124,11 +126,12 @@ def our_spans(laid=None):
 
 
 # ---- THE ARRIVALS: B6's ROM run, stopped at each call of a ported entry ---------------------------------------------------
-Arrival = namedtuple("Arrival", "machine carry returns_to drive_arm gpip writable", defaults=(False,))
+Arrival = namedtuple("Arrival", "machine carry returns_to drive_arm gpip writable protected", defaults=(False, False))
 Arrival.__doc__ = """One call of a ported entry as the ROM's own B6 run makes it — or as a case stages it there (R-P4-1): the
 `machine` standing at the entry, the `carry` (port A, the chip) the run hands it, the address it `returns_to` (the long at
 its SP), the `drive_arm` and the `gpip` byte its run declares; `writable`: each shore lent its OWN WRITABLE COPY of the
-drives' disks (a staged call's; R-P4-1), else the capture's disk read-only."""
+drives' disks (a staged call's; R-P4-1), else the capture's disk read-only; `protected`: drive A:'s disk declared
+write-protected (R-P4-1's WP arms)."""
 
 
 def _bays(arrival):
@@ -136,6 +139,8 @@ def _bays(arrival):
     bays = (drives.drive_a, drives.drive_b)
     if arrival.writable:
         bays = tuple(bay._replace(image=bytearray(bay.image)) if bay.image is not None else bay for bay in bays)
+    if arrival.protected:
+        bays = (bays[0]._replace(write_protected=True), bays[1])
     return bays
 
 
@@ -191,11 +196,20 @@ ARRIVALS = {
     **{f"Floprd of the boot sector, {arm}, COLD": (boot.COLD, arm, B6_FLOPRD_INDEX) for arm in B6_FLOPRD_ARMS},
     f"Floprd of the boot sector, {boot_late.CAPTURE_DRIVES}, WARM": (boot.WARM, boot_late.CAPTURE_DRIVES, B6_FLOPRD_INDEX),
 }
-# ...AND THE STAGED CALLS (R-P4-1): from B6's machine at its Floprd arrival (COLD; the arm named), `entry` called with these
+# ...AND THE STAGED CALLS (R-P4-1): from B6's machine at its Floprd arrival (COLD unless `boot` names WARM; the arm named), `entry` called with these
 # arguments — buffer, filler, drive, sector, track, side, count (Floprd's and Flopver's shape) — the buffer above the boot's
 # RAM in use, so its address's high byte is not 0 (it pins the DMA address's high byte).
 STAGED_BUFFER = 0x30000
-Staged = namedtuple("Staged", "drive_arm entry drive sector track side count")
+Staged = namedtuple("Staged", "drive_arm entry drive sector track side count protected boot", defaults=(False, boot.COLD))
+# ...and Flopfmt's (its own arguments: buffer, the skew table, drive, sectors a track, track, side, interleave, the magic,
+# the virgin word).
+StagedFormat = namedtuple("StagedFormat", "drive_arm drive spt track side interleave magic virgin protected boot",
+                          defaults=(False, boot.COLD))
+StagedFormat.entry = FLOPFMT
+FORMAT_ARGUMENTS = ">IIHHHHHIH"
+FORMAT_VIRGIN = 0xe5e5                  # the virgin word the desk's Format hands it
+FORMAT_VIRGIN_TWO_BYTES = 0x1234        # a caller's own word whose two bytes differ: the order they are laid in shows
+BAD_MAGIC = 0x12345678
 STAGED = {
     "Floprd, 9 sectors from track 5 side 1 sector 1": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 1, 5, 1, 9),
     "Floprd, track 79 side 1 sector 9": Staged(boot_late.CAPTURE_DRIVES, FLOPRD, 0, 9, 79, 1, 1),
@@ -211,27 +225,58 @@ STAGED = {
     "Flopver, sectors 10 and 11 (both listed)": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 10, 0, 0, 2),
     "Flopver, track 5 side 1, 2 sectors": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 0, 1, 5, 1, 2),
     "Flopver of drive B:, empty (the seek-verify fails)": Staged(boot_late.CAPTURE_DRIVES, FLOPVER, 1, 1, 0, 0, 1),
+    # P4c: the write side
+    "Flopwr, track 3 side 0 sector 2": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 2, 3, 0, 1),
+    "Flopwr, the boot sector (the media marked CHANGED)": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 1, 0, 0, 1),
+    "Flopwr, sector 10 (record not found)": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 10, 3, 0, 1),
+    "Flopwr, write-protected (no retry)": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 2, 3, 0, 1, True),
+    "Flopwr, drive A: empty": Staged(boot_late.A_EMPTY, FLOPWR, 0, 2, 3, 0, 1),
+    "Flopwr, 2 sectors from track 3 sector 2": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 2, 3, 0, 2),
+    "Flopwr, track 0 side 1 sector 1 (not the boot sector)": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 1, 0, 1, 1),
+    "Flopwr, track 1 side 0 sector 1 (not the boot sector)": Staged(boot_late.CAPTURE_DRIVES, FLOPWR, 0, 1, 1, 0, 1),
+    "Flopfmt, track 5 side 0, interleave 1": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 5, 0, 1, None, FORMAT_VIRGIN),
+    "Flopfmt, track 6 side 1, interleave 2": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 6, 1, 2, None, FORMAT_VIRGIN),
+    "Flopfmt, write-protected": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 5, 0, 1, None, FORMAT_VIRGIN, True),
+    "Flopfmt, interleave 2, write-protected": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 6, 1, 2, None, FORMAT_VIRGIN,
+                                                           True),
+    "Flopfmt, track 7 side 0, a virgin word of two bytes": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 7, 0, 1, None,
+                                                                         FORMAT_VIRGIN_TWO_BYTES),
+    "Flopfmt, interleave 10 over 9 sectors, write-protected": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 5, 0, 10, None,
+                                                                           FORMAT_VIRGIN, True),
+    "Flopfmt, drive A: empty (the write track's timeout)": StagedFormat(boot_late.A_EMPTY, 0, 9, 5, 0, 1, None,
+                                                                        FORMAT_VIRGIN),
+    "Flopfmt, a bad magic (the ROM's stale error exit, kept)": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 5, 0, 1,
+                                                                            BAD_MAGIC, FORMAT_VIRGIN),
+    # (and at WARM's arrival, where `_hz_200` is not 0: the tail's read of it through the caller's A5 then shows)
+    "Flopfmt, a bad magic, WARM (the ROM's stale error exit, kept)": StagedFormat(boot_late.CAPTURE_DRIVES, 0, 9, 5, 0, 1,
+                                                                                  BAD_MAGIC, FORMAT_VIRGIN, boot=boot.WARM),
 }
 ARRIVALS.update({f"STAGED (R-P4-1): {name}": staged for name, staged in STAGED.items()})
+FLOPFMT_MAGIC = CONSTANTS["FLOPFMT_MAGIC"]
 STAGED_ARGUMENTS = ">IIHHHHH"                # buffer, filler, drive, sector, track, side, count — past the return
 
 
 def staged_arrival(staged):
-    """THE STAGED CALL (R-P4-1): B6's machine standing at its Floprd arrival on `staged.drive_arm` (COLD), `staged`'s
+    """THE STAGED CALL (R-P4-1): B6's machine standing at its Floprd arrival on `staged.drive_arm` (`staged.boot`), `staged`'s
     arguments laid where Floprd's stand and its entry the one named; each shore's disks its own writable copies."""
-    floprd, _called = b6_calls(boot.COLD, staged.drive_arm)[B6_FLOPRD_INDEX]
+    floprd, _called = b6_calls(staged.boot, staged.drive_arm)[B6_FLOPRD_INDEX]
     ram = bytearray(floprd.machine.ram)
-    struct.pack_into(STAGED_ARGUMENTS, ram, floprd.machine.registers["isp"] + 4, STAGED_BUFFER, 0, staged.drive,
-                     staged.sector, staged.track, staged.side, staged.count)
+    if isinstance(staged, StagedFormat):
+        magic = FLOPFMT_MAGIC if staged.magic is None else staged.magic
+        struct.pack_into(FORMAT_ARGUMENTS, ram, floprd.machine.registers["isp"] + 4, STAGED_BUFFER, 0, staged.drive,
+                         staged.spt, staged.track, staged.side, staged.interleave, magic, staged.virgin)
+    else:
+        struct.pack_into(STAGED_ARGUMENTS, ram, floprd.machine.registers["isp"] + 4, STAGED_BUFFER, 0, staged.drive,
+                         staged.sector, staged.track, staged.side, staged.count)
     machine = floprd.machine._replace(ram=bytes(ram), registers={**floprd.machine.registers, "pc": staged.entry},
                                       label=f"{floprd.machine.label}; {STAGED_LABEL}")
-    return floprd._replace(machine=machine, writable=True)
+    return floprd._replace(machine=machine, writable=True, protected=staged.protected)
 
 
 def entry_of(name):
     """The ROM entry `name`'s call enters — read off its row, running nothing (the tier-3 table names its rows by it)."""
     spec = ARRIVALS[name]
-    if isinstance(spec, Staged):
+    if isinstance(spec, (Staged, StagedFormat)):
         return spec.entry
     return FLOPRD if spec[2] == B6_FLOPRD_INDEX else PROBE
 
@@ -240,7 +285,7 @@ def entry_of(name):
 def arrival_of(name):
     """`name`'s arrival: a call B6's run makes (`Arrival`), or a staged one."""
     spec = ARRIVALS[name]
-    if isinstance(spec, Staged):
+    if isinstance(spec, (Staged, StagedFormat)):
         return staged_arrival(spec)
     machine, drive_arm, index = spec
     return b6_calls(machine, drive_arm)[index][0]
@@ -269,10 +314,10 @@ def ours(name, code=None):
     arrival = arrival_of(name)
     laid = pieces(code)
     called, images = _call(arrival, laid=boot.overlays(*laid))
-    for lo, hi in (*NEVER_RUN, *ROM_TEXT_STILL_RUN):
-        spent = emu.prof_cycles(lo, hi)
-        if spent:
-            raise boot.Refused(f"{name}: our call executed the ROM's driver text [{lo:#x}, {hi:#x}) — {spent} cycles of it")
+    ran = [f"[{lo:#x}, {hi:#x}) — {emu.prof_cycles(lo, hi)} cycles of it" for lo, hi in sorted({*NEVER_RUN, *ROM_TEXT_STILL_RUN})
+           if emu.prof_cycles(lo, hi)]
+    if ran:
+        raise boot.Refused(f"{name}: our call executed the ROM's driver text {'; '.join(ran)}")
     return Shore(called, sum(emu.prof_cycles(lo, hi) for lo, hi in our_spans(laid)), images)
 
 

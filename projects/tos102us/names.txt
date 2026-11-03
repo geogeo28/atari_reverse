@@ -332,8 +332,14 @@ cmt 0xfc4b28 Alcyon C runtime: signed 32x32 -> low 32 bits (called by Random).
 fn 0xfc15f8 Protobt
 fn 0xfc1782 Floprd
 cmt 0xfc1782 XBIOS 8: the single-drive alert ($fc1ebe), the common entry (D0 -11), then per sector: select, seek-verify; DMA reset ($90/$190/$90), count 1 straight to $ff8604 (no settle), read sector $80, the wait POLL-FIRST ($40000: 262,144 polls to a timeout, $a26 -2), DMA status bit 0, the FDC's status & $1c decoded ($fc1836); sector++, buffer += 512, count--; a failure retried from the select, the second-last retry recalibrating ($fc1d46). PORTED in C (D4 P4b): src/boot/floppy/floppy.c floppy_floprd, a 6-byte jmp laid here (R-P4-2); held at B6's arrivals and staged calls (R-P4-1), test/test_boot_floppy.py.
-fn 0xfc1858 Flopwr   # ctx
-fn 0xfc1916 Flopfmt   # ctx
+fn 0xfc1858 Flopwr
+cmt 0xfc1858 XBIOS 9: alert, common entry (D0 -10); the boot sector (sector 1, track 0, side 0) marks the media CHANGED ($fc1ef6, 2) first; per sector: select, seek-verify (a failure recalibrates AT ONCE, $fc1906), the write direction's DMA reset ($190/$90/$190), count 1 and Write Sector $a0 settled, the wait POLL-FIRST (262,144 polls), the status decoded raw: bit 6 (WP) the immediate error -13 with NO retry, `& $5c` a retry; sector++, buffer += 512. PORTED in C (D4 P4c): floppy.c floppy_flopwr, a jmp laid here (R-P4-2).
+fn 0xfc1916 Flopfmt
+cmt 0xfc1916 XBIOS 10: `cmpi.l #$87654321,22(sp)` — ANY OTHER MAGIC branches to the error exit $fc1ccc with NOTHING set up (the caller's A5 the base of $a08/$a26/_hz_200, its A6 the mode register, its A1 the record; D0 the stale $a26; the registers of the stale $a28 image): A ROM BUG KEPT (the user, 2026-11-02), floppy_entry.S + floppy.c floppy_stale_exit. Else alert, common entry (-1), select, $a16..$a1c (spt, interleave, virgin, skew), media CHANGED, a seek WITHOUT verify, the track built and written ($fc198c), then the verify core over its sectors: -16 where it lists one. PORTED in C (P4c), the jmp splitting its cmpi.l (no ROM branch reaches past $fc1916).
+fn 0xfc198c floppy_build_and_write_track
+cmt 0xfc198c Flopfmt's track: 60 x $4e; then sectors in the interleave's order, BOTH LOOPS TESTED AT THE BOTTOM ($fc1a3a, $fc1a44): d3 = 1; do { d4 = d3; do { build sector d4; d4 += interleave } while d4 <= spt; d3++ } while d3 <= interleave — each pass's first sector built unconditionally (interleave 10 of 9 builds a sector 10; interleave 0 never ends); a negative interleave the caller's skew table at $fc1aa8. Per sector: 12 x 00, 3 x $f5, $fe t s n 2 $f7, 22 x $4e, 12 x 00, 3 x $f5, $fb, the virgin word 256 times ($fc1a10, read from $a1a/$a1b each byte), $f7, 40 x $4e; then 1401 x $4e; Write Track with the DMA count 31, the DMA status, the status decoded, `& $44`. C: floppy.c build_and_write_track (plain C but the fill; the skew arm a halt: no real caller's table).
+fn 0xfc1ada floppy_fill
+cmt 0xfc1ada `move.b d0,(a2)+ / dbf d1,*`: Flopfmt's fill, D1 left -1 in its low word (handed back). An inline asm idiom in floppy.c (ruling R-P4c-2 "Accept inline idiom": this loop only).
 fn 0xfc1ae2 Flopver
 cmt 0xfc1ae2 XBIOS 19: alert, common entry (-11), select, seek-verify (its error the result), then the verify core $fc1afe: each sector read into the buffer past its first 512 bytes (count settled), retried from the DMA address with no reselect; a sector out of retries LISTED at the buffer (A2 its cursor, handed back), the list ended by 0, the buffer given back; D0 0 whatever it listed. PORTED in C (D4 P4b): floppy_flopver / verify_sectors.
 fn 0xfc2030 Midiws
@@ -2912,7 +2918,7 @@ fn 0xfc1e3c floppy_set_sector_and_address
 cmt 0xfc1eac Floppy lower driver's settle: move sr/d7 to the stack, move.w #32,d7 / dbf, restore — 33 iterations before AND after every $ff8604 access. Shipped byte for byte as floppy_entry.S floppy_settle (D4 P4a: an empty counted loop C cannot say).
 fn 0xfc1ef6 floppy_media_mode
 fn 0xfc1836 floppy_decode_status
-cmt 0xfc1836 The type-II status decoded into $a26 and D1: bit 6 WP -13, bit 4 RNF -8, bit 3 CRC -4 (each a whole moveq), else $a24 MOVED OVER the CRC's moveq (D1's high word $ffff). Floprd passes it the status & $1c (WP never seen); Flopver and Flopwr the whole status. C: floppy.c decode_status (P4b).
+cmt 0xfc1836 The type-II status decoded into $a26 and D1: bit 6 WP -13, bit 4 RNF -8, bit 3 CRC -4 (each a whole moveq), else $a24 MOVED OVER the CRC's moveq (D1's high word $ffff). Floprd passes it the status & $1c (WP never seen); Flopver and Flopwr the whole status. C: floppy.c decode_status (P4b), and since P4c decode_status_inline in the verify core's per-sector loop.
 fn 0xfc1afe floppy_verify_sectors
 fn 0xfc1d46 floppy_recalibrate
 cmt 0xfc1d46 The second-last retry's recalibrate: $a26 -6, restore, track 0, seek 5 (record 5), then the seek-verify. C: floppy.c recalibrate (P4b).
