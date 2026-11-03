@@ -23,6 +23,7 @@ import aes_boot
 import boot
 import boot_chain as bc
 import boot_display
+import boot_floppy
 import boot_late
 import boot_launch
 import boot_sysvars
@@ -53,9 +54,11 @@ def cold_pair():
 
 # ---- THE STATIC LINK CHECK AND THE STEERING (R-CH-1's (d)) ---------------------------------------------------------------
 # EVERY `jmp.l` INTO THE ROM WINDOW EACH PRODUCT HOLDS, read off the code (objdump of each ELF; the blob's in its two
-# boot entries) — typed here once, as the pin: B2's and B3's entries, the display's two paths and its sync-wait jump.
+# boot entries) — typed here once, as the pin: B2's and B3's entries, the display's two paths and its sync-wait jump; and
+# since D4 P4a our lower floppy driver's jump laid at the probe's ROM entry, to the glue's first byte (R-P4-2).
 EVERY_JMP_INTO_THE_ROM = {"head": {}, "blob": {0xfc03b6: 1, 0xfc03e0: 1}, "display": {0xfc0452: 2, 0xfc0e1a: 1},
-                          "late": {0xfc047a: 1}, "launch": {0xfc0030: 1}}
+                          "late": {0xfc047a: 1}, "launch": {0xfc0030: 1}, "floppy": {},
+                          "floppy jump 0xfc173a": {0xfc3e80: 1}}
 NOT_A_SLICE_START = 0xfc0454            # inside B6's own span: an exit there is no slice's start
 APPENDED_EXIT = 0xfc0460
 
@@ -352,7 +355,7 @@ def test_the_union_of_the_ported_spans_is_every_slice_s(cold_pair):
     """Every span the boot ports is in the union, and ours spends none of it in any step (the vet ran: measured 0)."""
     _rom, ours = cold_pair
     assert set(bc.PORTED_UNION) == {name for name in bc.spans() if name.startswith("the ROM's")} - {
-        "the ROM's window", "the ROM's trap leas"}
+        "the ROM's window", "the ROM's trap leas", "the ROM's lower driver", "the ROM's lower driver ours still runs"}
     assert all(step.spent[name] == 0 for step in ours for name in bc.PORTED_UNION)
 
 
@@ -362,7 +365,7 @@ def _ram_apart(rom_step, our_step, lo, hi):
     return {at for at in range(lo, hi) if rom_step.machine.ram[at] != mine[at]}
 
 
-def test_the_frames_apart_are_measured_from_74ff_at_fc047a_and_exactly_three_bytes_at_gem_entry(pair):
+def test_the_frames_apart_are_measured_from_74ff_at_fc047a_and_exactly_eleven_bytes_at_gem_entry(pair):
     _chain, rom, ours = pair
     lo, hi = boot_late.STACK_RESIDUE
     at_b6 = bc.STEP_NAMES.index(bc.B6)
@@ -372,7 +375,7 @@ def test_the_frames_apart_are_measured_from_74ff_at_fc047a_and_exactly_three_byt
 
 @pytest.mark.parametrize("step_name", (bc.B6, bc.B4))
 def test_a_stray_store_in_the_bios_stack_s_dead_frames_is_seen(cold_pair, step_name):
-    """A byte of ours apart below `$74ff` at `$fc047a`, or anywhere outside the three at gem_entry, is named (the reviewer's
+    """A byte of ours apart below `$74ff` at `$fc047a`, or anywhere outside the eleven at gem_entry, is named (the reviewer's
     S11: a stray `wr16 $7480` in the late C survived the zeroed field)."""
     rom, ours = cold_pair
     index = bc.STEP_NAMES.index(step_name)
@@ -381,10 +384,33 @@ def test_a_stray_store_in_the_bios_stack_s_dead_frames_is_seen(cold_pair, step_n
     assert bc.differences(rom[index], step, COLD_CHAIN) == [f"ram, first at {stray:#x}"]
 
 
-def test_one_of_the_three_bytes_made_equal_is_seen(cold_pair):
+@pytest.mark.parametrize("at", (min(bc.B3_FRAMES_LEFT), min(bc.OUR_DRIVER_S_DEAD_FRAMES), max(bc.OUR_DRIVER_S_DEAD_FRAMES)))
+def test_one_of_the_eleven_bytes_made_equal_is_seen(cold_pair, at):
     rom, ours = cold_pair
-    at = min(bc.APART_AT_THE_END)
     step = _changed_ram(ours[-1], at, rom[-1].machine.ram[at])
+    assert bc.differences(rom[-1], step, COLD_CHAIN) == [f"ram, first at {at:#x}"]
+
+
+def test_our_driver_s_dead_frames_lie_in_b6_s_last_probe_s_frame_span_where_the_rom_s_run_stores_too(cold_pair):
+    """R-P4-5 "Widen exact set 3→11": the eight bytes our lower driver leaves apart at gem_entry lie in the frames of B6's
+    LAST probe (drive B:'s) — from 20 bytes under its entry SP (the ROM's depth, ours the same) to that SP — and the ROM's
+    own B6 run stores every one of them (so they are frames, not state)."""
+    rom, _ours = cold_pair
+    last_probe, _called = boot_floppy.b6_calls(boot.COLD)[-1]
+    entry_sp = last_probe.machine.registers["isp"]
+    assert bc.B6_LAST_PROBE_FRAMES == (entry_sp - boot_floppy.ROM_PROBE_FRAME_BYTES, entry_sp)
+    lo, hi = bc.B6_LAST_PROBE_FRAMES
+    assert all(lo <= at < hi for at in bc.OUR_DRIVER_S_DEAD_FRAMES)
+    stored = {at for start, length in rom[bc.STEP_NAMES.index(bc.B6)].stored for at in range(start, start + length)}
+    assert bc.OUR_DRIVER_S_DEAD_FRAMES <= stored
+    assert bc.APART_AT_THE_END == bc.B3_FRAMES_LEFT | bc.OUR_DRIVER_S_DEAD_FRAMES and len(bc.APART_AT_THE_END) == 11
+
+
+@pytest.mark.parametrize("at", sorted(set(range(*bc.B6_LAST_PROBE_FRAMES)) - bc.OUR_DRIVER_S_DEAD_FRAMES)[:3])
+def test_a_further_byte_of_the_last_probe_s_frames_moving_is_seen(cold_pair, at):
+    """R-P4-5's negative: a byte of the same frames outside the eight, made apart, still reds — the set is exact."""
+    rom, ours = cold_pair
+    step = _changed_ram(ours[-1], at, rom[-1].machine.ram[at] ^ 0xff)
     assert bc.differences(rom[-1], step, COLD_CHAIN) == [f"ram, first at {at:#x}"]
 
 
@@ -435,16 +461,18 @@ def test_a_foreign_xbios_vector_is_still_refused(what):
 
 # ---- ITS PRICE (ruling D9): the table's rows --------------------------------------------------------------------------------
 # Each chain's OWN cycles, pinned EXACTLY: (ours, the ROM's) — its only surface is cost. Ours +16 in every chain since the
-# floppy ran through the FDC model (ruling D4): B6's two `lea`s that call hdv_boot at the ROM's depth; the ROM's unchanged.
+# floppy ran through the FDC model (ruling D4): B6's two `lea`s that call hdv_boot at the ROM's depth. Since D4 P4a (R-P4-3)
+# B6 runs OUR lower floppy driver's probe: ours +18,422 (the driver's two calls, in place), the ROM's +18,864 (its own two
+# calls: its whole driver less the Floprd both run, `bc.replaced_calls`).
 OWN = {
-    "boot chain, WARM": (2538208, 2563892),
-    "boot chain, COLD": (5456284, 5481968),
-    "boot chain, WARM, mono, ST low, blitter ABSENT": (2538268, 2563948),
-    "boot chain, WARM, colour, ST low, blitter PRESENT": (2538208, 2563892),
-    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2538238, 2563918),
-    "boot chain, COLD, mono, ST low, blitter ABSENT": (5456344, 5482024),
-    "boot chain, COLD, colour, ST low, blitter PRESENT": (5456284, 5481968),
-    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5456314, 5481994),
+    "boot chain, WARM": (2556630, 2582756),
+    "boot chain, COLD": (5474706, 5500832),
+    "boot chain, WARM, mono, ST low, blitter ABSENT": (2556690, 2582812),
+    "boot chain, WARM, colour, ST low, blitter PRESENT": (2556630, 2582756),
+    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2556660, 2582782),
+    "boot chain, COLD, mono, ST low, blitter ABSENT": (5474766, 5500888),
+    "boot chain, COLD, colour, ST low, blitter PRESENT": (5474706, 5500832),
+    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5474736, 5500858),
 }
 
 
@@ -460,6 +488,14 @@ def test_the_table_prices_every_chain_on_each_shore_s_own_cycles_under_the_bar()
         assert tier3._costs(measured) == ((priced.the_rom_s.instructions, own_the_rom_s), (priced.ours.instructions, own_ours))
         assert measured.boot_rest == priced.rest and measured.ratio <= BAR
         assert tier3.verdict(row, measured, 0, None) == "ok"
+
+
+@pytest.mark.parametrize("name", ("boot chain, WARM", "boot chain, COLD"))
+def test_the_chain_s_own_cycles_are_pinned_without_the_table(name):
+    """THE PRICE IN PLACE (D4 P4a): our lower driver's calls in B6 leave the ROM's rest through `bc.replaced_calls` — held
+    here as well as in the table's test, whose import is the derivations' (so a mutation sweep that deselects it still
+    reaches the subtraction)."""
+    assert bc.priced(bc.SLICES[name]).own == OWN[name]
 
 
 def test_the_rest_beside_each_shore_s_own_is_held_equal_step_by_step(monkeypatch):

@@ -170,6 +170,10 @@ def our_span(laid=None):
     return laid.at, laid.at + len(laid.code)
 
 
+def _spans_of(laid):
+    return tuple((piece.at, piece.at + len(piece.code)) for piece in boot.pieces_of(laid))
+
+
 # ---- THE MACHINES ------------------------------------------------------------------------------------------------------
 MACHINES = boot_display.MACHINES                                    # WARM, COLD
 # WHERE EACH STARTS: the ROM's own machine at $fc0452, where the ROM's B5 slice leaves it on the capture's display — a
@@ -293,10 +297,12 @@ def floprd_cross_check(machine, drive_arm=CAPTURE_DRIVES):
 
 
 # ---- THE TWO SHORES --------------------------------------------------------------------------------------------------------
-Shore = namedtuple("Shore", "slice own answers")
+Shore = namedtuple("Shore", "slice own answers also", defaults=(0,))
 Shore.__doc__ = """One shore's run: the `boot.Slice` (its legs joined where an entry was answered, the answers' own stores
-among `stored`), its OWN cycles (the ROM's in its slice's and its ported callees' spans; ours in the overlay's) and the
-ANSWER LEDGER: each answered entry in order, with what it was asked (the cartridge's hooks among them, observed)."""
+among `stored`), its OWN cycles (the ROM's in its slice's and its ported callees' spans; ours in the overlay's), the
+ANSWER LEDGER: each answered entry in order, with what it was asked (the cartridge's hooks among them, observed) — and
+`also`, the same run's cycles in any further spans a price asks for (`priced(..., floppy=True)`: the ROM's driver text
+ours still runs), read off the same profile."""
 
 
 def _spans_cycles(spans):
@@ -334,24 +340,26 @@ def carried(done, carry):
     return Carry(boot.port_a_after(done, carry.port_a), done.fdc_chip)
 
 
-def _legs(machine, until, laid, own, not_ran, observing, drive_arm, carry, gpip, budget=boot.SLICE_INSNS):
+def _legs(machine, until, laid, own, not_ran, observing, drive_arm, carry, gpip, budget=boot.SLICE_INSNS, also=()):
     """`machine` run to `until`, leg by leg — a leg stopped at an answered entry continues from its answer, one stopped at
     an observed entry (where `observing`) from where it stands — each leg profiled and run THROUGH THE FDC MODEL, port A
     and the chip carried leg to leg (every leg is a run): `(Shore of the legs joined, its own cycles `own`'s summed, the
     carry it leaves)`."""
-    legs, spent, answers, laid_runs = [], 0, [], []
+    legs, spent, extra, answers, laid_runs = [], 0, 0, [], []
     stops = {until} | ANSWERED | (OBSERVED if observing else frozenset())
     while True:
         declared = floppy_declared(drive_arm, carry, gpip)
         if laid:
             done = boot.run(machine, stops, budget=budget, laid=laid, **declared)
             spent += _vet_who_ran(machine.label, own, not_ran)
+            extra += _spans_cycles(also)
         else:
             emu.prof_enable(True)
             emu.prof_reset()
             try:
                 done = boot.run(machine, stops, budget=budget, **declared)
                 spent += _spans_cycles(own)
+                extra += _spans_cycles(also)
             finally:
                 emu.prof_enable(False)
         carry = carried(done, carry)
@@ -368,17 +376,17 @@ def _legs(machine, until, laid, own, not_ran, observing, drive_arm, carry, gpip,
     joined = legs[0]
     for later in legs[1:]:
         joined = boot_hwinit.joined(joined, later)
-    return Shore(_with_stores(joined, laid_runs), spent, tuple(answers)), carry
+    return Shore(_with_stores(joined, laid_runs), spent, tuple(answers), extra), carry
 
 
-def _run(machine, until, laid, own, not_ran, drive_arm, carry, gpip, budget=boot.SLICE_INSNS):
+def _run(machine, until, laid, own, not_ran, drive_arm, carry, gpip, budget=boot.SLICE_INSNS, also=()):
     """THE SHORE: run once with every observed entry a stop — for the LEDGER — and once without — for the PRICE: a leg
     resumed where it stopped counts its step-off segment again (measured: +1 instruction, +40 cycles an arrival, on both
     shores alike), so the price and the machine are the plain run's. The two are held to leave the same machine and
     the same answers (refused by name otherwise)."""
     args = (machine, until, laid, own, not_ran)
     watched, _carry = _legs(*args, observing=True, drive_arm=drive_arm, carry=carry, gpip=gpip, budget=budget)
-    plain, left = _legs(*args, observing=False, drive_arm=drive_arm, carry=carry, gpip=gpip, budget=budget)
+    plain, left = _legs(*args, observing=False, drive_arm=drive_arm, carry=carry, gpip=gpip, budget=budget, also=also)
     if (watched.slice.machine, watched.slice.stored, watched.slice.fdc_events, watched.slice.fdc_chip) \
             != (plain.slice.machine, plain.slice.stored, plain.slice.fdc_events, plain.slice.fdc_chip) \
             or [asked for asked in watched.answers if asked[0] not in OBSERVED_NAMES] != list(plain.answers):
@@ -396,21 +404,33 @@ def entry_carry(machine):
 
 
 def the_rom_s(machine, laid=None, drive_arm=CAPTURE_DRIVES):
-    """The ROM's own slice on `machine` from its machine at `$fc0452` to `$fc047a` (`laid`: with an overlay it must not
-    reach — the ROM's shore with and without it), the floppy through the FDC model on `drive_arm`'s drives."""
-    shore, _left = _run(start_of(machine), SPAN[1], laid, THE_ROM_S_SPANS, (our_span(laid),) if laid else (),
+    """The ROM's own slice on `machine` from its machine at `$fc0452` to `$fc047a` (`laid`: with an overlay — or several,
+    `boot.overlays` — it must not reach: the ROM's shore with and without it), the floppy through the FDC model on
+    `drive_arm`'s drives."""
+    shore, _left = _run(start_of(machine), SPAN[1], laid, THE_ROM_S_SPANS, _spans_of(laid) if laid else (),
                         drives(drive_arm), entry_carry(machine), gpip_of(machine), _budget(drive_arm))
     return shore
 
 
-def our_side(machine, code=None, drive_arm=CAPTURE_DRIVES):
-    """OUR slice on `machine` from the same machine, on its overlay (the product, or `code`), entered at our entry where
-    the ROM's stands; refused by name if it ran a cycle of the ROM's slice or of the routines it ports."""
-    laid = overlay(code)
+def laid_with(code=None, floppy=False):
+    """What our side lays: the product (or `code`) — and, with `floppy`, OUR LOWER FLOPPY DRIVER beside it (D4 P4, R-P4-3:
+    its body and the jump at each ROM entry it ports, `boot_floppy.pieces`)."""
+    import boot_floppy                  # (it imports this module)
+    return boot.overlays(overlay(code), *boot_floppy.pieces()) if floppy else overlay(code)
+
+
+def our_side(machine, code=None, drive_arm=CAPTURE_DRIVES, floppy=False, also=()):
+    """OUR slice on `machine` from the same machine, on its overlay (the product, or `code`; with `floppy`, our lower
+    floppy driver too — R-P4-3's new rows, beside these with the ROM's driver), entered at our entry where the ROM's
+    stands; refused by name if it ran a cycle of the ROM's slice or of the routines it ports (with `floppy`, of the
+    driver's ported text too). `also`: further spans whose cycles the same run reads (`Shore.also`)."""
+    import boot_floppy                  # (it imports this module)
+    laid = laid_with(code, floppy)
     entered = boot.entered_at(start_of(machine), product().base)
-    entered = entered._replace(label=f"{entered.label}; {laid.label}")
-    shore, _left = _run(entered, SPAN[1], laid, (our_span(laid),), THE_ROM_S_SPANS, drives(drive_arm),
-                        entry_carry(machine), gpip_of(machine), _budget(drive_arm))
+    entered = entered._replace(label=f"{entered.label}; {boot.label_of(laid)}")
+    not_ran = (*THE_ROM_S_SPANS, *boot_floppy.NEVER_RUN) if floppy else THE_ROM_S_SPANS
+    shore, _left = _run(entered, SPAN[1], laid, _spans_of(laid), not_ran, drives(drive_arm), entry_carry(machine),
+                        gpip_of(machine), _budget(drive_arm), also=also)
     assert shore.own, f"{entered.label}: the run never executed our code"
     return shore
 
@@ -486,9 +506,21 @@ Priced.__doc__ = """B6 measured on both shores: the two `boot.Slice`s, `own` (ou
 slice's and its ported callees') and `rest` (each run's other cycles: the ROM's routines both run), held equal."""
 
 
-def priced(machine):
-    """`machine`'s slice PRICED: both shores run, every held surface equal (refused by name otherwise)."""
-    rom, ours = the_rom_s(machine), our_side(machine)
+def priced(machine, floppy=False):
+    """`machine`'s slice PRICED: both shores run, every held surface equal (refused by name otherwise). With `floppy`
+    (R-P4-3: our lower floppy driver laid too) the ROM's own takes the driver's text it runs BEYOND what ours still runs
+    of it (Floprd's, unported: the ROM's on both shores), read off each plain run's profile — the calls ours replaces.
+    WHAT IT DEPENDS ON (review RP4a's N6): our C never runs the ROM's driver text on its own behalf — such cycles would
+    leave our column for the ROM's discount unseen. Every ported entry has arrival rows holding the WHOLE call in our
+    spans (`boot_floppy.priced`: own == the call's cycles)."""
+    import boot_floppy                  # (it imports this module)
+    if floppy:
+        rom = _run(start_of(machine), SPAN[1], None, (*THE_ROM_S_SPANS, boot_floppy.LOWER_DRIVER), (), drives(),
+                   entry_carry(machine), gpip_of(machine))[0]
+        ours = our_side(machine, floppy=True, also=boot_floppy.ROM_TEXT_STILL_RUN)      # ONE run: both sums
+        rom = rom._replace(own=rom.own - ours.also)
+    else:
+        rom, ours = the_rom_s(machine), our_side(machine)
     found = differences(rom, ours)
     assert not found, f"{name_of(machine)}: ours differs from the ROM's — {'; '.join(found)}"
     rest = (ours.slice.cycles - ours.own, rom.slice.cycles - rom.own)

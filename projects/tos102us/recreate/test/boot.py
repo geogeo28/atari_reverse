@@ -247,12 +247,32 @@ def overlaid(at, code):
     return Overlay(at, bytes(code), OVERLAY_LABEL.format(length=len(code), at=at))
 
 
+def pieces_of(laid):
+    """The `Overlay`s `laid` lays: itself, or each of a tuple of them (`overlays`)."""
+    return (laid,) if isinstance(laid, Overlay) else tuple(laid)
+
+
+def label_of(laid):
+    return "; ".join(piece.label for piece in pieces_of(laid))
+
+
+def overlays(*pieces):
+    """SEVERAL OVERLAYS LAID IN ONE RUN (D4 P4a: a slice's product beside the floppy's lower driver, its body and the jump
+    laid at each ROM entry it ports, R-P4-2) — each an `Overlay` (`overlaid`) with its own label; refused by name where
+    two overlap (the later would silently replace the earlier's bytes)."""
+    spans = sorted((piece.at, piece.at + len(piece.code)) for piece in pieces)
+    for (_lo, hi), (next_lo, next_hi) in zip(spans, spans[1:]):
+        if next_lo < hi:
+            raise Refused(f"two overlays overlap: [{next_lo:#x}, {next_hi:#x}) lies over one ending at {hi:#x}")
+    return tuple(pieces)
+
+
 def _vet_kept_off_the_rom_s_head(machine, laid):
     """A RUN OF OURS NEVER EXECUTES THE ROM'S OWN HEAD (the user's ruling): read off the run's profile, REFUSED BY NAME
     — code of ours that fell into the ROM's head would be measured equal on the ROM's own instructions."""
     spent = emu.prof_cycles(*THE_ROM_S_HEAD)
     if spent:
-        raise Refused(f"{machine.label}, {laid.label}: the run executed the ROM's own head "
+        raise Refused(f"{machine.label}, {label_of(laid)}: the run executed the ROM's own head "
                       f"[{THE_ROM_S_HEAD[0]:#x}, {THE_ROM_S_HEAD[1]:#x}) — {spent} cycles of it")
 
 
@@ -287,7 +307,7 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
     """THE ROM'S CODE RUN FROM `machine` (from its PC, with its whole register file) TO ITS FIRST ARRIVAL AT ANY ADDRESS
     OF `until` — a `Slice`, or REFUSED BY NAME (the module's docstring). `io_seed`, `hw_seed`, `psg_seed`: what the case
     declares the hardware held (the kit's own declarations, refused by the kit where read and undeclared); `faults`:
-    the `bus_error.Fault`s the case declares. `laid`: an `Overlay` (`overlaid`) — our code over a copy of the ROM
+    the `bus_error.Fault`s the case declares. `laid`: an `Overlay` (`overlaid`), or several (`overlays`) — our code over a copy of the ROM
     window for this run; such a run is PROFILED, refused by name if it executed the ROM's own head, and leaves its
     profile for the caller to read (`emu.prof_cycles`). `fdc`: an `Fdc` — the FDC/DMA model ARMED for this run, its
     ledger and the chip it left in the `Slice` — or None (unarmed: every access as before)."""
@@ -297,8 +317,8 @@ def run(machine, until, budget=SLICE_INSNS, io_seed=None, hw_seed=None, psg_seed
     armed, entry = stops | set(declared), machine.registers["pc"]
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = machine.ram
-    if laid:
-        memory[laid.at:laid.at + len(laid.code)] = laid.code
+    for piece in pieces_of(laid) if laid else ():
+        memory[piece.at:piece.at + len(piece.code)] = piece.code
         emu.prof_enable(True)
         emu.prof_reset()
     pushed = {}

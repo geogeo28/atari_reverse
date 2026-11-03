@@ -453,6 +453,33 @@ def test_the_table_and_the_suites_have_the_boot_s_late_slice_and_its_rule_fixes_
     assert BOOTLATE not in rules_of([makefile.replace(line, "$(SHIPPED_BIN)"), kit])[TABLE][0]
 
 
+BOOTFLOPPY = "build/bootfloppy/floppy.bin"   # (D4 P4a: the lower floppy driver's C and glue, linked where its body is laid)
+
+
+def test_the_table_and_the_suites_have_the_floppy_driver_and_its_rule_makes_the_rom_s_registers_the_compiler_s():
+    """D4 P4a: the table's arrival rows and B6 / the chain lay the driver, so the table and the three suites need its
+    product; its sources lie one directory below kit.mk's sweeps; its link address is read off `include/boot/floppy.h`;
+    its flags fix the ROM's registers (`floppy.c`'s header), make the caller's D3-D5 / A3-A4 call-used (the glue saves
+    them at $a28: GCC pushes nothing) and keep function addresses out of registers. RED: the table's
+    `$(BOOTFLOPPY_BIN)` dropped."""
+    makefile, kit = _texts()
+    rules = rules_of([makefile, kit])
+    assert all(BOOTFLOPPY in rules[target][0] for target in (*THE_SUITES, TABLE))
+    for name in ("floppy.c", "floppy_entry.S"):
+        assert (RECREATE / "src" / "boot" / "floppy" / name).is_file() and not list((RECREATE / "src").glob(f"*/{name}"))
+    variables = _definitions([makefile])
+    assert "include/boot/floppy.h" in variables["BOOTFLOPPY_LAID_AT"]
+    flags = variables["BOOTFLOPPY_CFLAGS"]
+    fixed = re.search(r"\$\(foreach register,([a-z0-9 ]+),-ffixed-\$\(register\)\)", flags)
+    used = re.search(r"\$\(foreach register,([a-z0-9 ]+),-fcall-used-\$\(register\)\)", flags)
+    assert fixed and fixed.group(1).split() == ["d1", "d2", "d6", "d7", "a1", "a2", "a5", "a6"]
+    assert used and used.group(1).split() == ["d3", "d4", "d5", "a3", "a4"]
+    assert "-fno-function-cse" in flags and "--param=min-pagesize=0" in flags
+    line = "$(BOOTLATE_BIN) $(BOOTFLOPPY_BIN)"
+    assert makefile.count(line) == 1
+    assert BOOTFLOPPY not in rules_of([makefile.replace(line, "$(BOOTLATE_BIN)"), kit])[TABLE][0]
+
+
 def capture_key_lacks(texts):
     """What the captures' key does not read, over makefile `texts`: of the workspace modules a capture tool imports (a
     file of this project's tools/ or the workspace's), the oracle and the Hatari — each named by the key's own list or

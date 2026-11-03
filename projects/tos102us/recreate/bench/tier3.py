@@ -129,6 +129,8 @@ import boot_display                                        # noqa: E402
 import boot_late                                           # noqa: E402
 # ...and THE CHAINED BOOT (boot CH): the whole boot from the reset to gem_entry, each chain priced the same way (`boot_chain`).
 import boot_chain                                          # noqa: E402
+# ...and THE FLOPPY'S LOWER DRIVER (D4 P4): each call B6 makes of a ported entry, priced at its arrival (`boot_floppy`).
+import boot_floppy                                         # noqa: E402
 # ...and the opcode words, for the one a listing is searched for: `trap #2`.
 import opcodes                                             # noqa: E402
 
@@ -1831,6 +1833,26 @@ def is_a_boot_chain(row):
     return row.registered in boot_chain.SLICES
 
 
+# A DRIVER CALL AT ITS ARRIVAL (D4 P4a; ruling R-P4-3 "Both": the new row kind) — each call B6's ROM run makes of an entry of
+# the lower floppy driver we port (P4a: hdv_init's drive probe `$fc173a`, both drives, on COLD's four drive arms and WARM's
+# capture drives): both shores from the ROM's own machine standing at the entry, run to the call's return through the kit's
+# FDC/DMA model (D4), ours reached by the 6-byte `jmp` laid at the entry (R-P4-2, its 12 cycles in our column); each shore
+# its whole call, every observable surface held (`boot_floppy.differences`).
+BOOT_FLOPPY_CALL_FUNCTION = "FLOPPY lower driver (C)"
+BOOT_FLOPPY_CALL_CASE = "A DRIVER CALL AT ITS ARRIVAL (R-P4-3): ${entry:x}, {name}"
+
+
+def _boot_floppy_call_row(name):
+    entry = boot_floppy.PROBE
+    return Row(BOOT_FLOPPY_CALL_FUNCTION, BOOT_FLOPPY_CALL_CASE.format(entry=entry, name=name), entry,
+               boot_floppy.PORTED[entry], (), None, {}, None, None, RETURNS_NOTHING, False, entry, registered=name)
+
+
+def is_a_boot_floppy_call(row):
+    """Is `row` a lower floppy driver call at its arrival — both shores from the ROM's machine at the entry, whole calls?"""
+    return row.registered in boot_floppy.ARRIVALS
+
+
 ALL_CASES = tuple(test_boot_snapshot.VERIFIED_CASES) + EXTRA_CASES
 ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not None)
         + tuple(_woken_row(name, woken) for name, woken in aes_ctlmgr.ROWS.items())
@@ -1844,7 +1866,8 @@ ROWS = (tuple(row for row in (_row(case) for case in ALL_CASES) if row is not No
         + tuple(_boot_launch_slice_row(name, the_slice) for name, the_slice in boot_launch.SLICES.items())
         + tuple(_boot_display_slice_row(name, arm) for name, arm in boot_display.SLICES.items())
         + tuple(_boot_late_slice_row(name, machine) for name, machine in boot_late.SLICES.items())
-        + tuple(_boot_chain_row(name, chain) for name, chain in boot_chain.SLICES.items()))
+        + tuple(_boot_chain_row(name, chain) for name, chain in boot_chain.SLICES.items())
+        + tuple(_boot_floppy_call_row(name) for name in boot_floppy.ARRIVALS))
 # ...and the verified cases this file does NOT price, which `test_tier3.py` reds on. Recorded rather
 # than raised at import, so the gate names them all at once instead of the collection dying on the
 # first: a function reconstructed without a Tier 3 row is the state the numerator exists to end.
@@ -4341,6 +4364,17 @@ def boot_late_slice_on(name):
     return _boot_measurement(boot_late.priced(boot_late.SLICES[name]), boot_late.ENTRY_SYMBOL)
 
 
+def boot_floppy_call_on(name):
+    """A LOWER FLOPPY DRIVER CALL AT ITS ARRIVAL's `Measurement`: every held surface equal (`boot_floppy.priced`, refused by
+    name otherwise), each shore its whole call; nothing beside it (`boot_rest` 0)."""
+    price = boot_floppy.priced(name)
+    OUR_RUN.append(OurRun(boot_floppy.PORTED[boot_floppy.PROBE], _cycles_in(AES_OWN_SPANS), False, 0))
+    ours, the_rom_s = price.own
+    measured = Measurement((price.the_rom_s.instructions, the_rom_s), (price.ours.instructions, ours), (0, 0))
+    measured.boot_rest = 0
+    return measured
+
+
 def boot_chain_on(name):
     """A CHAIN OF THE WHOLE BOOT's `Measurement`: every boundary held (`boot_chain.priced`, refused by name otherwise), each
     shore on its own cycles; the ROM's code both run and the answers (`boot_rest`) under the row."""
@@ -4353,6 +4387,12 @@ BOOT_CHAIN_LINE = ("{indent}  the whole boot, reset to gem_entry, on its own cyc
                    "by step, in neither column; held at every boundary: every register but the carries named, the megabyte "
                    "with the named mappings outside each slice's residue, the stores, every ledger, the answers "
                    "(`boot_chain.differences`)")
+
+
+BOOT_FLOPPY_CALL_LINE = ("{indent}  a call of the lower floppy driver at its arrival, each shore its whole call (ours: the jump "
+                         "laid at the ROM's entry and our body); through the kit's FDC/DMA model (D4), the polls counted; "
+                         "held: every register, the megabyte and the stores above the chain's floor `$74ff`, every "
+                         "ledger, the chip (`boot_floppy.differences`)")
 
 
 BOOT_LATE_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the overlay's on ours, the ROM's slice and the five "
@@ -5484,6 +5524,8 @@ def _measured_on_its_path(row, bench):
         return boot_late_slice_on(row.registered)
     if is_a_boot_chain(row):
         return boot_chain_on(row.registered)
+    if is_a_boot_floppy_call(row):
+        return boot_floppy_call_on(row.registered)
     if is_measured_at_its_arrival(row):     # ...on the blob that prices it as shipped, as the kit's path chooses one
         return at_its_arrival_on(shipped_bench() if ships_through_a_call(row) else bench, row.registered,
                                  aes_ctlmgr.HANDLED[row.registered])
@@ -6017,6 +6059,8 @@ def table(bench, jobs=SERIAL):
             lines.append(BOOT_LATE_SLICE_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
         if is_a_boot_chain(row):
             lines.append(BOOT_CHAIN_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH), rest=m.boot_rest))
+        if is_a_boot_floppy_call(row):
+            lines.append(BOOT_FLOPPY_CALL_LINE.format(indent=" " * (name_width + ADDRESS_WIDTH)))
         if state in FAILED:
             failed.append((row, state))
     if CHECKPOINTS:

@@ -5,7 +5,8 @@ The census, its KINDS and what each owes a rebuilt ROM are `rom_data.py`'s; this
 links it, `build/boothead/`), over `src/boot/` (B2's and B3's C and their entries, in the sweep: the bench blob) and
 over `src/boot/launch/` (B4's C and its entry, below the sweep like the head: `build/bootlaunch/`) and over
 `src/boot/display/` (B5's C, below the sweep too: `build/bootdisplay/`) and over `src/boot/late/` (B6's C, below the
-sweep too: `build/bootlate/`). D11 IS OPEN
+sweep too: `build/bootlate/`) and over `src/boot/floppy/` (the lower floppy driver's C and glue, D4 P4a: `build/bootfloppy/`,
+no ROM address used as a value). D11 IS OPEN
 (ROM data by ROM address vs `data/`): each TABLE here is read where it lies, as the orchestrator's call has it, and
 stands as an obligation on a rebuilt ROM — nothing is extracted.
 
@@ -24,7 +25,10 @@ BOOT_LAUNCH = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "launch", 
 BOOT_DISPLAY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "display", rom_data.INCLUDE / "boot")
 # ...and B6's (`src/boot/late/`, linked by its own rule into `build/bootlate/`).
 BOOT_LATE = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "late", rom_data.INCLUDE / "boot")
-SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY, BOOT_LATE)
+# ...and the lower floppy driver's (D4 P4a: `src/boot/floppy/`, linked by its own rule into `build/bootfloppy/`): it uses
+# no ROM address as a value — its jump at each ROM entry is laid by the harness, and its C reaches RAM and the chips alone.
+BOOT_FLOPPY = rom_data.Component(rom_data.RECREATE / "src" / "boot" / "floppy", rom_data.INCLUDE / "boot")
+SCOPES = (BOOT, BOOT_C, BOOT_LAUNCH, BOOT_DISPLAY, BOOT_LATE, BOOT_FLOPPY)
 ROM_ADDRESSES_AS_DATA = {
     "head.S": {
         # Read in place, pc-relative (the four DATA operands `transcription.Relocated(..., in_place=True)` pins): the
@@ -117,9 +121,11 @@ def test_a_table_s_kind_is_where_it_lies():
 
 def test_the_scope_is_the_boot_s_sources_and_headers():
     """The census reads the files it means — a scope one directory off would census nothing and pass."""
-    headers = ["boot/display.h", "boot/head.h", "boot/hwinit.h", "boot/late.h", "boot/launch.h", "boot/sysvars.h"]
+    headers = ["boot/display.h", "boot/floppy.h", "boot/head.h", "boot/hwinit.h", "boot/late.h", "boot/launch.h",
+               "boot/sysvars.h"]
     assert sorted(BOOT.scanned()) == [*headers, "head.S"]
     assert sorted(BOOT_C.scanned()) == [*headers, "hwinit.c", "hwinit_entry.S", "sysvars.c", "sysvars_entry.S"]
     assert sorted(BOOT_LAUNCH.scanned()) == [*headers, "launch.S", "launch.c", "launch_entry.S"]
     assert sorted(BOOT_DISPLAY.scanned()) == [*headers, "display.c"]
     assert sorted(BOOT_LATE.scanned()) == [*headers, "late.c"]
+    assert sorted(BOOT_FLOPPY.scanned()) == [*headers, "floppy.c", "floppy_entry.S"]

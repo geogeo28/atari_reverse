@@ -54,6 +54,7 @@ import preinit_snapshot
 
 import boot
 import boot_display
+import boot_floppy
 import boot_head
 import boot_hwinit
 import boot_late
@@ -105,13 +106,24 @@ def entries():
             B4: boot_launch.our_entry(boot_launch.SliceOf(boot_launch.LAUNCH, DISK))}
 
 
+def floppy_jump_name(entry):
+    return f"floppy jump {entry:#x}"
+
+
+FLOPPY_PRODUCTS = ("floppy", *(floppy_jump_name(entry) for entry in boot_floppy.PORTED))
+
+
 def products():
-    """`{name: (base, bytes)}` of every product of ours the chain lays."""
+    """`{name: (base, bytes)}` of every product of ours the chain lays — our lower floppy driver's body and each jump laid
+    at a ROM entry it ports among them (R-P4-3: the chain runs our driver, in B6)."""
     the_blob = blob()
+    body, *jumps = boot_floppy.pieces()
     return {"head": boot_head.product(), "blob": (the_blob.base, the_blob.blob),
             "display": (boot_display.product().base, boot_display.product().code),
             "late": (boot_late.product().base, boot_late.product().code),
-            "launch": (boot_launch.product().base, boot_launch.product().code)}
+            "launch": (boot_launch.product().base, boot_launch.product().code),
+            "floppy": (body.at, body.code),
+            **{floppy_jump_name(jump.at): (jump.at, jump.code) for jump in jumps}}
 
 
 def exits(base, code):
@@ -132,10 +144,13 @@ BLOB_BOOT_ENTRIES = {boot_sysvars.ENTRY_SYMBOL: (),
 # `jmp $fc03b6`, B3's called entry its `jmp $fc03e0`; the display's `jmp $fc0452` on each of its two paths (colour, mono)
 # and its `jmp $fc0e1a` into the sync wait (the mono switch's, R-B5-1: no slice start); the late C's `jmp $fc047a`; the
 # launch's `jmp $fc0030` (the ROM's own, after a GEM that returned: no chain's). The head holds none: it is the ROM's
-# head transcribed to its last byte and FALLS THROUGH at its end.
+# head transcribed to its last byte and FALLS THROUGH at its end. Our floppy driver's body none (it returns by `rts`);
+# each jump laid at a ROM entry it ports, its one `jmp` to the glue's entry — inside the ROM window, our body laid there.
 EXPECTED_EXITS = {"head": {}, "blob": {boot.HARDWARE_INIT_CALLED: 1, boot.IKBD_RESET_DONE: 1},
                   "display": {boot.INTERRUPTS_OPENED: 2, boot_display.SYNC_WAIT: 1}, "late": {boot.MIDBOOT: 1},
-                  "launch": {boot.RESET_PC: 1}}
+                  "launch": {boot.RESET_PC: 1}, "floppy": {},
+                  **{floppy_jump_name(entry): {boot_floppy.product().symbols[symbol]: 1}
+                     for entry, symbol in boot_floppy.PORTED.items()}}
 
 
 def _blob_boot_code(base, code):
@@ -253,6 +268,12 @@ def spans():
         "the ROM's B5": (boot_display.SPAN,),
         "the ROM's B6": boot_late.THE_ROM_S_SPANS,
         "the ROM's B4": boot_launch.THE_ROM_S_SPANS,
+        # THE LOWER FLOPPY DRIVER (D4 P4): the ROM's text of each routine ours ports, past the jump laid over its first
+        # instruction (no run of ours may spend a cycle there); the ROM's whole driver, and the text of it ours still
+        # runs (Floprd's, the ROM's on both shores) — B6's price takes the difference of the two as the ROM's own.
+        "the ROM's ported floppy text": boot_floppy.NEVER_RUN,
+        "the ROM's lower driver": (boot_floppy.LOWER_DRIVER,),
+        "the ROM's lower driver ours still runs": boot_floppy.ROM_TEXT_STILL_RUN,
         # THE LINKED HANDLERS AND THEIR ROM COUNTERPARTS: the trap dispatcher (ours `trap.S`, the ROM's up to its table)
         # and the HBL (`isr.S`'s, byte for byte the ROM's, which the VBL's entry follows).
         "our trap.S": ((trap_lo, trap_hi),),
@@ -268,7 +289,7 @@ def spans():
     }
 
 
-OUR_PRODUCTS = ("our head", "our blob", "our display", "our late", "our launch")
+OUR_PRODUCTS = ("our head", "our blob", "our display", "our late", "our launch", *(f"our {name}" for name in FLOPPY_PRODUCTS))
 
 
 def _read():
@@ -467,7 +488,7 @@ def ours(chain, steering_map=None):
     steps.append(_answered_step(B5, machine, boot.INTERRUPTS_OPENED, boot_display.overlay(), mono, carry,
                                 **boot_display.declared(chain.arm)))
     machine = steered(steps[-1].machine, boot.INTERRUPTS_OPENED, steering_map)
-    steps.append(_answered_step(B6, machine, boot.MIDBOOT, boot_late.overlay(), False, steps[-1].carry,
+    steps.append(_answered_step(B6, machine, boot.MIDBOOT, boot_late.laid_with(floppy=True), False, steps[-1].carry,
                                 floppy=_floppy(chain)))
     machine = steered(steps[-1].machine, boot.MIDBOOT, steering_map)
     steps.append(_launch_step(machine, boot_launch.overlay(), steps[-1].carry))
@@ -487,20 +508,31 @@ def rom_own(step):
     return spent[ported[step.name]] + linked
 
 
-# THE PRODUCT EACH STEP LAYS beside the blob: an overlay's span is the ROM's own text in every other step (the head's lies
-# over GEMDOS's file system, which the launch runs: 1,782 cycles — D10's first item owed), so it is ours in its own step only.
-OVERLAY_OF = {HEAD: "head", B2: None, B3: None, B5: "display", B6: "late", B4: "launch"}
+# THE PRODUCTS EACH STEP LAYS beside the blob: an overlay's span is the ROM's own text in every other step (the head's lies
+# over GEMDOS's file system, which the launch runs: 1,782 cycles — D10's first item owed; a floppy jump over the ROM's
+# own driver), so it is ours in its own step only. B6 lays the late slice and our lower floppy driver (R-P4-3).
+OVERLAY_OF = {HEAD: ("head",), B2: (), B3: (), B5: ("display",), B6: ("late", *FLOPPY_PRODUCTS), B4: ("launch",)}
 
 
 def our_own(step):
-    """OUR OWN cycles in `step`: every cycle in the blob and in the overlay the step lays."""
-    overlay = OVERLAY_OF[step.name]
-    return step.spent["our blob"] + (step.spent[f"our {overlay}"] if overlay else 0)
+    """OUR OWN cycles in `step`: every cycle in the blob and in the overlays the step lays."""
+    return step.spent["our blob"] + sum(step.spent[f"our {overlay}"] for overlay in OVERLAY_OF[step.name])
+
+
+def replaced_calls(rom_step, our_step):
+    """THE ROM'S OWN CYCLES IN THE DRIVER CALLS OURS REPLACES (B6's; 0 in any other step): the ROM's whole lower driver on
+    its shore less the driver text ours still runs (Floprd's: the same calls on both shores) — read off each plain run.
+    It depends on our driver never running the ROM's driver text on its own behalf: every ported entry's arrival rows hold
+    the whole call in our spans (`boot_floppy.priced`, review RP4a's N6)."""
+    if rom_step.name != B6:
+        return 0
+    return rom_step.spent["the ROM's lower driver"] - our_step.spent["the ROM's lower driver ours still runs"]
 
 
 # EVERY ROM SPAN THE BOOT PORTS, whichever step's: the head, B2 (with `$fc0eba`), B3's stretch and `$fc2408`, B5, B6 (with
 # its five routines), B4 (the launch and the AUTO runner), and the counterparts of our linked entries.
 PORTED_UNION = ("the ROM's head", "the ROM's B2", "the ROM's B3", "the ROM's B5", "the ROM's B6", "the ROM's B4",
+                "the ROM's ported floppy text",
                 "the ROM's dispatcher", "the ROM's HBL")
 
 
@@ -535,8 +567,15 @@ CARRIED = {B2: frozenset({"d1", "a1", "a3", "a4"}), B3: frozenset({"d1", "a1", "
 # (measured: five before D4's P3 — `$7509` and `$750f` were apart then and are equal now; which of P3's changes laid them
 # alike, the port-A carry or the lower floppy driver's frames, is not separated):
 # the comparison there is no region at all, but that exact set (`APART_AT_THE_END`).
+# AND, SINCE D4 P4a (ruling R-P4-5 "Widen exact set 3→11", 2026-11-02): EIGHT MORE — OUR LOWER FLOPPY DRIVER'S DEAD FRAMES from
+# B6's last probe (drive B:'s), which the launch never stores over: the ROM's hold its settle's saved D7 / SR and a return
+# into its own text, ours a return into our body — no code laid away from the ROM's addresses could leave them alike.
+# Each lies in that probe's frame span (`B6_LAST_PROBE_FRAMES`, below its entry SP), where the ROM's own run stores too.
 FRAMES_APART_FROM = 0x74ff
-APART_AT_THE_END = frozenset({0x74ff, 0x7500, 0x7501})
+B3_FRAMES_LEFT = frozenset({0x74ff, 0x7500, 0x7501})
+B6_LAST_PROBE_FRAMES = (0x7508, 0x751c)
+OUR_DRIVER_S_DEAD_FRAMES = frozenset({0x7508, 0x7509, 0x750d, 0x750e, 0x750f, 0x7512, 0x7513, 0x7515})
+APART_AT_THE_END = B3_FRAMES_LEFT | OUR_DRIVER_S_DEAD_FRAMES
 
 
 @functools.cache
@@ -728,9 +767,9 @@ def priced(chain):
     for one, other in zip(rom, mine):
         found = differences(one, other, chain)
         assert not found, f"{chain}: at the end of {other.name} ours differs from the ROM's — {'; '.join(found)}"
-        rests = (other.cycles - our_own(other), one.cycles - rom_own(one))
+        rests = (other.cycles - our_own(other), one.cycles - rom_own(one) - replaced_calls(one, other))
         assert rests[0] == rests[1], f"{chain}: in {other.name}, beside its own, ours spent {rests[0]} cycles, the ROM's {rests[1]}"
-    own = (sum(our_own(step) for step in mine), sum(rom_own(step) for step in rom))
+    own = (sum(our_own(step) for step in mine), sum(rom_own(step) + replaced_calls(step, other) for step, other in zip(rom, mine)))
     rest = sum(step.cycles for step in mine) - own[0]
     return Priced(_shore(rom), _shore(mine), own, rest)
 

@@ -599,3 +599,45 @@ def test_a_drive_arm_on_one_shore_alone_is_named():
     megabyte: one drive counted). The chip alone is the each-surface negative's (both arms leave drive A:'s seek last)."""
     found = bl.differences(bl.the_rom_s(boot.COLD), bl.our_side(boot.COLD, drive_arm=bl.B_ABSENT))
     assert any(item.startswith("fdc_events") for item in found) and any(item.startswith("ram") for item in found)
+
+
+# ---- WITH OUR LOWER FLOPPY DRIVER (D4 P4a, R-P4-3 "Both": these rows beside the ROM driver's above) -----------------------------
+# Our driver laid beside the late slice: its body over Prtblk's text and the 6-byte `jmp` at each ROM entry it ports (R-P4-2,
+# P4a: the probe `$fc173a`), so hdv_init's own `jsr` reaches ours. Floprd is still the ROM's, on both shores.
+@pytest.fixture(scope="module", params=bl.DRIVE_ARMS)
+def floppy_arm_pair(request):
+    return request.param, bl.the_rom_s(boot.COLD, drive_arm=request.param), bl.our_side(boot.COLD, drive_arm=request.param,
+                                                                                         floppy=True)
+
+
+def test_with_our_driver_every_drive_arm_is_held_equal(floppy_arm_pair):
+    _arm, rom, ours = floppy_arm_pair
+    assert bl.differences(rom, ours) == []
+
+
+@pytest.mark.parametrize("machine", bl.MACHINES)
+def test_with_our_driver_the_slice_is_priced_on_each_shore_s_own_cycles(machine):
+    """THE PRICE IN PLACE: ours the late slice's and our driver's every cycle; the ROM's its slice's and five routines', and
+    its whole lower driver LESS what ours still runs of it (Floprd, the ROM's on both) — each read off its plain run (a
+    call priced alone at its arrival measures 40 cycles more than in place, on both shores alike: the resumed arrival's
+    step-off). The rest beside them held equal (`bl.priced`)."""
+    priced = bl.priced(machine, floppy=True)
+    assert priced.own == OWN_CYCLES_WITH_OUR_DRIVER and priced.own[0] / priced.own[1] <= BAR
+
+
+# ours, the ROM's: OWN_CYCLES + the two probe calls in place (ours 18,422, the ROM's 18,864).
+OWN_CYCLES_WITH_OUR_DRIVER = (134_344, 155_410)
+
+
+def test_with_our_driver_the_end_surface_is_still_the_capture_but_d1():
+    capture = boot.midboot_machine()
+    ours = bl.against_the_capture(bl.our_side(boot.COLD, floppy=True), capture)
+    assert ours == (set(bl.END_REGISTERS_OWED), set(bl.END_APART))
+
+
+def test_with_our_driver_a_run_that_enters_the_rom_s_ported_driver_text_is_refused_by_name():
+    import boot_floppy
+    lo, hi = boot_floppy.NEVER_RUN[0]
+    jump_in = struct.pack(">HIHI", JSR_ABSOLUTE_LONG, lo, JMP_ABSOLUTE_LONG, bl.SPAN[1])
+    with pytest.raises(boot.Refused, match=rf"the run executed \[{lo:#x}, {hi:#x}\)"):
+        bl.our_side(boot.COLD, code=jump_in, floppy=True)

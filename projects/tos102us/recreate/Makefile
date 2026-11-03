@@ -505,6 +505,37 @@ $(BOOTLATE_BIN): $(BOOTLATE_ELF)
 bootlate: $(BOOTLATE_BIN)
 test guarded gates: $(BOOTLATE_BIN)
 
+# THE FLOPPY'S LOWER DRIVER (D4 phase P4; rulings "ROM-window overlay", "Own link rule", R-P4-2 "Jump at ROM entries") —
+# `src/boot/floppy/floppy.c` and its glue `floppy_entry.S`, LAID over a copy of the image's ROM window at `FLOPPY_LAID_AT`
+# (`include/boot/floppy.h`, the one spelling) and LINKED THERE by this rule alone, as B6's late slice is; the jump at each
+# ported ROM entry is laid by the harness (`test/boot_floppy.py`). ITS OWN FLAGS: the ROM's register contract made the
+# compiler's — D1 / D2 (port A's bytes), D6 / D7 (the command and the status), A1 (the record) and A5 (the DMA's mode
+# register) are the file's GLOBAL REGISTERS; A2 and A6 never touched; D3-D5 / A3-A4 CALL-USED, the glue saving the
+# caller's at $a28 — so GCC saves no register on the stack, spilling one long (the chain's 29 bytes, `floppy.c`'s
+# header); no function address held in a register (`-fno-function-cse`: GCC kept them in stack slots); no null page
+# (`late.c`'s reason).
+BOOTFLOPPY_DIR    := build/bootfloppy
+BOOTFLOPPY_ELF    := $(BOOTFLOPPY_DIR)/floppy.elf
+BOOTFLOPPY_BIN    := $(BOOTFLOPPY_DIR)/floppy.bin
+BOOTFLOPPY_SRC    := src/boot/floppy/floppy_entry.S src/boot/floppy/floppy.c
+BOOTFLOPPY_CFLAGS := $(BENCH_CFLAGS) $(foreach register,d1 d2 d6 d7 a1 a2 a5 a6,-ffixed-$(register)) \
+                     $(foreach register,d3 d4 d5 a3 a4,-fcall-used-$(register)) -fno-function-cse --param=min-pagesize=0
+BOOTFLOPPY_LAID_AT := $(call laid_at,FLOPPY_LAID_AT,include/boot/floppy.h)
+ifeq ($(BOOTFLOPPY_LAID_AT),)
+$(error include/boot/floppy.h defines no FLOPPY_LAID_AT — the floppy driver's link address is read from there and nowhere else)
+endif
+
+$(BOOTFLOPPY_ELF): $(BOOTFLOPPY_SRC) $(PROJECT_HEADERS) atari/target.mk $(PROJECT_MAKEFILE)
+	@mkdir -p $(BOOTFLOPPY_DIR)
+	m68k-elf-gcc $(BOOTFLOPPY_CFLAGS) -Wl,--build-id=none -Wl,-e0 -Wl,-Ttext=$(BOOTFLOPPY_LAID_AT) $(BOOTFLOPPY_SRC) -o $@
+
+$(BOOTFLOPPY_BIN): $(BOOTFLOPPY_ELF)
+	m68k-elf-objcopy -O binary $(BOOTFLOPPY_ELF) $(BOOTFLOPPY_BIN)
+
+.PHONY: bootfloppy
+bootfloppy: $(BOOTFLOPPY_BIN)
+test guarded gates: $(BOOTFLOPPY_BIN)
+
 # THE ROM-ONLY DERIVATIONS, MADE ONCE FOR THE TREE BEFORE ANY PROCESS THAT WILL ASK FOR THEM (`test/derived.py`): the
 # registry's import is twenty-five seconds of the ROM's own runs, which the bench makes and every xdist worker of both
 # suites makes again — unless they are kept. This step makes them over every core and keeps them under
@@ -522,7 +553,7 @@ derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
 # process writes, line for line. Boot B4's rows run the shipped launch (`$(BOOTLAUNCH_BIN)`) from the mid-boot capture
 # (`$(MIDBOOT)`, served from the store like every capture); the C twin is priced by nothing, so the table reads no twin.
 # Boot B5's rows run its C (`$(BOOTDISPLAY_BIN)`) from the WARM and COLD machines; boot B6's theirs (`$(BOOTLATE_BIN)`).
-$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTLATE_BIN) \
+$(BENCH_TABLE): bench/tier3.py $(wildcard test/*.py) $(BENCH_BIN) $(SHIPPED_BIN) $(BOOTLATE_BIN) $(BOOTFLOPPY_BIN) \
                 $(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLAUNCH_BIN) $(MIDBOOT) $(CAND) $(ORACLE) $(REGISTRY_READS) | derived
 	$(PY) bench/tier3.py --out $@
 

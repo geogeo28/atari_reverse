@@ -697,8 +697,8 @@ fn 0xfc29fc midi_acia_service
 fn 0xfc2a0c ikbd_acia_service
 fn 0xfc2a42 acia_take_byte
 fn 0xfc2c42 kbd_queue_key
-fn 0xfc1e60 fdc_set_drive_and_side   # ctx
-fn 0xfc1ea4 fdc_read_status   # ctx
+fn 0xfc1e60 fdc_set_drive_and_side
+fn 0xfc1ea4 fdc_read_status
 fn 0xfc1eac fdc_settle_delay
 var 0x0a04 floppy_vbl_entered
 var 0x0e7f kb_repeat_key
@@ -734,7 +734,7 @@ cmt 0xfc2104 Bconin device 0 (PRT:): reaches the parallel port through Giaccess 
 fn 0xfc2150 xconin_rs232
 cmt 0xfc2150 Bconin device 1 (AUX:): waits on the RS232 input ring at $c54 that the serial interrupt fills. The recreate HALTS on it: nothing in the run writes the ring, so the wait needs an interrupt rather than a declaration.
 cmt 0xfc1bc4 The floppy's own VBL service, called past the VBL's flock gate. NOT a poll loop: it makes two WORD reads of the FDC data/status register at $ff8604 (at $fc1c0a for the media-change poll, again through $fc1ea4 for the motor-off check), which a declared SEQUENCE describes exactly. What still blocks it is the YM2149's DIRECT path -- between those reads it calls $fc1e60 -- so the recreate reconstructs only the st it makes before it looks at anything and the early return flock buys.
-cmt 0xfc1e60 Selects YM2149 register 14 and READS PORT A BACK, then merges the drive-select and side bits into it -- a direct-PSG read-modify-write. This project's only PSG door so far is the XBIOS Giaccess trap, and a run reaching both paths is refused by the mixed-path guard; that is why floppy_vbl ($fc1bc4) is not reconstructed.
+cmt 0xfc1e60 Selects YM2149 register 14 and READS PORT A BACK (old byte to d2.b), merges the drive-select and side bits (new byte to d1.b, written to $ff8802) with SR raised to IPL 7 around it — a direct-PSG read-modify-write; D1 / D2 come back to the caller with these bytes over its own upper ones. C: floppy.c select_port_a (P4a). floppy_vbl ($fc1bc4) still halts in isr.S until P4d.
 
 # --- BIOS wave 3 / wave 6 (2026-09-19): the ACIA INPUT CHAIN under the IKBD handler's two KBDVECS slots ---
 fn 0xfc2a1a acia_service_body
@@ -2879,7 +2879,7 @@ var 0x09b8 auto_program_name
 cmt 0xfc03e0 Boot B5 (C: src/boot/display/display.c boot_display_entry, own rule at 0xfc3c00, D2-D7/A2-A6 fixed): $ff8260 & 3 (3 -> 2) into sshiftmd; GPIP bit 7 LOW (mono) -> sync wait 0xfc0e1a (A6 link), $ff8260 := 2, sshiftmd := 2; blitter_probe 0xfc0f1a; 0xfca99e (Line-A body vectors for D0); console_reinit 0xfca914; ST medium: pen 15's colour to pen 3 ($ff825e -> $ff8246); swv_vec := 0xfc0030; vblsem := 1; cartridge hooks d0=0 (0xfc0646). Ends at 0xfc0452 (move #$2300,sr, B6). The ROM's routines run in place on both shores; the mono arm's sync-wait poll [0xfc0e3c, 0xfc0e50) answered at its entry (R-B5-1).
 fn 0xfca99e linea_set_body_vectors
 cmt 0xfca99e Names the Line-A's CPU body set (0xfc4e36 -> $2a40) and blitter set (0xfc4e0e -> $2a3c), then jmp 0xfc4dde: the mode in D0 kept at $2a44 and the ten body vectors at $2a14 filled from the blitter set if bit 0, else the CPU set. Called by the boot (0xfc041c) with the blitter probe's answer (0 / 2: the CPU set either way).
-cmt 0xfc0452 Boot B6 (C: src/boot/late/late.c boot_late_entry, own rule at 0xfc3d00, D2-D7/A2-A6 fixed, --param=min-pagesize=0): move #$2300,sr (interrupts open; none delivered in a run, D3); cartridge hooks d0=1; 0xfc4a9e (BCBs + GEMDOS init + Dsetdrv); os_dosdate (0xfc001e) -> $8840; 0xfc4be8 (clock date); 0xfc053c (floppy boot, hdv_boot called at the ROM's depth); 0xfc0558 (ACSI boot); 0xfc0e56 (reset-resident scan). Ends at 0xfc047a (B4). Answered at their entries on both shores: ACSI probe 0xfc0586 (no device), clock probe 0xfc4c0c. The floppy (drive probe 0xfc173a, Floprd 0xfc1782) runs as the ROM's through the kit's FDC/DMA model (D4, R-D4-3).
+cmt 0xfc0452 Boot B6 (C: src/boot/late/late.c boot_late_entry, own rule at 0xfc3d00, D2-D7/A2-A6 fixed, --param=min-pagesize=0): move #$2300,sr (interrupts open; none delivered in a run, D3); cartridge hooks d0=1; 0xfc4a9e (BCBs + GEMDOS init + Dsetdrv); os_dosdate (0xfc001e) -> $8840; 0xfc4be8 (clock date); 0xfc053c (floppy boot, hdv_boot called at the ROM's depth); 0xfc0558 (ACSI boot); 0xfc0e56 (reset-resident scan). Ends at 0xfc047a (B4). Answered at their entries on both shores: ACSI probe 0xfc0586 (no device), clock probe 0xfc4c0c. The floppy (drive probe 0xfc173a, Floprd 0xfc1782) runs through the kit's FDC/DMA model (D4, R-D4-3): the ROM's driver, and since P4a our probe beside it.
 fn 0xfc4a9e boot_gemdos_buffers_and_init
 cmt 0xfc4a9e Boot (Alcyon C, ported in B6's late.c): BCBs $8846->$885a and $886e->$8882, every b_bufdrv -1, buffers $75c4/$77c4/$79c4/$7bc4; _bufl[0..1] := $8846/$886e; jsr GEMDOS init 0xfc4e5e; Dsetdrv(_bootdev) 0xfc6cc0 from its link frame's local (the depth is a surface: the BIOS frames A6/SP below savptr).
 fn 0xfc4be8 boot_clock_date
@@ -2895,4 +2895,17 @@ cmt 0xfc062a Boot: D1 += _hz_200; poll GPIP bit 5 until clear (Z) or _hz_200 == 
 fn 0xfc0e56 boot_reset_resident
 cmt 0xfc0e56 Boot: from phystop down in 512-byte pages to $400: a page holding $12123456, its own address, and summing (256 words) to $5678 is called at +8 (A0 kept on the stack). Foreign code, D12.
 fn 0xfc173a floppy_drive_probe
-cmt 0xfc173a Floppy lower driver: hdv_init's per-drive probe (12(sp) the drive): select, restore (seek 10 + restore on failure); D0 0 (0xfc1cda) or the error. Its waits are instruction-count loops on GPIP bit 5 (0xfc1dc0: $40000, $60000 motor off), no _hz_200. Run as the ROM's through the kit's FDC/DMA model in B6 (D4, R-D4-3): drive B absent ends in the seek error; no drive at all, or drive A with no disk, in the ROM's own timeout (the spin-up hang, then $D0).
+cmt 0xfc173a Floppy lower driver: hdv_init's per-drive probe (12(sp) the drive): record += seekrate, track cleared; common entry; select, track UNKNOWN ($ff00); restore, else seek 10 + restore; D0 0 or $a26 (-6 after the seek; -1 the default). PORTED in C (D4 P4a): src/boot/floppy/floppy.c, reached by a 6-byte jmp laid here (R-P4-2); held both shores at its arrival through the kit's FDC/DMA model, test/test_boot_floppy.py.
+fn 0xfc1c48 floppy_common_entry
+cmt 0xfc1c48 Floppy lower driver, the common entry: movem.l d3-d7/a3-a6,$a28 (the CALLER's registers, restored by the exit), A5 0, A6 $ff8606, st $a04, $a24/$a26 := d0, flock 1, the request copied to $a08..$a12 (drive, sector, track, side, count, buffer), $9f6 := 2, A1 the drive's record; a NEGATIVE record track is found again (select, restore, else seek 10 + restore, else $ff00). C: floppy.c common_entry — its recovery ($fc1caa..$fc1cca) NOT ported in P4a: a halt (no probe reaches it, held per call; P4b's Floprd ports it).
+fn 0xfc1ccc floppy_exit_error
+cmt 0xfc1ccc Floppy lower driver's exits: error ($fc1ccc: $755a[drive] := 1, MAYBE changed; D0 := ext $a26) or OK ($fc1cda: D0 0); then the head sought to the record's track, $9fc[drive] := _hz_200 (and $a00 on one drive), movem.l $a28 restore, clr.w flock. A0 left $9fc; X the lsl.w's last bit out. C + glue: floppy.c leave_with*, floppy_entry.S floppy_leave.
+fn 0xfc1d2e floppy_seek
+fn 0xfc1da0 floppy_restore
+fn 0xfc1db6 floppy_type_one
+cmt 0xfc1db6 Floppy lower driver: a type-I command (d6 | the record's rate), waited for by INSTRUCTION COUNT: d7 $40000 ($60000 with the motor off), decremented BEFORE each poll of GPIP bit 5 (a timeout = 262,143 / 393,215 polls); done: status read to d7, d6 0 (Z); timeout: force ($fc1dfa), d6 1. C: floppy.c type_one, GCC's loop the ROM's four instructions.
+fn 0xfc1dfa floppy_force_interrupt
+fn 0xfc1e14 floppy_select
+fn 0xfc1e3c floppy_set_sector_and_address
+cmt 0xfc1eac Floppy lower driver's settle: move sr/d7 to the stack, move.w #32,d7 / dbf, restore — 33 iterations before AND after every $ff8604 access. Shipped byte for byte as floppy_entry.S floppy_settle (D4 P4a: an empty counted loop C cannot say).
+fn 0xfc1ef6 floppy_media_mode
