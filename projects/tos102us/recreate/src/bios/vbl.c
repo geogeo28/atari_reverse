@@ -37,25 +37,11 @@
  * the boot fills and anything may replace, so they are INPUTS of the handler: `include/staged_call.h`
  * is how the reconstruction transfers control to one and `test/isr.py` is how a case stages it.
  *
- * WHAT IS NOT RECONSTRUCTED HERE, and each halts rather than guessing (`recreate.h`):
- *
- *   * THE FLOPPY VBL SERVICE ($fc1bc4) past its `flock` gate, and the reason is now ONE thing rather
- *     than two. It makes TWO word reads of the FDC's data/status register at $ff8604 — at $fc1c0a
- *     for the media-change poll and again through $fc1ea4 for the motor-off check — which a
- *     declared SEQUENCE describes exactly (TRAP_MODEL.md, Phase 16: `io_seed={0xff8604: [...],
- *     0xff8605: [...]}`, a word read taking one entry from each). It is NOT a poll LOOP, which is
- *     what this comment used to say.
- *
- *     What it still needs is the YM2149's DIRECT path. Between those two reads it calls $fc1e60,
- *     which selects PSG register 14, READS PORT A BACK and merges the drive-select bits into it —
- *     Phase 6's read-modify-write, which this project has never used (its only PSG door so far is
- *     the XBIOS `Giaccess` trap, and a run that reached both would be refused by the mixed-path
- *     guard). That is a floppy wave's first piece of work, not this one's.
- *
- *     What IS reconstructed is the `st` it makes before it looks at anything and the early return
- *     `flock` buys, which is the arm a machine with a disk operation in flight takes.
- *   * nothing else: the monitor follower, the cursor blink INCLUDING the cell inversion at $fc4a1e,
- *     the palette load, the screen base, the queue walk and the dump hook are all here.
+ * THE FLOPPY'S OWN VBL SERVICE ($fc1bc4) is whole since D4 P4d (ruling R-P4-4 "VBL differential, status declared"):
+ * its two word reads of the FDC's register at $ff8604 — straight at $fc1c0a for the write-protect poll, settled
+ * through $fc1ea4 for the motor-off check — are a declared SEQUENCE (TRAP_MODEL.md, Phase 16), and its PSG port A
+ * read-modify-write ($fc1e60) is the direct path's (`psg.h`, Phase 6), port A declared by the case. Nothing in the
+ * blank takes Giaccess, so the mixed-path guard has nothing to refuse.
  */
 #include <stdint.h>
 
@@ -67,7 +53,9 @@
 #include "recreate.h"
 #include "m68k_idioms.h"
 #include "hw.h"
+#include "psg.h"
 #include "addrs.h"
+#include "boot/floppy.h"
 #include "bios/vt52.h"
 #include "staged_call.h"
 #include "xbios/xbios.h"
@@ -86,11 +74,10 @@
  * exactly as `machine.h`'s register barriers are: it is a question about the TARGET's instruction
  * set and not about which harness is looking. Off target the loop is kept (the two builds stay the
  * same program) and its cost is nobody's measurement. `SHIFTER_SETTLE_DBF_COUNT` is `addrs.h`'s: the
- * handler a ROM ships (`isr.S`) spells the same count. */
-static void wait_for_the_shifter(void)
+ * handler a ROM ships (`isr.S`) spells the same count. The floppy service's settle ($fc1eac) is the same loop with its
+ * own count, so the one helper takes the count. */
+static void dbf_passes(unsigned passes)
 {
-    unsigned passes = SHIFTER_SETTLE_DBF_COUNT;
-
 #ifdef __m68k__
     __asm__ volatile ("1: dbf %0,1b" : "+d"(passes));
 #else
@@ -120,7 +107,7 @@ static void follow_the_monitor(uint8_t *image)
     if (resolution < SHIFTER_MODE_HIGH) {
         if (!monochrome_monitor_attached())
             return;                                 /* still a colour monitor: nothing to do */
-        wait_for_the_shifter();
+        dbf_passes(SHIFTER_SETTLE_DBF_COUNT);       /* the shifter's settling time */
         wanted = SHIFTER_MODE_HIGH;
     } else {
         if (monochrome_monitor_attached())
@@ -227,17 +214,63 @@ static void program_the_screen_base(uint8_t *image)
     hw_write8(SHIFTER_BASE_HIGH, (uint8_t)(base >> (2 * SHIFTER_BASE_SHIFT)));
 }
 
-/* ---- the floppy's own VBL service ($fc1bc4), as far as this wave reconstructs it ----------------- */
+/* ---- the floppy's own VBL service ($fc1bc4) -------------------------------------------------------------------------- */
+
+/* `$fc1ea4`: the FDC's register (the status, under the mode the chip holds), read between two settles. */
+static uint16_t read_the_fdc_settled(void)
+{
+    uint16_t value;
+
+    dbf_passes(FDC_SETTLE_DBF);                     /* `$fc1eac`: the chip's access time, a cost alone */
+    value = io_read16(FDC_DMA_ACCESS);
+    dbf_passes(FDC_SETTLE_DBF);
+    return value;
+}
+
+/* `$fc1e60`: PSG port A's low three bits (the side and the two drive selects, active low) replaced by `selects` —
+ * OR'd over the kept bits, so a whole byte given back puts that byte back — under a masked IPL in the ROM, which
+ * has no surface here. The byte port A held before. */
+static uint8_t select_port_a(uint8_t selects)
+{
+    uint8_t held = psg_port_read(PSG_PORT_A);
+
+    psg_port_write(PSG_PORT_A, (uint8_t)((held & PORT_A_KEPT_BITS) | selects));
+    return held;
+}
+
+/* The write-protect poll of the drive `_frclock`'s bit 3 names: its status bit 6 latched into its byte at $9f8 —
+ * but where that drive is one `_nflops` does not count, drive A: is what gets SELECTED (the latch is still the
+ * named drive's). Port A is put back afterwards. */
+static void poll_write_protect(uint8_t *image, uint32_t frames)
+{
+    unsigned drive = (uint8_t)frames >> FLOPPY_VBL_DRIVE_SHIFT & 1;
+    unsigned selected = drive == be16(image + SYSVAR_NFLOPS) ? 0 : drive;
+    uint8_t held;
+
+    hw_write16(FDC_DMA_MODE, FDC_MODE_STATUS);
+    held = select_port_a((uint8_t)(((selected + 1) << 1) ^ PORT_A_SELECT_BITS));
+    image[FLOPPY_WP_LATCH + drive] = (io_read16(FDC_DMA_ACCESS) & WD1772_STATUS_WRITE_PROTECT) ? 0xff : 0;
+    select_port_a(held);
+}
+
 static void floppy_vbl(uint8_t *image)
 {
+    uint32_t frames;
+
     image[FLOPPY_VBL_ENTERED] = 0xff;               /* `st` — unconditional, before anything else */
     if (be16(image + SYSVAR_FLOCK) != 0)
         return;                                     /* a disk operation owns the FDC: hands off */
-    recreate_not_reconstructed(
-        "the floppy VBL service ($fc1bc4) with `flock` clear — it drives the drive-select bits "
-        "through the YM2149's port A ($fc1e60 reads register 14 back and merges them), which is the "
-        "DIRECT PSG path this project has no case for yet; its two reads of $ff8604 a declared "
-        "sequence already describes");
+    frames = be32(image + SYSVAR_FRCLOCK);
+    if (!(frames & FLOPPY_VBL_POLL_FRAMES))
+        poll_write_protect(image, frames);
+    wr16(image + FLOPPY_WP_SEEN, (uint16_t)(be16(image + FLOPPY_WP_SEEN) | be16(image + FLOPPY_WP_LATCH)));
+    if (be16(image + FLOPPY_DESELECTED) == 0) {
+        if (read_the_fdc_settled() & WD1772_STATUS_MOTOR)
+            return;                                 /* the motor still turns: the `st` stays */
+        select_port_a(PORT_A_SELECT_BITS);          /* every select line high: no drive */
+        wr16(image + FLOPPY_DESELECTED, 1);
+    }
+    wr16(image + FLOPPY_VBL_ENTERED, 0);            /* `clr.w`: the `st`'s byte and the one past it */
 }
 
 /* ---- the queue, and the dump hook ---------------------------------------------------------------- */

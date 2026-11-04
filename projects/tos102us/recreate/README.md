@@ -1950,7 +1950,7 @@ boot_chain.priced(chain)                      # both shores, every boundary held
   the rest held equal step by step: **0.990** WARM, **0.995** COLD (own cycles moved: ours +18,422, the ROM's
   +18,864), own cycles pinned exactly.
 
-### THE FLOPPY'S LOWER DRIVER IN C — the probe, Floprd, Flopver, Flopwr and Flopfmt (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a + P4b + P4c)
+### THE FLOPPY'S LOWER DRIVER IN C — the probe, Floprd, Flopver, Flopwr and Flopfmt (`src/boot/floppy/`, `test/boot_floppy.py`, D4 P4a + P4b + P4c), and the VBL's floppy service (D4 P4d)
 
 **Rulings it stands on** (2026-11-02):
 - **R-P4-2 "Jump at ROM entries".** A 6-byte `jmp` is laid at each ported ROM entry, so every caller reaches ours
@@ -2246,6 +2246,32 @@ B6 and the chains are unchanged.
 - non-9-sector formats (refused by the model);
 - motor-off;
 - the bad-magic exit's caller-A5 base against an absolute read: both real arrivals have A5 = 0, so the two coincide.
+
+**P4d: THE VBL'S FLOPPY SERVICE (`$fc1bc4`), R-P4-4 "VBL differential, status declared".**
+
+It ships as **the ROM's bytes** in `src/bios/isr.S`, the wave-18 precedent for interrupt handlers. That is the service,
+`$fc1bc4..$fc1c48`, plus the two driver routines it `bsr`s, transcribed beside it: `$fc1e60` (port A) and `$fc1ea4`
+(the settled status read, with its settle). Its **C twin** is `src/bios/vbl.c`'s floppy_vbl.
+
+Both are held through the **existing VBL differential**, unarmed. `flock` is clear, and:
+- the FDC's status bytes are **declared as a sequence** (motor on or off, protect on or off: device answers by
+  declaration);
+- port A is declared by `psg_seed`, using bytes the boot's own runs carry.
+
+Seven arms are covered:
+- the motor on;
+- the motor off, with the deselect;
+- already deselected;
+- drive A:'s and drive B:'s write-protect poll;
+- the one-drive machine, where drive A: is selected but drive B:'s latch is written;
+- a poll and the deselect in one frame.
+
+The twin prices 0.84–0.97 and the transcription 1.00.
+
+**No `jmp` is laid at `$fc1bc4` in the boot's ROM window** (R-P4d-1 "No jump, record why", the user, 2026-11-03: the one
+exception to R-P4-2). No boot run takes a VBL (D3), and `isr.S`'s VBL calls ours.
+
+**The whole lower driver `[$fc173a, $fc1f08)` now has a shipped implementation of ours.**
 
 ## Writing a case
 

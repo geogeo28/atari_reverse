@@ -59,12 +59,14 @@ REFUSAL_KEPT, REFUSAL_SHOWN = 300, 160      # characters of a refusal's text: in
 # W6-R8's two, on either state (the user's ruling: a launch and the disk copy store over our blob, so they stay the
 # ROM's shore's — `test_aes_desk_ours.REFUSED_ON_OUR_SHORE`, which a test holds these to)...
 NO_IDLE_REACHED = "the run did not reach an idle within"
+A_RWABS_OF_DRIVE_254 = "Rwabs of drive 254"
 REFUSED_ON_EITHER_STATE = {
     "files: the program double-clicked — launched": ("W6-R8: the launch loads the program over our blob", NO_IDLE_REACHED),
     "a disk in drive B:, drive A: dragged onto it, OK, COPY clicked (copied)": (
-        "W6-R8: the disk copy reads its tracks over our blob", NO_IDLE_REACHED)}     # (what the overwritten code does
-# next follows the blob's layout: "Rwabs of drive 254" until boot B6's fix pass moved it twelve bytes; held equal to the
-# battery's by `test_aes_desk_ours.py`)
+        "W6-R8: the disk copy reads its tracks over our blob", A_RWABS_OF_DRIVE_254)}     # (what the overwritten code
+# does next follows the blob's layout: "Rwabs of drive 254" until boot B6's fix pass moved it twelve bytes, no idle
+# reached since, and "Rwabs of drive 254" again since D4 P4d moved it +$ec; held equal to the battery's by
+# `test_aes_desk_ours.py`)
 # ...and N4's on the flipped state alone, DERIVED (band 6 slice F4's prep, ruling O3): a named stop that moves with a
 # flip (`aes_desk.OUR_STOPS_ONCE_FLIPPED` — the viewer's two key waits, inside the show engine's body) is our C's stop
 # on the flipped state, and a chain with a step at one is refused by name while the flipped blob has no symbol to stop

@@ -65,6 +65,7 @@
 #define FLOPPY_RECORD_TRACK       0          /* word */
 #define FLOPPY_RECORD_SEEK_RATE   2          /* word: `seekrate` copied in by the probe; its low 2 bits the step rate */
 #define FLOPPY_MEDIA_MODE         0x755a     /* byte per drive: the media-change mode (1 maybe, 2 changed) */
+#define FLOPPY_WP_LATCH           0x9f8      /* byte per drive: the VBL's write-protect latch (`sne`), $ff = protected */
 #define FLOPPY_WP_SEEN            0x9fa      /* word: the write-protect latches or'd (the VBL's); -1 by the alert */
 #define FLOPPY_SINGLE_DRIVE_LETTER 0x7dc4    /* word: the letter a one-drive machine's drive last stood for */
 #define SYSVAR_NFLOPS             0x4a6      /* word: the drives hdv_init counted */
@@ -148,6 +149,14 @@
 /* ---- the PSG's port A: the drive and side selects, active low ---------------------------------------------------------- */
 #define PORT_A_SELECT_BITS        7          /* bit 0 side (0 = side 1), bits 1/2 drive A/B */
 #define PORT_A_KEPT_BITS          0xf8
+
+/* ---- the VBL's floppy service ($fc1bc4, shipped in `src/bios/isr.S`, its C twin `src/bios/vbl.c`) --------------------- */
+#define FLOPPY_VBL_POLL_FRAMES    7          /* `andi.b #7`: the write-protect poll runs on a frame whose `_frclock` & 7 is 0 */
+#define FLOPPY_VBL_DRIVE_SHIFT    3          /* `lsr.b #3 / and.w #1`: `_frclock`'s bit 3 picks the drive polled */
+/* ...the two status bits `isr.S`'s `btst` names, as numbers: the masks above are their `1 << n`, which the Python
+ * parser cannot read as a shift, so `test_bios_vbl.py` holds each pair equal */
+#define WD1772_STATUS_WRITE_PROTECT_BIT 6    /* `btst #6` */
+#define WD1772_STATUS_MOTOR_BIT   7          /* `btst #7` */
 
 /* ---- the track Flopfmt builds ($fc198c): its gaps and marks, each run a `dbf` of count - 1 ---------------------------- */
 #define TRACK_GAP_BYTE            0x4e

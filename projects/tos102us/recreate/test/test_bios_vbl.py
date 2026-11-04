@@ -10,10 +10,10 @@ stream agreed, and the routines that ran were the ones the vectors named.
 
 TWO THINGS EVERY CASE HERE STAGES, and both are the machine rather than the routine:
 
-* `flock` is set. The `bsr $fc1bc4` into the floppy's own VBL service is unconditional, and its body
-  past that gate polls the FDC status register — the one shape no declaration can describe (`vbl.c`,
-  "WHAT IS NOT RECONSTRUCTED"). With a disk operation in flight it stores one byte and returns,
-  which is a real arm of a real machine and the one this wave reconstructs.
+* `flock` is set, except on the floppy cases. The `bsr $fc1bc4` into the floppy's own VBL service is
+  unconditional, and its body past that gate reads the FDC's status register and PSG port A, which a
+  case has to declare (the floppy cases do: D4 P4d, ruling R-P4-4). With a disk operation in flight it
+  stores one byte and returns, which is a real arm of a real machine and the quiet frame's.
 * `_vblqueue` points at a staged array instead of the system's own at $4ce. The captured machine has
   a ROM routine in slot 0 ($fcff2a, the Line-A mouse's frame work), which is a reconstruction of its
   own; pointing the system variable somewhere else is the same kind of input as staging a driver.
@@ -25,10 +25,10 @@ import pytest
 
 import case
 import isr
-import layouts
 import transcription
 from harness import _lib, addrs, bench_tier3, emu, make_image
 from opcodes import BRA_W, BSR_W
+from recreate_kit import os_map
 
 _lib.isr_vbl.argtypes = [ctypes.POINTER(ctypes.c_ubyte)]
 _lib.isr_vbl.restype = None
@@ -61,6 +61,7 @@ CURSOR_CELL_BYTES = 0x40
 assert CURSOR_CELL + CURSOR_CELL_BYTES <= isr.ISR_BAND + isr.ISR_BAND_BYTES
 
 MARK = isr.MARK
+PSG_WRITE, PSG_READ = os_map.OS_PSG_EVENT_WRITE, os_map.OS_PSG_EVENT_READ
 
 # What a case declares the machine held. Bit 7 of the GPIP is HIGH when a COLOUR monitor is plugged
 # in, so these two are the pair that agree — the follower does nothing and the rest of the handler
@@ -559,6 +560,162 @@ def test_the_taken_semaphore_path_gives_them_back_too():
 # the handler can be asked to do is asked of it at once.
 IO_QUIET = {addrs.SHIFTER_RESOLUTION: ST_LOW, addrs.MFP_GPIP: COLOUR_MONITOR}
 
+
+# ---- THE FLOPPY'S OWN SERVICE past its gate (D4 P4d; ruling R-P4-4 "VBL differential, status declared") -----------
+# `flock` clear, and the two things the service reads off the chips DECLARED: the FDC's register at $ff8604 as a
+# SEQUENCE, one word a read (Phase 16: the straight read of the write-protect poll, then the settled read of the motor
+# check — only the reads the arm makes), and PSG port A by `psg_seed` (the direct path, Phase 6). The status bytes are
+# device answers by declaration: motor on or off, protect on or off. Port A is a byte the boot's own runs carry into
+# the floppy driver (measured, `boot_floppy.arrival_of(...).carry.port_a`): every drive deselected, and drive A:
+# selected on side 0. `_frclock` is staged ONE BELOW the frame the arm wants, because the blank counts it first.
+FLOPPY = isr.FLOPPY
+PORT_A_DESELECTED = 0x27
+PORT_A_DRIVE_A_SELECTED = 0x25
+STATUS_MOTOR_ON = FLOPPY["WD1772_STATUS_MOTOR"]
+STATUS_MOTOR_OFF = 0
+STATUS_PROTECTED = FLOPPY["WD1772_STATUS_WRITE_PROTECT"]
+STATUS_UNPROTECTED = 0
+POLL_FRAME_DRIVE_A = 0x1000                   # `_frclock` & 7 == 0, bit 3 clear
+POLL_FRAME_DRIVE_B = 0x1008                   # ...bit 3 set
+QUIET_FRAME = 0x1004                          # & 7 != 0: no poll — but & 3 == 0, so a poll mask one bit short polls
+WP_LATCH = FLOPPY["FLOPPY_WP_LATCH"]
+WP_SEEN = FLOPPY["FLOPPY_WP_SEEN"]
+DESELECTED = FLOPPY["FLOPPY_DESELECTED"]
+NFLOPS = FLOPPY["SYSVAR_NFLOPS"]
+LATCHED, CLEAR = 0xFF, 0x00
+SEEN_BEFORE = 0x0001                          # a bit of $9fa no latch word this case or's in has: an `or` keeps it
+
+
+def floppy_pokes(frame, *, nflops=2, deselected=0, latches=(CLEAR, CLEAR), seen=0):
+    """A frame with `flock` clear: the blank's clock one below `frame`, the drives the boot counted, the deselect flag,
+    the two write-protect latches and the word they are or'd into."""
+    return quiet_pokes({addrs.SYSVAR_FLOCK: b"\x00\x00",
+                        addrs.SYSVAR_FRCLOCK: struct.pack(">I", frame - 1),
+                        NFLOPS: struct.pack(">H", nflops),
+                        DESELECTED: struct.pack(">H", deselected),
+                        WP_LATCH: bytes(latches) + struct.pack(">H", seen)})
+
+
+def floppy_io(*statuses):
+    """The FDC's register as a declared sequence: one word a read, the status in its low byte — and nothing declared
+    for an arm that reads it not at all (an empty sequence is refused as a declaration, and an undeclared read is
+    refused as a read)."""
+    if not statuses:
+        return IO_QUIET
+    return {**IO_QUIET, FLOPPY["FDC_DMA_ACCESS"]: [0] * len(statuses),
+            FLOPPY["FDC_DMA_ACCESS"] + 1: list(statuses)}
+
+
+def floppy_spec(name, frame, statuses, port_a=PORT_A_DESELECTED, **machine):
+    return {"name": f"isr_vbl, the floppy: {name}", "entry": addrs.ISR_VBL, "pokes": floppy_pokes(frame, **machine),
+            "io_seed": floppy_io(*statuses), "psg_seed": {addrs.PSG_PORT_A: port_a}}
+
+
+FLOPPY_CASES = {
+    "motor on": floppy_spec("no poll, the motor on", QUIET_FRAME, (STATUS_MOTOR_ON,)),
+    "motor off": floppy_spec("no poll, the motor off: every drive deselected", QUIET_FRAME, (STATUS_MOTOR_OFF,),
+                             port_a=PORT_A_DRIVE_A_SELECTED),
+    "deselected": floppy_spec("no poll, already deselected", QUIET_FRAME, (), deselected=1, latches=(LATCHED, CLEAR)),
+    "drive A protected": floppy_spec("drive A:'s poll, protected", POLL_FRAME_DRIVE_A, (STATUS_PROTECTED,),
+                                     deselected=1),
+    "drive B unprotected": floppy_spec("drive B:'s poll, unprotected, its latch cleared", POLL_FRAME_DRIVE_B,
+                                       (STATUS_UNPROTECTED,), deselected=1, latches=(LATCHED, LATCHED)),
+    "drive B one drive": floppy_spec("drive B:'s poll on a one-drive machine: drive A: selected", POLL_FRAME_DRIVE_B,
+                                     (STATUS_PROTECTED,), nflops=1, deselected=1),
+    "poll and deselect": floppy_spec("drive A:'s poll, then the motor off", POLL_FRAME_DRIVE_A,
+                                     (STATUS_PROTECTED, STATUS_MOTOR_OFF), port_a=PORT_A_DRIVE_A_SELECTED, seen=SEEN_BEFORE),
+}
+
+
+def run_floppy(key):
+    spec = FLOPPY_CASES[key]
+    return isr.run_spec(spec, _glue)
+
+
+def _psg(info):
+    return info["regs"]["psg_events"]
+
+
+def _selects(port_a, *selects):
+    """The port A ledger of `$fc1e60` called with each of `selects`: a read of register 14, then the merged write —
+    each read answering what the last write left."""
+    events, held = [], port_a
+    for select in selects:
+        merged = (held & FLOPPY["PORT_A_KEPT_BITS"]) | select
+        events += [(PSG_READ, addrs.PSG_PORT_A, held), (PSG_WRITE, addrs.PSG_PORT_A, merged)]
+        held = merged
+    return events
+
+
+def test_each_status_mask_is_the_bit_its_btst_names():
+    """`boot/floppy.h` spells the WD1772's motor and write-protect bits twice — as the masks the driver's C tests and as
+    the bit numbers `isr.S`'s `btst` takes (the header's parser reads no shift) — so the two are held equal here."""
+    for mask in ("WD1772_STATUS_MOTOR", "WD1772_STATUS_WRITE_PROTECT"):
+        assert FLOPPY[mask] == 1 << FLOPPY[f"{mask}_BIT"]
+
+
+def test_the_floppy_service_with_the_motor_on_leaves_its_flag_set_and_selects_nothing():
+    """No poll this frame; the motor still turning: the settled status read and nothing else — the `st` byte stays
+    $ff (the `bne` reaches the `rts` past the `clr.w`), $a06 stays clear, port A untouched."""
+    info = run_floppy("motor on")
+    assert info["writes"][addrs.FLOPPY_VBL_ENTERED] == 0xFF
+    assert DESELECTED not in info["writes"] and _psg(info) == []
+
+
+def test_the_motor_off_deselects_every_drive_and_clears_the_flag():
+    info = run_floppy("motor off")
+    assert _psg(info) == _selects(PORT_A_DRIVE_A_SELECTED, FLOPPY["PORT_A_SELECT_BITS"])
+    assert case.written(info, DESELECTED, 2) == 1
+    assert case.written(info, addrs.FLOPPY_VBL_ENTERED, 2) == 0
+
+
+def test_already_deselected_reads_nothing_but_or_s_the_latches():
+    """$a06 set: no status read (the declared sequence is empty, so a read would be refused), the latches still or'd
+    into $9fa, the flag word cleared."""
+    info = run_floppy("deselected")
+    assert _psg(info) == []
+    assert case.written(info, WP_SEEN, 2) == LATCHED << 8
+    assert case.written(info, addrs.FLOPPY_VBL_ENTERED, 2) == 0
+
+
+@pytest.mark.parametrize("key, drive, selected, latched", [
+    ("drive A protected", 0, 0, LATCHED),
+    ("drive B unprotected", 1, 1, CLEAR),
+    ("drive B one drive", 1, 0, LATCHED)])
+def test_the_write_protect_poll_latches_the_named_drive_through_the_selected_one(key, drive, selected, latched):
+    """`_frclock`'s bit 3 names the drive whose latch is set or cleared; the drive SELECTED is that one, but drive A:
+    where the boot counted one drive; port A is put back after the read; the status register selected first."""
+    info = run_floppy(key)
+    select = ((selected + 1) << 1) ^ FLOPPY["PORT_A_SELECT_BITS"]
+    assert _psg(info) == [*_selects(PORT_A_DESELECTED, select)[:2],
+                          (PSG_READ, addrs.PSG_PORT_A, (PORT_A_DESELECTED & FLOPPY["PORT_A_KEPT_BITS"]) | select),
+                          (PSG_WRITE, addrs.PSG_PORT_A, PORT_A_DESELECTED)]
+    assert info["writes"][WP_LATCH + drive] == latched
+    assert (addrs.FDC_DMA_MODE, 2, FLOPPY["FDC_MODE_STATUS"]) in info["regs"]["hw_writes"]
+
+
+def test_a_status_read_nothing_declares_is_refused_on_the_rom_s_shore():
+    """NEGATIVE, the FDC surface: the motor arm with no status declared — the ROM's read of $ff8604 is refused by
+    name rather than answered 0 (which would read as the motor stopped, and deselect)."""
+    spec = {**FLOPPY_CASES["motor on"], "io_seed": IO_QUIET}
+    with pytest.raises(AssertionError, match="no model serves, the first at 0xff8604"):
+        isr.run_spec(spec, _glue)
+
+
+def test_a_port_a_nothing_declares_is_refused():
+    """NEGATIVE, the PSG surface: the poll with port A undeclared — its read-modify-write is refused, not merged over
+    an invented byte."""
+    spec = {key: value for key, value in FLOPPY_CASES["drive A protected"].items() if key != "psg_seed"}
+    with pytest.raises(RuntimeError, match="READ register\\(s\\) 14"):
+        isr.run_spec(spec, _glue)
+
+
+def test_a_poll_and_a_deselect_in_one_frame_or_the_latches_between_them():
+    info = run_floppy("poll and deselect")
+    assert info["writes"][WP_LATCH] == LATCHED
+    assert case.written(info, WP_SEEN, 2) == SEEN_BEFORE | LATCHED << 8
+    assert case.written(info, DESELECTED, 2) == 1
+
 BUSY_FRAME = cursor_pokes(BLINKS, timer=1, overrides={
     addrs.SYSVAR_COLORPTR: struct.pack(">I", PALETTE_SOURCE),
     PALETTE_SOURCE: struct.pack(">16H", *PALETTE),
@@ -584,6 +741,10 @@ REGISTERED = (
     {"name": "isr_vbl, a frame with everything queued", "entry": addrs.ISR_VBL,
      "pokes": BUSY_FRAME, "io_seed": IO_QUIET,
      "routines": {QUEUE_STUBS[0]: marker_routine(0), DUMP_STUB: marker_routine(1)}},
+    # ...and the floppy's own service past its gate (D4 P4d), one row an arm: the C twin's rows run under the bar
+    # (0.84-0.97: the original's column carries the `movem` pair the twin has no register file for, the quiet frame's
+    # hole); the transcription's, below, at 1.00.
+    *FLOPPY_CASES.values(),
 )
 VERIFIED_CASES = tuple(isr.registered(spec) for spec in REGISTERED)
 # ...and the same four as WHOLE-HANDLER cases, which is the other relation: `src/bios/isr.S` — the
@@ -612,7 +773,9 @@ SETTLE_ROW = ("isr_vbl", "a monitor change")
 # base register `swv_vec` and every other system vector is entered with — see that header). The
 # arm makes one such call, and what moved is the CODEGEN around the loop rather than the loop: six
 # cycles, which is not a whole `dbf` pass either way.
-SETTLE_ARM_RECREATE_CYCLES = 20886
+# Re-pinned again from 20,886 at D4 P4d, when the twin's floppy service stopped halting past its gate: the same loop,
+# two cycles of CODEGEN round it (the larger body the blank's service now calls moved the register allocation).
+SETTLE_ARM_RECREATE_CYCLES = 20884
 # ...and what one `dbf` pass costs on a 68000, so a failure here reads as "the count moved by N"
 # rather than as an unexplained number: 10 cycles to loop, 14 to fall out of it.
 DBF_PASS_CYCLES = 10
@@ -696,39 +859,50 @@ def test_our_entry_comes_back_from_a_routine_that_keeps_no_register(spec, blob):
     isr.run_transcribed(spec, blob)
 
 
-# ---- THE BYTES: the handler and the four ROM routines it reaches by `bsr` or `bra` ------------------------------------
-# `src/bios/isr.S` lays each out as the ROM has it. The only words that differ are the four displacements from one
-# span into another — the handler's three `bsr.w` and the blink's `bra.w` into the cell inversion — each held to the
-# exact value its target's place in the blob gives. The floppy's service is pinned as far as it is reconstructed: the
-# five instructions up to its `flock` gate, whose `bne.s` is the ROM's own word because the `rts` it reaches is where
-# the ROM has it — and between the two, where the ROM drives the drive-select bits, our build holds `trap #7`.
+# ---- THE BYTES: the handler and the six ROM routines it reaches by `bsr` or `bra` -------------------------------------
+# `src/bios/isr.S` lays each out as the ROM has it. The only words that differ are the eight displacements from one
+# span into another — the handler's three `bsr.w`, the blink's `bra.w` into the cell inversion and the floppy service's
+# four `bsr.w` into the driver's two routines — each held to the exact value its target's place in the blob gives.
 # Each span ends where the ROM's next routine begins (the handler at Vsync, the blink at Cursconf, the inversion at
-# the VDI's v_fontinit) — but Scrdmp, which nothing named follows: its four instructions.
+# the VDI's v_fontinit) — but Scrdmp, the floppy's service and the driver's two, each followed by driver code no
+# name here stands for: their own lengths (the service to its `rts`).
 SCRDMP_BYTES = 0x12
+FLOPPY_SELECT_PORT_A_BYTES = 0x26             # $fc1e60..$fc1e86: to the driver's settled write of D6
+FLOPPY_STATUS_BYTES = 0x1a                    # $fc1ea4..$fc1ebe, the settle it falls into included: to the alert
 REGIONS = {
     "the handler": transcription.pinned_region(addrs.ISR_VBL, addrs.XBIOS_VSYNC, "ISR_VBL"),
     "Scrdmp": transcription.pinned_region(addrs.XBIOS_SCRDMP, addrs.XBIOS_SCRDMP + SCRDMP_BYTES, "XBIOS_SCRDMP"),
     "the cursor's blink": transcription.pinned_region(addrs.VBL_BLINK_CURSOR, addrs.XBIOS_CURSCONF, "VBL_BLINK_CURSOR"),
     "the cell inversion": transcription.pinned_region(addrs.VBL_INVERT_CURSOR_CELL, addrs.VDI_ROM_V_FONTINIT,
                                                       "VBL_INVERT_CURSOR_CELL"),
-    "the floppy's service, to its gate": transcription.pinned_region(addrs.VBL_FLOPPY_SERVICE, addrs.VBL_FLOPPY_GATE_END,
-                                                                     "VBL_FLOPPY_SERVICE"),
+    "the floppy's service": transcription.pinned_region(addrs.VBL_FLOPPY_SERVICE, addrs.VBL_FLOPPY_RETURN + len(isr.RTS),
+                                                        "VBL_FLOPPY_SERVICE"),
+    "the driver's port A select": transcription.pinned_region(
+        addrs.VBL_FLOPPY_SELECT_PORT_A, addrs.VBL_FLOPPY_SELECT_PORT_A + FLOPPY_SELECT_PORT_A_BYTES,
+        "VBL_FLOPPY_SELECT_PORT_A"),
+    "the driver's settled status read": transcription.pinned_region(
+        addrs.VBL_FLOPPY_STATUS, addrs.VBL_FLOPPY_STATUS + FLOPPY_STATUS_BYTES, "VBL_FLOPPY_STATUS"),
 }
 WORD_BYTES = isr.WORD_BYTES
+# The floppy service's four calls, by the ROM address of each `bsr.w` (`addrs.h`): the select before the poll, after it,
+# and the deselect; and the motor's settled read.
+FLOPPY_SERVICE_CALLS_SELECT = (addrs.VBL_FLOPPY_SELECTS_DRIVE, addrs.VBL_FLOPPY_PUTS_PORT_A_BACK,
+                               addrs.VBL_FLOPPY_DESELECTS)
+FLOPPY_SERVICE_CALLS_STATUS = addrs.VBL_FLOPPY_READS_STATUS
 # Each displacement word, by the ROM address of its `bsr.w` / `bra.w`, and the routine the ROM's own word names.
 CALLS = {addrs.VBL_CALLS_BLINK_CURSOR: ("VBL_BLINK_CURSOR", "the blank's `bsr` to the cursor's blink"),
          addrs.VBL_CALLS_FLOPPY_SERVICE: ("VBL_FLOPPY_SERVICE", "the blank's `bsr` to the floppy's service"),
          addrs.VBL_CALLS_SCRDMP: ("XBIOS_SCRDMP", "the blank's `bsr` to Scrdmp"),
-         addrs.VBL_BLINK_ENDS_IN_INVERT: ("VBL_INVERT_CURSOR_CELL", "the blink's `bra` into the cell inversion")}
+         addrs.VBL_BLINK_ENDS_IN_INVERT: ("VBL_INVERT_CURSOR_CELL", "the blink's `bra` into the cell inversion"),
+         **{at: ("VBL_FLOPPY_SELECT_PORT_A", "the floppy service's `bsr` to the port A select")
+            for at in FLOPPY_SERVICE_CALLS_SELECT},
+         FLOPPY_SERVICE_CALLS_STATUS: ("VBL_FLOPPY_STATUS", "the floppy service's `bsr` to the settled status read")}
 RELOCATED = {at + WORD_BYTES: transcription.Relocated(transcription.PC_RELATIVE, routine, why)
              for at, (routine, why) in CALLS.items()}
-# `trap #7`, `recreate_not_reconstructed` on this machine — the word `isr.S` itself lays out (`m68k_encodings.h`).
-TRAP_NOT_RECONSTRUCTED = struct.pack(">H", layouts.parse_constants(
-    (transcription._RECREATE / "include" / "m68k_encodings.h",))["M68K_TRAP_NOT_RECONSTRUCTED"])
 
 
 def test_every_relocated_word_is_a_call_of_the_routine_it_is_declared_as():
-    """The declarations, held to the ROM: each of the four words is the displacement of a `bsr.w` or `bra.w`, and
+    """The declarations, held to the ROM: each of the eight words is the displacement of a `bsr.w` or `bra.w`, and
     the ROM's own value of it reaches the routine named."""
     for at, (routine, why) in CALLS.items():
         assert isr.word_in_snapshot(at) in (BSR_W, BRA_W), f"${at:x} ({why}) is no `bsr.w` / `bra.w`"
@@ -739,18 +913,7 @@ def test_every_relocated_word_is_a_call_of_the_routine_it_is_declared_as():
 @pytest.mark.parametrize("region", REGIONS)
 def test_the_stub_at_the_vector_is_the_rom_s_own_bytes(region):
     """`src/bios/isr.S` against the ROM, byte for byte and on both blobs: the handler, Scrdmp, the cursor's blink,
-    the cell inversion and the floppy's service as far as its gate — every word the ROM's but the four displacements."""
+    the cell inversion, the floppy's service and the driver's two routines it calls — every word the ROM's but the
+    eight displacements."""
     transcription.assert_transcribed(REGIONS[region], relocated=RELOCATED)
     transcription.assert_the_shipped_blob_holds_the_same(REGIONS[region])
-
-
-@pytest.mark.parametrize("blob", isr.BLOBS)
-def test_past_its_gate_the_floppy_s_service_halts_and_its_return_is_where_the_rom_has_it(blob):
-    """WHAT IS NOT RECONSTRUCTED, held too, on both blobs: from the gate to the `rts` it branches to, our build holds
-    nothing but `trap #7` — one for each word of the ROM's body — and then the `rts`, at the ROM's own distance."""
-    body = addrs.VBL_FLOPPY_RETURN - addrs.VBL_FLOPPY_GATE_END
-    held = transcription.bytes_of(isr.blob_named(blob), "VBL_FLOPPY_SERVICE", addrs.VBL_FLOPPY_GATE_END, body + len(isr.RTS))
-    assert held[:body] == TRAP_NOT_RECONSTRUCTED * (body // WORD_BYTES)
-    assert held[body:] == isr.RTS == bytes(isr.BASE_IMAGE[addrs.VBL_FLOPPY_RETURN:addrs.VBL_FLOPPY_RETURN + len(isr.RTS)])
-
-

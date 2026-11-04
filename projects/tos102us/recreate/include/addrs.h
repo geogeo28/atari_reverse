@@ -446,15 +446,20 @@
 #define VBL_BLINK_CURSOR           0xfc4666  /* the alpha cursor's blink: the blank's `bsr` */
 #define VBL_INVERT_CURSOR_CELL     0xfc4a1e  /* ...and the cell inversion it ends in, by `bra` */
 #define VBL_FLOPPY_SERVICE         0xfc1bc4  /* the floppy's own VBL service: the blank's `bsr` */
-#define VBL_FLOPPY_GATE_END        0xfc1bd6  /* ...past its `flock` gate, which is as far as it is reconstructed */
-#define VBL_FLOPPY_RETURN          0xfc1c46  /* ...and the `rts` that gate branches to */
-/* ...the five words of those spans that measure to where `isr.S` links their target — the displacement of a
+#define VBL_FLOPPY_RETURN          0xfc1c46  /* ...and its `rts`, the last word of it */
+#define VBL_FLOPPY_SELECT_PORT_A   0xfc1e60  /* ...the floppy driver's PSG port A read-modify-write, its `bsr` */
+#define VBL_FLOPPY_STATUS          0xfc1ea4  /* ...and the driver's settled read of the FDC's register, its other */
+/* ...the nine words of those spans that measure to where `isr.S` links their target — the displacement of a
  * `bsr.w` / `bra.w` one word past each of these — which each battery's `Relocated` map is keyed by. */
 #define VBL_CALLS_BLINK_CURSOR     0xfc0748
 #define VBL_CALLS_FLOPPY_SERVICE   0xfc078c
 #define VBL_CALLS_SCRDMP           0xfc07c0
 #define VBL_BLINK_ENDS_IN_INVERT   0xfc468c
 #define TIMER_C_CALLS_QUEUE_KEY    0xfc310c
+#define VBL_FLOPPY_SELECTS_DRIVE   0xfc1c06  /* the floppy service's port A select before its write-protect read */
+#define VBL_FLOPPY_PUTS_PORT_A_BACK 0xfc1c18 /* ...and after it, port A as it was */
+#define VBL_FLOPPY_READS_STATUS    0xfc1c2a  /* ...its settled read for the motor */
+#define VBL_FLOPPY_DESELECTS       0xfc1c38  /* ...and the motor-off deselect */
 /* ...and the two chip registers those handlers reach that no C core names: the YM2149's write port (`psg.h`'s
  * door owns it in C) and the FDC's DMA mode register, which the floppy's service parks in A6. */
 #define PSG_PORT_DATA              0xff8802
@@ -513,12 +518,13 @@
 
 /* The ROM addresses the VBL's own body sits at — $fc4666 (the cursor blink), $fc4a1e (the cell
  * inversion), $fc1bc4 (the floppy service) and $fc0d50 (Scrdmp) — are named in `src/bios/vbl.c` at
- * the code that reconstructs each, and in the halt message of the one that is deferred. Nothing
- * compiles against them, so they are not `#define`s here: an address no build and no case reads is
- * a second spelling waiting to disagree with the comment beside the code.
+ * the code that reconstructs each. Nothing compiles against them, so they are not `#define`s here: an
+ * address no build and no case reads is a second spelling waiting to disagree with the comment beside
+ * the code. (The transcription's spans are, below: each battery pins one by name.)
  *
- * What IS here is the one byte of RAM that body writes before any of it. */
-#define FLOPPY_VBL_ENTERED    0xa04     /* byte: the `st` the floppy VBL sets before it looks at flock */
+ * What IS here is the byte of RAM that body writes before any of it; the floppy driver's other RAM the
+ * service reads and writes is `boot/floppy.h`'s, the driver's own header. */
+#define FLOPPY_VBL_ENTERED    0xa04     /* byte: the `st` the floppy VBL sets before it looks at flock (`clr.w`ed after) */
 
 /* ---- the alpha cursor's own state, past what Cursconf already names ------------------------------
  * All of it is reached as a displacement off `CON_STATE_FLAGS`, which is the block's anchor. */

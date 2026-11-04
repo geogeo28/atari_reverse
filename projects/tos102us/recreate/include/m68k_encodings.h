@@ -92,8 +92,5 @@
 #define M68K_JMP_ABSOLUTE_LONG     0x4ef9
 /* `$a000`, the Line-A exception word of its opcode 0 (Line-A init), which has no mnemonic: gsx_mfsave's ($fee498) */
 #define M68K_LINE_A_INIT           0xa000
-/* `trap #7` — what `recreate_not_reconstructed` compiles to on the 68000 (the kit's `recreate.h`), where a
- * transcription lays an UNRECONSTRUCTED arm out as a halt: the floppy's VBL service past its gate (`src/bios/isr.S`) */
-#define M68K_TRAP_NOT_RECONSTRUCTED 0x4e47
 
 #endif /* TOS102US_M68K_ENCODINGS_H */

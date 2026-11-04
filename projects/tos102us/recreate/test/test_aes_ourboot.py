@@ -982,7 +982,7 @@ def test_labelled_staging_the_machine_at_its_first_idle_differs_in_the_classes_a
 # `{blob: {class: the bytes the two machines differ in there}}` at the first idle, on both disks alike (measured, W3b's flip)
 AT_THE_FIRST_IDLE = {
     "the bench blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11, ob.CONDITION_CODES: 1,
-                       ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 27, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
+                       ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
                        ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 44, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
     "the shipped blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
                          ob.DISPATCHER_STACK: 143, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 164,
@@ -994,7 +994,9 @@ AT_THE_FIRST_IDLE = {
     # LAYOUT again, measured against a pre-B3 build of both blobs: `src/boot/hwinit.c` links before the desk. The shipped
     # blob's desk moved +$294: the same three return addresses went $0500e6 -> $05037a, their middle byte $03 against the
     # ROM's $00 again (+3: 569 -> 572); the bench blob's +$268: a code address in PD0's saved context went $04a002 ->
-    # $04a26a, its byte at $9c90 now the ROM's $a2 (-1: PD0_CONTEXT 28 -> 27))
+    # $04a26a, its byte at $9c90 now the ROM's $a2 (-1: PD0_CONTEXT 28 -> 27). At D4 P4d, LAYOUT again, measured: the
+    # floppy VBL service's two driver routines in `src/bios/isr.S` and its C twin moved the bench blob's code +$ec, the
+    # same code address $04a26a -> $04a356, its byte at $9c90 $a3 against the ROM's $a2 again (+1: 27 -> 28))
 
 
 def test_a_wait_s_parameter_is_the_parked_class_only_where_both_shores_name_pd0_s_stack():

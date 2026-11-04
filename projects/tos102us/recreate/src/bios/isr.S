@@ -37,8 +37,8 @@
  *                    image, the same WHOLE register file and the same chip traffic as the original).
  *
  * WHAT A HANDLER CALLS BY `bsr` IS LAID OUT HERE AS WELL, each a region of the ROM's own bytes: the
- * alpha cursor's blink and the cell inversion it ends in, Scrdmp, the floppy's VBL service as far as it
- * is reconstructed, the Dosound driver's step and the keyboard's queue-a-key routine. A `bsr` or `bra` from one region to another measures
+ * alpha cursor's blink and the cell inversion it ends in, Scrdmp, the floppy's VBL service and the two driver
+ * routines it calls, the Dosound driver's step and the keyboard's queue-a-key routine. A `bsr` or `bra` from one region to another measures
  * to where THIS file links its target, which is the one kind of word the pin lets differ — and it holds
  * each to the exact value (`Relocated`). NO CALL LEAVES FOR C: the keyboard's queue-a-key routine, which
  * timer C's auto-repeat calls and the rest of the build has as `kbd_queue_key`, is laid out here too —
@@ -50,6 +50,7 @@
  */
 #include "addrs.h"
 #include "m68k_encodings.h"
+#include "boot/floppy.h"
 
 /* An I/O register as the ROM's absolute-long operand names it: `addrs.h` carries the 24-bit bus
  * address ($ff8260), the ROM's word the sign-extended one ($ffff8260). ADDED, not OR-ed: `|` starts a
@@ -223,12 +224,15 @@ isr_vbl_invert_cursor_cell:
     dbf     %d7,.Linvert_plane
     rts
 
-/* ...and the floppy's own VBL service, $fc1bc4, AS FAR AS IT IS RECONSTRUCTED: the five instructions
- * up to its `flock` gate ($fc1bc4..$fc1bd6) are the ROM's, and the `rts` the gate branches to is
- * where the ROM has it ($fc1c46), so the `bne.s` is the ROM's own word. EVERYTHING BETWEEN THEM IS
- * NOT RECONSTRUCTED — it drives the drive-select bits through the YM2149's port A (`src/bios/vbl.c`,
- * "WHAT IS NOT RECONSTRUCTED") — and halts as an unreconstructed arm halts on this machine: a field
- * of `trap #7`, one for every word the ROM's body has there. */
+/* ...and the floppy's own VBL service, $fc1bc4..$fc1c48, WHOLE (D4 P4d; ruling R-P4-4 "VBL differential, status
+ * declared"): the `st` and the `flock` gate; on a frame whose `_frclock` & 7 is 0, the write-protect poll — the
+ * status register selected, the drive `_frclock`'s bit 3 names (drive A: where it names a drive `_nflops` does not
+ * count) selected through PSG port A, the status read STRAIGHT (no settle), its bit 6 latched by `sne` into the
+ * polled drive's byte at $9f8 (the drive `_frclock` named, not the one selected), port A put back; then the two
+ * latches or'd into $9fa; and, while the drive is not yet deselected ($a06), the motor-off deselect: a settled
+ * status read, and with the motor stopped every drive deselected and $a06 set. The `st` is `clr.w`ed on the way out
+ * — but not where the motor still turns: that `bne` reaches the `rts` past it. `src/bios/vbl.c`'s floppy_vbl is the
+ * C twin. */
     .globl  isr_vbl_floppy_service
 isr_vbl_floppy_service:
     suba.l  %a5,%a5
@@ -236,8 +240,75 @@ isr_vbl_floppy_service:
     st      (FLOPPY_VBL_ENTERED,%a5)            /* unconditional, before anything else */
     tst.w   (SYSVAR_FLOCK,%a5)
     bne.s   .Lfloppy_return                     /* a disk operation owns the FDC: hands off */
-    .fill   (VBL_FLOPPY_RETURN - VBL_FLOPPY_GATE_END) / 2, 2, M68K_TRAP_NOT_RECONSTRUCTED
+    move.l  (SYSVAR_FRCLOCK).l,%d0
+    move.b  %d0,%d1
+    .word   M68K_AND_B_IMMEDIATE(M68K_D1), FLOPPY_VBL_POLL_FRAMES   /* and.b #7,%d1 */
+    bne.s   .Lfloppy_latches                    /* not this frame: no poll */
+    move.w  #FDC_MODE_STATUS,(%a6)
+    lsr.b   #FLOPPY_VBL_DRIVE_SHIFT,%d0
+    .word   M68K_AND_W_IMMEDIATE(M68K_D0), 1    /* and.w #1,%d0: the drive polled */
+    lea     (FLOPPY_WP_LATCH,%a5),%a0
+    adda.w  %d0,%a0                             /* ...its latch */
+    cmp.w   (SYSVAR_NFLOPS).l,%d0
+    bne.s   .Lfloppy_select
+    clr.w   %d0                                 /* a drive the boot did not count: drive A: is selected */
+.Lfloppy_select:
+    addq.b  #1,%d0
+    lsl.b   #1,%d0
+    eori.b  #PORT_A_SELECT_BITS,%d0             /* the drive's select line low, side 0 */
+    bsr.w   isr_vbl_floppy_select_port_a        /* RELOCATED: $fc1e60 */
+    move.w  (IO(FDC_DMA_ACCESS)).l,%d0
+    btst    #WD1772_STATUS_WRITE_PROTECT_BIT,%d0
+    sne     (%a0)
+    move.b  %d2,%d0                             /* port A as it was */
+    bsr.w   isr_vbl_floppy_select_port_a        /* RELOCATED: $fc1e60 */
+.Lfloppy_latches:
+    move.w  (FLOPPY_WP_LATCH,%a5),%d0
+    or.w    %d0,(FLOPPY_WP_SEEN,%a5)
+    tst.w   (FLOPPY_DESELECTED,%a5)
+    bne.s   .Lfloppy_done
+    bsr.w   isr_vbl_floppy_status               /* RELOCATED: $fc1ea4 */
+    btst    #WD1772_STATUS_MOTOR_BIT,%d0
+    bne.s   .Lfloppy_return                     /* the motor still turns: the `st` stays */
+    move.b  #PORT_A_SELECT_BITS,%d0             /* every select line high: no drive */
+    bsr.w   isr_vbl_floppy_select_port_a        /* RELOCATED: $fc1e60 */
+    move.w  #1,(FLOPPY_DESELECTED,%a5)
+.Lfloppy_done:
+    clr.w   (FLOPPY_VBL_ENTERED,%a5)
 .Lfloppy_return:
+    rts
+
+/* ...the floppy driver's PSG port A read-modify-write, $fc1e60..$fc1e86, under a masked IPL: register 14 selected
+ * and read back, its low three bits (the side and the two drive selects) replaced by D0's — or'd over the kept
+ * bits, so a D0 holding a whole byte puts that byte back — the byte held before left in D2. */
+    .globl  isr_vbl_floppy_select_port_a
+isr_vbl_floppy_select_port_a:
+    move.w  %sr,-(%sp)
+    ori.w   #SR_IPL_MASK,%sr
+    move.b  #PSG_PORT_A,(IO(PSG_PORT_SELECT)).l
+    move.b  (IO(PSG_PORT_SELECT)).l,%d1
+    move.b  %d1,%d2
+    .word   M68K_AND_B_IMMEDIATE(M68K_D1), PORT_A_KEPT_BITS   /* and.b #$f8,%d1 */
+    or.b    %d0,%d1
+    move.b  %d1,(IO(PSG_PORT_DATA)).l
+    move.w  (%sp)+,%sr
+    rts
+
+/* ...and the driver's settled read of the FDC's register, $fc1ea4..$fc1ebe: the settle, the read into D0, and the
+ * settle again — the second by falling into it. The settle ($fc1eac) is 33 passes of `dbf` doing nothing: the
+ * chip's access time, whose only surface is its cost. */
+    .globl  isr_vbl_floppy_status
+isr_vbl_floppy_status:
+    bsr.s   .Lfloppy_settle
+    move.w  (IO(FDC_DMA_ACCESS)).l,%d0
+.Lfloppy_settle:
+    move.w  %sr,-(%sp)
+    move.w  %d7,-(%sp)
+    move.w  #FDC_SETTLE_DBF,%d7
+.Lfloppy_settle_pass:
+    dbf     %d7,.Lfloppy_settle_pass
+    move.w  (%sp)+,%d7
+    move.w  (%sp)+,%sr
     rts
 
 /* ---- the MFP's TIMER C — vector $114, $fc30c4..$fc312a, and the Dosound driver's step behind it ---

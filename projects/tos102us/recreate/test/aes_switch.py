@@ -1927,8 +1927,9 @@ def interrupt_needs():
 def _the_shown_machine_with(blob):
     image = make_image(cursor_shown(aes_event.machine()))
     image[blob.base:blob.base + len(blob.blob)] = blob.blob
-    # A LABELLED ARGUMENT-CLASS POKE: with `flock` clear our vertical blank reaches the floppy's own service, which
-    # is not reconstructed and HALTS (`src/bios/vbl.c`, floppy_vbl) — so the blank is measured on the arm that is.
+    # A LABELLED ARGUMENT-CLASS POKE: with `flock` clear our vertical blank reaches the floppy's own service past its
+    # gate, which reads the FDC's status and PSG port A — chips this machine declares no answer for (`src/bios/vbl.c`,
+    # floppy_vbl; `test_bios_vbl.py` declares them) — so the blank is measured on the gate's arm.
     image[addrs.SYSVAR_FLOCK:addrs.SYSVAR_FLOCK + WORD_BYTES] = A_DISK_OPERATION_IN_FLIGHT
     return image
 

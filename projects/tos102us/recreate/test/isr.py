@@ -47,6 +47,7 @@ from pathlib import Path
 
 import abi
 import case
+import layouts
 import staging
 from address_hook import AddressHook
 from harness import BASE_IMAGE, addrs, emu
@@ -314,7 +315,9 @@ TRANSCRIBED_AS = {
     "XBIOS_SCRDMP": "isr_vbl_scrdmp",                       # the blank's `bsr $fc0d50`
     "VBL_BLINK_CURSOR": "isr_vbl_blink_cursor",             # ...its `bsr $fc4666`
     "VBL_INVERT_CURSOR_CELL": "isr_vbl_invert_cursor_cell", # ...which ends in a `bra $fc4a1e`
-    "VBL_FLOPPY_SERVICE": "isr_vbl_floppy_service",         # ...its `bsr $fc1bc4`, as far as its `flock` gate
+    "VBL_FLOPPY_SERVICE": "isr_vbl_floppy_service",         # ...its `bsr $fc1bc4`, whole (D4 P4d)
+    "VBL_FLOPPY_SELECT_PORT_A": "isr_vbl_floppy_select_port_a",  # ...which `bsr`s the driver's $fc1e60
+    "VBL_FLOPPY_STATUS": "isr_vbl_floppy_status",           # ...and its $fc1ea4
     "SOUND_DRIVER_STEP": "isr_timer_c_sound_step",          # timer C's `bsr $fc312a`
     "KBD_QUEUE_KEY": "isr_timer_c_queue_key",               # ...and its `bsr $fc2c42`, the auto-repeat's
 }
@@ -643,6 +646,8 @@ def run(entry, glue, *, frame=FRAME_IN_STACK_BAND, resume_sr=RESUME_SR, pokes=No
 # Fields already declared by the trap batteries are NOT repeated: `SYSVAR_COLORPTR`,
 # `SYSVAR_FRCLOCK`, `SOUND_LIST_POINTER`, `SYSVAR_V_BAS_AD`, `SYSVAR_HZ_200`, `CON_BLINK_RATE`,
 # `CON_STATE_FLAGS` and `KBRATE_DELAY` are the screen, sound and console leaves' own.
+# The floppy driver's own names (`include/boot/floppy.h`), which the VBL's floppy service reads and writes.
+FLOPPY = layouts.parse_constants((Path(__file__).resolve().parents[1] / "include" / "boot" / "floppy.h",))
 CASE_SPANS = (
     (addrs.SYSVAR_ETV_TIMER, 4, "etv_timer, the vector timer C calls"),
     (addrs.SYSVAR_FLOCK, 2, "flock, the floppy VBL's gate"),
@@ -654,7 +659,10 @@ CASE_SPANS = (
     (addrs.SYSVAR_CONTERM, 1, "conterm, timer C's key-repeat gate"),
     (addrs.SYSVAR_DUMPFLG, 2, "_dumpflg, the screen-dump request"),
     (addrs.SYSVAR_SCR_DUMP, 4, "scr_dump, the routine Scrdmp jumps through"),
-    (addrs.FLOPPY_VBL_ENTERED, 1, "the byte the floppy VBL sets before its own gate"),
+    (addrs.FLOPPY_VBL_ENTERED, 4, "the floppy VBL's `st` byte, the byte its `clr.w` clears past it, and $a06, the "
+                                  "deselect flag"),
+    (FLOPPY["FLOPPY_WP_LATCH"], 4, "the floppy VBL's two write-protect latches and the word they are or'd into"),
+    (FLOPPY["SYSVAR_NFLOPS"], 2, "_nflops, the drives the floppy VBL's poll may select"),
     (addrs.CON_CURSOR_DISABLE, 2, "the word that suppresses the cursor blink"),
     (addrs.CON_CELL_HEIGHT, 2, "the cursor cell's height"),
     (addrs.CON_BLINK_TIMER, 1, "the blinks left before the cursor toggles"),
