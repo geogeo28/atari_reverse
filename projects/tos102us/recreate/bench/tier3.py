@@ -1747,8 +1747,10 @@ def is_a_boot_hwinit_slice(row):
 # ROM window (A LABELLED STAGING), both shores from the MID-BOOT machine with a disk in the drive (drive A: never
 # logged in: its first Getbpb logs the disk in) — THE LAUNCH ($fc047a to gem_entry) and THE AUTO RUNNER (its `bsr` to
 # its return, from the ROM's own machine there) — each on each shore's OWN cycles (ours the overlay's, the ROM's the
-# launch's text and the runner's), GEMDOS, the BIOS and the floppy model's answers both run and held equal, every
-# observable surface held (`boot_launch.differences`).
+# launch's text and the runner's), GEMDOS, the BIOS and the ROM's upper floppy driver both run and held equal, every
+# observable surface held (`boot_launch.differences`). THE FLOPPY RUNS THROUGH THE KIT'S FDC MODEL (D4 P5a, R-P5-1): the
+# lower driver is each shore's own (ours laid beside the launch, the ROM's its text) and is priced in NEITHER column
+# (R-P5-4: its natural calls are no rows; their cost shows in the chain rows) — `boot_launch.Priced`.
 BOOT_LAUNCH_SLICE_FUNCTION = {boot_launch.LAUNCH: "BOOT launch (.S)", boot_launch.AUTO_RUNNER_KIND: "BOOT AUTO runner (.S)"}
 BOOT_LAUNCH_SLICE_CASE = {
     boot_launch.LAUNCH: "LABELLED STAGING (ROM-window overlay): B4 [${start:x}, gem_entry ${stop:x}), the MID-BOOT machine, {disk}",
@@ -4348,8 +4350,8 @@ def boot_hwinit_slice_on(name):
 
 def boot_launch_slice_on(name):
     """THE BOOT'S LAUNCH's or ITS AUTO RUNNER's `Measurement`: every held surface equal (`boot_launch.priced`, refused by
-    name otherwise), each shore on its own cycles; GEMDOS, the BIOS and the floppy model both run (`boot_rest`) under
-    the row."""
+    name otherwise), each shore on its own cycles; GEMDOS, the BIOS and the ROM's upper floppy driver both run
+    (`boot_rest`, which excludes the lower driver on each shore: D4 P5a) under the row."""
     return _boot_measurement(boot_launch.priced(boot_launch.SLICES[name]), boot_launch.ENTRY_SYMBOL)
 
 
@@ -4414,11 +4416,13 @@ BOOT_DISPLAY_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles
 
 
 BOOT_LAUNCH_SLICE_LINE = ("{indent}  a slice of the boot as the ROM's bytes on its own cycles (the overlay's on ours, the launch's text and "
-                          "the AUTO runner's on the ROM's); instructions each run's whole; GEMDOS, the BIOS and the "
-                          "floppy model (the clock answered at its probe's entry) both run {rest} cycles, held equal, in "
-                          "neither column; held: every register, the megabyte outside the pre-init mask with our "
-                          "linked addresses mapped back, the stores, the GEMDOS traps, the floppy's calls, every ledger "
-                          "(`boot_launch.differences`)")
+                          "the AUTO runner's on the ROM's); instructions each run's whole; GEMDOS, the BIOS and the ROM's "
+                          "upper floppy driver (the floppy through the kit's FDC model, the clock answered at its probe's "
+                          "entry) both run {rest} cycles, held equal, in neither column; the lower floppy driver, each "
+                          "shore's own, is priced in neither column either (R-P5-4; pinned per row, "
+                          "`test_boot_launch.OUR_DRIVER`); held: every register, the megabyte outside the pre-init mask "
+                          "with our linked addresses mapped back, the stores, the GEMDOS traps, the FDC model's ledger, its "
+                          "chip and port A, every ledger (`boot_launch.differences`)")
 
 
 BOOT_HWINIT_SLICE_LINE = ("{indent}  a slice of the boot in C on its own cycles (the blob's on ours, the ROM's run but the "

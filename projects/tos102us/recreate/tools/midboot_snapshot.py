@@ -19,8 +19,8 @@ inside a run (decisions D3 and D4 are open). `test/boot.py`'s smoke says how far
 
 A BUILD PRODUCT OF ITS OWN (`build/midboot.bin`, `make midboot`). `preinit_snapshot.py` and `boot_snapshot.py` are
 imported and NOT EDITED: they are prerequisites of the five pre-init captures' keys, and an edit would capture all
-five again. That is why the file's trailer is spelt here (the pre-init file's layout, its own magic) rather than
-taken from a parameter of theirs.
+five again (as ruling R-P5a-2's one-byte narrowing of the masks did, once). That is why the file's trailer is spelt
+here (the pre-init file's layout, its own magic) rather than taken from a parameter of theirs.
 
 THE FILE: the megabyte; THE REGISTERS (`preinit_snapshot.REGISTER_NAMES`: the machine stops in SUPERVISOR mode, on
 the BIOS's own stack at its top `$755a` — every `bsr` of the boot has returned); the shifter's palette and resolution.
@@ -71,7 +71,10 @@ STACK_DEAD_BYTES = preinit_snapshot.STACK_DEAD_BYTES
 MASK = (
     (0x000462, 0x008, "_vbclock and _frclock: the vertical blanks counted"),
     (0x0004ba, 0x004, "_hz_200: the 200 Hz ticks counted"),
-    (0x0009f8, 0x010, "the floppy's vertical-blank service's own words ($fc1bc4: the write-protect latches, the motor)"),
+    # drive A:'s write-protect latch held, as the pre-init mask holds it (R-P5a-2: the ROM's Getbpb reads it at $fc1156)
+    (preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[0],
+     preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[1] - preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[0],
+     "the floppy's vertical-blank service's own words but drive A:'s latch ($fc1bc4: drive B:'s latch, the motor)"),
     (0x000e88, 0x002, "the timer-C divider: which of its four states the 200 Hz tick left it in"),
     (preinit_snapshot.GEMDOS_STACK_FLOOR, preinit_snapshot.GEMDOS_STACK_TOP - preinit_snapshot.GEMDOS_STACK_FLOOR,
      "dead frames of GEMDOS's own stack, to its top at $16ce (`movea.l #$16ce,sp` at every `trap #1`)"),

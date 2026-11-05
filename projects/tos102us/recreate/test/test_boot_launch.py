@@ -18,6 +18,7 @@ from harness import BASE_IMAGE, addrs
 import aes
 import aes_boot
 import boot
+import boot_floppy
 import boot_launch as bl
 import case
 import midboot_snapshot
@@ -54,6 +55,20 @@ OUR_OWN_COST = {
               "boot AUTO runner B4, PEXEC FAILS": (53, 1962)},
 }
 ONE_PROGRAM_ROWS = tuple(name for name, each in bl.SLICES.items() if each.disk == bl.ONE_PROGRAM)
+# THE LOWER FLOPPY DRIVER'S CYCLES IN EACH ROW (D4 P5a): `(ours, the ROM's)` — our body and its jumps against the ROM's
+# whole driver text, on either product of the launch (the driver is the same pieces beside both). Priced in no column of
+# the row (ruling R-P5-4: the natural calls are no rows of their own; their cost shows in the chain rows), so PINNED here,
+# exactly: two, three, five or four one-sector Floprds a row (the boot sector's log-in, the FAT, the root, a program).
+FLOPRDS = {2: (24652, 24576), 3: (36978, 36864), 4: (49304, 49152), 5: (61630, 61440)}
+FLOPRDS_OF = {"boot launch B4, BLANK": 2, "boot launch B4, DESKTOP.INF": 2, "boot launch B4, FILES": 3,
+              "boot launch B4, ONE PROGRAM": 5, "boot launch B4, PEXEC FAILS": 4, "boot AUTO runner B4, BLANK": 2,
+              "boot AUTO runner B4, NO PROGRAM": 3, "boot AUTO runner B4, ONE PROGRAM": 5,
+              "boot AUTO runner B4, PEXEC FAILS": 4}
+OUR_DRIVER = {name: FLOPRDS[count] for name, count in FLOPRDS_OF.items()}
+FLOPRD_COMMANDS = (0x17, 0x80, 0x13)    # each one-sector Floprd's: seek-verify, read sector, the exit's seek
+MOTOR_OFF_STATUS = (0xff8604, 0x04)    # the FDC status register read with the motor off (MR's chip)
+MOTOR_ON_STATUS = (0xff8604, 0xa4)     # ...and with B6's carried chip: the motor on, spun up (and the track-0 bit)
+OUR_FLOPRD_EXTRA_INSNS = 21             # ...and the instructions our driver's one-sector Floprd takes beyond the ROM's (measured)
 
 
 @functools.cache
@@ -248,17 +263,28 @@ def test_the_c_names_none_of_the_registers_the_bios_frames():
 @pytest.mark.parametrize("which", WHICH)
 @pytest.mark.parametrize("name", tuple(bl.SLICES))
 def test_ours_is_the_rom_s_on_every_held_surface(name, which):
+    """Every held surface equal and the rest equal — through `priced_pair`, tier 3's own pricing (refused by name)."""
     the_rom_s, ours = pair(name, which)
-    kind = bl.SLICES[name].kind
-    assert bl.differences(the_rom_s, ours, kind, bl.linked(kind, which), which) == []
-    assert ours.cycles - ours.own == the_rom_s.cycles - the_rom_s.own
+    bl.priced_pair(bl.SLICES[name], the_rom_s, ours, which)
+
+
+@pytest.mark.parametrize("which", WHICH)
+@pytest.mark.parametrize("name", tuple(bl.SLICES))
+def test_our_lower_driver_s_cycles_are_pinned_exactly_and_its_calls_are_the_one_sector_floprds(name, which):
+    """D4 P5a: every row runs OUR lower floppy driver on our shore (the ROM's on its own) — its cycles pinned, and its
+    calls, off the FDC model's ledger, each a one-sector Floprd (the commands `FLOPRD_COMMANDS`), as many as the pin says."""
+    the_rom_s, ours = pair(name, which)
+    assert (ours.driver, the_rom_s.driver) == OUR_DRIVER[name]
+    commands = [entry[1] for entry in ours.fdc_events if entry[0] == "command"]
+    assert commands == list(FLOPRD_COMMANDS) * FLOPRDS_OF[name]
 
 
 @pytest.mark.parametrize("which", WHICH)
 @pytest.mark.parametrize("name", tuple(bl.SLICES))
 def test_our_own_cost_is_pinned_exactly(name, which):
     the_rom_s, ours = pair(name, which)
-    assert (ours.instructions - the_rom_s.instructions, ours.own) == OUR_OWN_COST[which][name]
+    beyond = ours.instructions - the_rom_s.instructions - OUR_FLOPRD_EXTRA_INSNS * FLOPRDS_OF[name]     # (D4 P5a: the driver's)
+    assert (beyond, ours.own) == OUR_OWN_COST[which][name]
 
 
 @pytest.mark.parametrize("which", WHICH)
@@ -318,8 +344,9 @@ SURFACE_CHANGES = {
     "the megabyte outside the pre-init mask": lambda launch: _ram_changed(launch, C["BOOT_ENVIRONMENT"],
                                                                          launch.ram[C["BOOT_ENVIRONMENT"]] ^ 1),
     "the addresses stored outside the mask": lambda launch: launch._replace(stored=launch.stored + ((0xe000, 1),)),
-    "the calls": lambda launch: launch._replace(calls=launch.calls[:-1]),
-    "the disk": lambda launch: launch._replace(disk=launch.disk[:-1] + b"\x01"),
+    "the fdc_events": lambda launch: launch._replace(fdc_events=launch.fdc_events[:-1]),
+    "the fdc_chip": lambda launch: launch._replace(fdc_chip=launch.fdc_chip[:-1] + bytes((launch.fdc_chip[-1] ^ 1,))),
+    "the port_a": lambda launch: launch._replace(port_a=launch.port_a ^ 1),
     "the blanks": lambda launch: launch._replace(blanks=launch.blanks + 1),
     "the gemdos": lambda launch: launch._replace(gemdos=launch.gemdos[:-1]),
     "the io_reads": lambda launch: launch._replace(io_reads=launch.io_reads + ((0xff8260, 1, 0),)),
@@ -382,9 +409,43 @@ def test_ours_that_runs_the_rom_s_own_launch_is_refused_by_name():
 @pytest.mark.parametrize("which", WHICH)
 @pytest.mark.parametrize("name", (NEGATIVE_LAUNCH, NEGATIVE_RUNNER, "boot launch B4, ONE PROGRAM"))
 def test_the_rom_s_shore_is_the_same_run_with_and_without_the_overlay(name, which):
-    """The span each product is laid over is neither run nor read by the ROM's own slice: the same run, every surface."""
+    """The spans each product is laid over — the launch's and our lower driver's body (its jumps lie over the ROM's own
+    driver, whose text the ROM's shore runs) — are neither run nor read by the ROM's own slice: the same run, every
+    surface."""
     the_slice = bl.SLICES[name]
-    assert bl.the_rom_s(the_slice, laid=bl.overlay(which=which)) == the_rom_s(name)
+    body = bl.our_pieces(which=which)[1]            # (the jumps lie over the ROM's own driver: its shore runs them)
+    assert bl.the_rom_s(the_slice, laid=boot.overlays(bl.overlay(which=which), body)) == the_rom_s(name)
+
+
+def test_ours_without_our_driver_laid_runs_the_rom_s_driver_and_is_refused_by_name():
+    """THE FALSE GREEN OF THE DRIVER (D4 P5a): our launch with no driver of ours beside it runs the ROM's lower driver's
+    ported text — measured equal on the ROM's instructions — and is refused off the profile (`never_run_on_ours`)."""
+    the_slice = bl.SLICES[NEGATIVE_LAUNCH]
+    laid = bl.overlay()
+    machine = boot.entered_at(bl.start_of(the_slice), bl.our_entry(the_slice))
+    _launch, elsewhere = bl.run(machine, bl.disk(the_slice.disk).image, bl.GEM_ENTRY, (bl.our_span(laid),), laid=laid)
+    with pytest.raises(AssertionError, match="executed"):
+        bl._vet_who_ran(machine.label, elsewhere, ran=(bl.our_span(laid),),
+                        not_ran=bl.never_run_on_ours())
+
+
+def test_a_run_with_the_printer_on_line_refuses_seeds_beside_its_port():
+    """`aes_boot._Run` lays ONE declaration of the chips: the printer's port, or the seeds a B4 run hands it — the two
+    together are refused by name, never one silently dropped (review RP5a's NIT 7)."""
+    with pytest.raises(ValueError, match="printer"):
+        aes_boot._Run(bytearray(BASE_IMAGE), bl.NO_ANSWER, 1, printer=True, seeds={"psg_seed": {addrs.PSG_PORT_A: 0}})
+
+
+def test_the_carry_into_the_mid_boot_is_a_surface():
+    """THE CARRY'S NEGATIVE (R-D4-2): the ROM's own launch from MR's power-on chip, not B6's, leaves another FDC ledger —
+    its first status read finds the motor off (`$04`, not B6's `$a4`) — so the carry handed in is read, not a no-op. (The
+    chip it leaves is the same: the first command spins the motor up.)"""
+    the_slice = bl.SLICES[NEGATIVE_LAUNCH]
+    carried = the_rom_s(NEGATIVE_LAUNCH)
+    from_power_on, _elsewhere = bl.run(bl.start_of(the_slice), bl.disk(the_slice.disk).image, bl.GEM_ENTRY,
+                                       bl.THE_ROM_S_SPANS, carry=bl.carry_at_the_mid_boot()._replace(chip=None))
+    assert from_power_on.fdc_events[0] == ("read", *MOTOR_OFF_STATUS)
+    assert carried.fdc_events[0] == ("read", *MOTOR_ON_STATUS)
 
 
 # ---- THE DEVICE CLASS: DRIVE A: NEVER LOGGED IN -------------------------------------------------------------------------
@@ -415,27 +476,28 @@ def test_a_record_that_holds_a_disk_is_vetted_as_the_parent_vets_it():
 
 
 @pytest.mark.parametrize("name", LAUNCHES)
-def test_the_first_call_of_the_driver_is_the_log_in(name):
-    the_rom_s, _ours = pair(name)
-    assert the_rom_s.calls[0].function == aes_boot.GETBPB
+def test_the_first_read_of_the_disk_is_the_log_in(name):
+    """The first transfer the FDC model makes, on both shores, is the ROM's Getbpb's: the boot sector (track 0, side 0,
+    sector 1) into the driver's boot-sector buffer — the disk logged in, since drive A: never was (R-B4-3)."""
+    for launch in pair(name):
+        transfers = [entry for entry in launch.fdc_events if entry[0] == "dma_in"]
+        assert transfers[0] == ("dma_in", aes_boot.driver_boot_sector(_memory(bl.start_of(bl.SLICES[name]).ram)),
+                                addrs.BOOT_SECTOR_BYTES)
 
 
 # ---- THE END SURFACE: THE PRE-INIT CAPTURE -------------------------------------------------------------------------------
 @pytest.mark.parametrize("name", CAPTURED)
 def test_the_launch_reaches_the_pre_init_capture_of_its_disk(name):
     """THE END SURFACE (the survey's "by construction"): our launch's machine, its linked longwords mapped back, against
-    Hatari's capture at gem_entry with the same disk in the drive from power-on — every register equal; outside the
-    pre-init mask, the RAM differs in the floppy's lower driver's own state ALONE, exactly where and as much as the
-    ROM's own oracle run does (the device model answers above that driver: pinned, not masked)."""
+    Hatari's capture at gem_entry with the same disk in the drive from power-on — every register equal, and EVERY BYTE
+    outside the pre-init mask (D4 P5a: the floppy through the FDC model, the lower driver's own state the capture's —
+    until P5a 22-23 of its bytes were apart, the device model answering above that driver)."""
     the_rom_s, ours = pair(name)
     assert ours == pair(name)[1] and bl.differences(the_rom_s, pair(name, bl.TWIN)[1], bl.LAUNCH,
                                                    bl.linked(bl.LAUNCH, bl.TWIN), bl.TWIN) == []
     capture = bl.disk(bl.SLICES[name].disk).capture()
     registers, runs = bl.against_the_capture(ours, capture, bl.linked(bl.LAUNCH))
-    assert registers == () and runs == bl.against_the_capture(the_rom_s, capture)[1]
-    lo, hi = bl.FLOPPY_LOWER_DRIVER_STATE
-    assert all(lo <= start and start + length <= hi for start, length in runs)
-    assert sum(length for _start, length in runs) == bl.FLOPPY_STATE_DIFFERS[bl.SLICES[name].disk]
+    assert (registers, runs) == bl.against_the_capture(the_rom_s, capture) == ((), ())
 
 
 def test_the_end_surface_s_negative_a_byte_outside_the_driver_is_seen():
@@ -457,10 +519,10 @@ def test_what_the_runner_s_row_does_not_hold_is_dead_by_gem_entry(name, seed):
     the instructions the same."""
     the_slice = bl.SLICES[name]
     start = bl.start_of(the_slice)
-    machine = bl.machine_of(the_rom_s(name), start)
-    plain = bl.continued(machine, the_slice.disk)
+    machine, carry = bl.machine_of(the_rom_s(name), start), bl.carry_of(the_rom_s(name))
+    plain = bl.continued(machine, the_slice.disk, carry)
     noisy = bl.continued(bl.noised(machine, bl.NOT_HELD[bl.TWIN][bl.AUTO_RUNNER_KIND], bl.dead_at_the_runner_s_return(machine),
-                                   seed), the_slice.disk)
+                                   seed), the_slice.disk, carry)
     assert (noisy.instructions, noisy.registers) == (plain.instructions, plain.registers)
     assert bl.masked(noisy.ram) == bl.masked(plain.ram)
 
@@ -502,13 +564,13 @@ def test_which_mid_boot_registers_reach_the_pre_init_machine(register):
 # ---- THE MASK'S RULE, CARRIED TO gem_entry (B0's, owed here) ---------------------------------------------------------------
 def test_the_capture_s_masked_bytes_are_read_by_no_run_to_gem_entry():
     """From the mid-boot capture whose every masked byte is NOISE, the ROM's launch takes the same instructions to the
-    same registers and the same machine outside the pre-init mask — now with the floppy served (B0's rule reached the
-    first floppy call only)."""
+    same registers and the same machine outside the pre-init mask — the floppy through the FDC model since D4 P5a, its
+    ledger the same too (B0's rule reached the first floppy call only)."""
     plain = bl.start_of(bl.SLICES[NEGATIVE_LAUNCH])
     spans = [(lo, lo + size) for lo, size, _why in midboot_snapshot.MASK]
     noisy = plain._replace(ram=aes_boot.noise_over(plain.ram, spans, NOISE_SEEDS[0]))
     one, other = bl.continued(plain, bl.BLANK), bl.continued(noisy, bl.BLANK)
-    assert (one.instructions, one.registers, one.calls) == (other.instructions, other.registers, other.calls)
+    assert (one.instructions, one.registers, one.fdc_events) == (other.instructions, other.registers, other.fdc_events)
     assert bl.masked(one.ram) == bl.masked(other.ram)
 
 
@@ -516,6 +578,73 @@ def test_noise_outside_the_capture_s_mask_is_seen_at_gem_entry():
     plain = bl.start_of(bl.SLICES[NEGATIVE_LAUNCH])
     noisy = plain._replace(ram=aes_boot.noise_over(plain.ram, [(boot.RAM_BYTES - 16, boot.RAM_BYTES)], NOISE_SEEDS[0]))
     assert bl.masked(bl.continued(plain, bl.BLANK).ram) != bl.masked(bl.continued(noisy, bl.BLANK).ram)
+
+
+# ---- DRIVE A:'S WRITE-PROTECT LATCH, HELD BY BOTH CAPTURE MASKS (D4 P5a, ruling R-P5a-2) ----------------------------------
+# The ROM's Getbpb, which B4 runs since P5a, reads the latch (`$fc1156`); the floppy's vertical-blank service's other
+# words, `[$9f9,$a08)`, stay masked — EXACTLY those (`preinit_snapshot.FLOPPY_VBL_WORDS_MASKED`, both masks' one source).
+DRIVE_A_LATCH = preinit_snapshot.DRIVE_A_WRITE_PROTECT_LATCH
+FLOPPY_VBL_WORDS_END = preinit_snapshot.FLOPPY_VBL_WORDS_END
+LATCH_SET, LATCH_CLEAR = 0xff, 0x00     # a latch as the service leaves a protected drive's, and an unprotected one's
+
+
+def masked_bytes(mask):
+    return {at for lo, size, _why in mask for at in range(lo, lo + size)}
+
+
+def with_drive_a_latched(ram):
+    latched = bytearray(ram)
+    latched[DRIVE_A_LATCH] = LATCH_SET
+    return bytes(latched)
+
+
+def every_capture():
+    import accessory_disk
+    return (midboot_snapshot.load(), *(preinit_snapshot.load(path()) for path in (
+        preinit_snapshot.preinit_path, preinit_snapshot.accessory_path, preinit_snapshot.seven_accessory_path,
+        preinit_snapshot.inf_path, accessory_disk.files_capture_path)))
+
+
+def test_drive_a_s_write_protect_latch_is_the_byte_getbpb_reads_and_the_field_beside_it_is_the_service_s_words():
+    """The latch is read out of Getbpb's own instruction (`$fc114a movea.l #<the latches>,a1`, drive A: added) and is the
+    driver header's `FLOPPY_WP_LATCH`; the service's words end where the driver's request begins (`FLOPPY_DRIVE`) — the
+    tools' two constants pinned to the C's spelling (one source of truth across the language boundary)."""
+    assert aes_boot.driver_latches(BASE_IMAGE)[0] == DRIVE_A_LATCH == boot_floppy.CONSTANTS["FLOPPY_WP_LATCH"]
+    assert FLOPPY_VBL_WORDS_END == boot_floppy.CONSTANTS["FLOPPY_DRIVE"]
+
+
+@pytest.mark.parametrize("mask", (preinit_snapshot.MASK, midboot_snapshot.MASK), ids=("pre-init", "mid-boot"))
+def test_each_mask_holds_drive_a_s_latch_and_masks_exactly_the_service_s_other_words(mask):
+    """BOTH DIRECTIONS (review RP5a's REQ-3): from the latch to one byte past the service's words, the mask covers
+    EXACTLY `[$9f9, $a08)` — the latch held, and neither a word of the service left unmasked nor the driver's request
+    (`$a08`) masked."""
+    around = set(range(DRIVE_A_LATCH, FLOPPY_VBL_WORDS_END + 1))
+    assert masked_bytes(mask) & around == set(range(DRIVE_A_LATCH + 1, FLOPPY_VBL_WORDS_END))
+
+
+def test_every_capture_holds_drive_a_s_latch_clear():
+    """WHAT IS HELD: drive A: holds an unprotected disk from power-on, so the mid-boot capture and all five pre-init
+    captures leave its latch clear. (Drive B:'s latch `$9f9` is phase: `$ff` in some captures, `$00` in others — the
+    service's poll of an empty bay — and stays masked.)"""
+    assert [capture.ram[DRIVE_A_LATCH] for capture in every_capture()] == [LATCH_CLEAR] * 6
+
+
+def test_a_capture_with_drive_a_s_latch_apart_is_caught_by_both_masks():
+    """THE NEGATIVE: a capture whose drive-A: latch differs is a disagreement `--twice` says, on both captures' masks."""
+    mid = midboot_snapshot.load()
+    assert midboot_snapshot.disagreements(mid, mid._replace(ram=with_drive_a_latched(mid.ram))) == (
+        "the RAM outside the mask",)
+    pre = preinit_snapshot.load()
+    assert preinit_snapshot.masked(pre.ram) != preinit_snapshot.masked(with_drive_a_latched(pre.ram))
+
+
+def test_the_launch_reads_drive_a_s_latch():
+    """WHY IT IS HELD: from the mid-boot capture with drive A:'s latch set, the ROM's launch takes Getbpb's other arm
+    (the latch copied, the drive's mode MAYBE) — other instructions, another machine outside the pre-init mask."""
+    plain = bl.start_of(bl.SLICES[NEGATIVE_LAUNCH])
+    one = bl.continued(plain, bl.BLANK)
+    latched = bl.continued(plain._replace(ram=with_drive_a_latched(plain.ram)), bl.BLANK)
+    assert latched.instructions != one.instructions and bl.masked(latched.ram) != bl.masked(one.ram)
 
 
 # ---- THE CLOCK, ANSWERED AT ITS PROBE'S ENTRY (ruling R-B4-2) ---------------------------------------------------------------
@@ -565,7 +694,7 @@ def test_without_its_drive_the_runner_launches_nothing(which, scratch):
     """THE DRIVE MISSING (`_drvbits` without `_bootdev`'s bit): the runner lays its path and returns at once — no
     GEMDOS call on either shore, every register (but the scratch) and the megabyte the same."""
     the_rom_s, ours = bl.runner_without_its_drive(which)
-    assert the_rom_s.gemdos == ours.gemdos == () and the_rom_s.calls == ours.calls == ()
+    assert the_rom_s.gemdos == ours.gemdos == () and the_rom_s.fdc_events == ours.fdc_events == ()
     assert [reg for reg in boot.REGISTER_NAMES if reg != "pc" and the_rom_s.registers[reg] != ours.registers[reg]] == scratch
     ram = bl.mapped_back(ours.ram, {name: link for name, link in bl.linked(bl.LAUNCH, which).items()
                                     if name == "the runner's return"})

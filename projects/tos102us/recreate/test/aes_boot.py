@@ -1333,10 +1333,16 @@ class _Run:
     disarmed to the NEXT stop, and such a pair counted once: 102 arrivals at the trap handler where 366 happened. A
     zero was honest then; a count was not.)"""
 
-    def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None, printer=False):
+    def __init__(self, memory, floppy, budget, *, until=None, taking=None, ours=None, observing=None, printer=False,
+                 seeds=None):
         self._memory, self._floppy, self._budget, self._until = memory, floppy, budget, until
         self._taking, self._ours, self._observing = taking, ours, dict(observing or {})
         self._printer = printer         # a printer on line (`Boot.printer`): its port declared, its transaction a stop
+        # `emu.install_chip_seeds`'s declarations for the run (boot B4 through the FDC model: port A and GPIP), or None;
+        # the printer's port is a declaration of its own, so the two are never combined (refused, not silently dropped)
+        if printer and seeds:
+            raise ValueError("a run with the printer on line declares its own port: seeds cannot be laid beside it")
+        self._seeds = seeds
         self._hbl = case.long_in(memory, addrs.VECTOR_HBL) & BUS
         self._back = None               # where a poll of ours returns: the poll's entry is a stop again from there
         self.laid, self.pushed, self.frame, self.polls, self.blanks = {}, {}, {}, 0, 0
@@ -1362,7 +1368,7 @@ class _Run:
         """Entered with the register file `entered` — the door at its PC, so the run stops before one instruction —
         and a horizontal blank pending; then each stop, to the idle."""
         budget, memory = self._budget, self._memory
-        emu.install_chip_seeds(**(THE_PRINTER_S_PORT if self._printer else {}))
+        emu.install_chip_seeds(**(THE_PRINTER_S_PORT if self._printer else self._seeds or {}))
         result = emu.run_bench(memory, entered["pc"], 0, OFF_THE_MACHINE, emu.SENTINEL, max_insns=budget,
                                door={entered["pc"]}, seed_regs=None, io_seed=io_seed)
         assert result["status"] == emu.BENCH_DOOR and not result["ninsns"], "the run began before its registers were laid"

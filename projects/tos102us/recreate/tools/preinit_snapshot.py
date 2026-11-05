@@ -123,10 +123,18 @@ GEMDOS_STACK_FLOOR, GEMDOS_STACK_TOP = 0x1455, 0x16ce       # the lowest byte tw
 BIOS_STACK_TOP = 0x755a                 # the BIOS's stack's top: the AUTO runner's `lea $755a,sp`, the ISP at the stop
 LAUNCH_CONTEXT = 0xf7fc6                # GEMDOS's context of the launched program, on its own stack: the stop's D0 and A6
 STACK_DEAD_BYTES = 0x100                # how far below the last two the mask reaches (the deepest interrupt nest seen: 170)
+# DRIVE A:'S WRITE-PROTECT LATCH IS HELD, NOT MASKED (D4 P5a, ruling R-P5a-2): THE ROM'S GETBPB READS IT — `$fc1156`
+# copies it to `$9fa`, and set it stores the drive's media-change mode MAYBE — and since P5a the boot's last slice runs
+# that Getbpb from the mid-boot capture, so a byte of it in the mask would be one a run reads. $00 in every capture
+# measured (drive A: holds an unprotected disk from power-on). The rest of the service's words stay masked.
+DRIVE_A_WRITE_PROTECT_LATCH = 0x9f8
+FLOPPY_VBL_WORDS_END = 0xa08            # ...and the service's words end where the driver's request begins ($a08: its drive)
+FLOPPY_VBL_WORDS_MASKED = (DRIVE_A_WRITE_PROTECT_LATCH + 1, FLOPPY_VBL_WORDS_END)    # the mask's field, both masks'
 MASK = (
     (0x000462, 0x008, "_vbclock and _frclock: the vertical blanks counted"),
     (0x0004ba, 0x004, "_hz_200: the 200 Hz ticks counted"),
-    (0x0009f8, 0x010, "the floppy's vertical-blank service's own words ($fc1bc4: the write-protect latches, the motor)"),
+    (FLOPPY_VBL_WORDS_MASKED[0], FLOPPY_VBL_WORDS_MASKED[1] - FLOPPY_VBL_WORDS_MASKED[0],
+     "the floppy's vertical-blank service's own words but drive A:'s latch ($fc1bc4: drive B:'s latch, the motor)"),
     (0x000e88, 0x002, "the timer-C divider: which of its four states the 200 Hz tick left it in"),
     (GEMDOS_STACK_FLOOR, GEMDOS_STACK_TOP - GEMDOS_STACK_FLOOR,
      "dead frames of GEMDOS's own stack, to its top at $16ce (boot_snapshot's $1464 region, wider)"),

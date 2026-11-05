@@ -19,14 +19,18 @@ bench blob's span with it) while the runner that called it is still running. Lai
 says where each, and why), over bytes nothing of the slice runs or reads (held: the ROM's own slice is the same run with
 and without each overlay) and never over the AES's text, where Tier 3's guard holds our runs to spend no cycle.
 
-THE DEVICES (`aes_boot`'s model, unchanged): the floppy answered at the driver's entries, the blitter probe's bus error,
-one horizontal blank held pending (the AUTO process runs at mask 0: each shore takes the blanks its runs allow, held
-equal). TWO CLASSES THE MODEL DID NOT SERVE BEFORE, each said where it bites: DRIVE A: NEVER LOGGED IN (R-B4-3) — at
-`$fc047a` GEMDOS has not read the disk yet (the driver's record for drive A: is zero, held), so the first Getbpb logs in
-the disk in the drive (`NeverLoggedIn`), as drive B:'s first log-in is served; which is also why a disk OTHER than the
-capture's can be in the drive at the stop — the blank disk's only trace is its boot sector in `$16da`, which that
-Getbpb lays again (held: the DESKTOP.INF and files disks reach THEIR OWN pre-init captures). And THE CLOCK (R-B4-2,
-`THE_CLOCK`): a program that runs makes GEMDOS resync its clock, whose probe is answered at its entry.
+THE DEVICES: THE FLOPPY THROUGH THE KIT'S FDC/DMA MODEL (D4 P5a, ruling R-P5-1: `aes_boot.Floppy` retired here — no
+driver entry is answered). GEMDOS's Getbpb, Mediach and Rwabs run as the ROM's own upper driver on both shores; below
+it the LOWER driver is the ROM's on its shore and OURS on ours (`our_pieces`: laid beside the launch, R-P4-2's jumps);
+below that the model, carried in from B6 (R-D4-2: `carry_at_the_mid_boot`), its ledger, chip and port A held. The
+blitter probe's bus error, and one horizontal blank held pending (the AUTO process runs at mask 0: each shore takes the
+blanks its runs allow, held equal). DRIVE A: NEVER LOGGED IN (R-B4-3) — at `$fc047a` GEMDOS has not read the disk yet
+(the driver's record for drive A: is zero, held), so the first Getbpb — the ROM's own now — logs in the disk in the
+drive; which is also why a disk OTHER than the capture's can be in the drive at the stop — the blank disk's only trace
+is its boot sector in `$16da`, which that Getbpb reads again (held: the DESKTOP.INF and files disks reach THEIR OWN
+pre-init captures, to the byte). (`NeverLoggedIn`, the device model's class for that, stays for B6's Floprd cross-check
+alone.) And THE CLOCK (R-B4-2, `THE_CLOCK`): a program that runs makes GEMDOS resync its clock, whose probe is answered
+at its entry.
 
 THE ROWS (`SLICES`): THE LAUNCH from `$fc047a` to gem_entry on the three disks a pre-init capture booted with — its END
 SURFACE that capture — and on a disk with one program and one with a program Pexec cannot load; THE AUTO RUNNER as a
@@ -37,7 +41,7 @@ staging beyond the ruled machines).
 
 WHAT IS HELD (`differences`): the stop; the register file (the twin's runner rows but `NOT_HELD`); the megabyte outside
 `preinit_snapshot.MASK` with OUR LINKED ADDRESSES mapped back to the ROM's (`linked`) — unmapped, the megabyte differs
-at exactly those longwords; the addresses stored outside the mask; the floppy's calls and the disk; every ordered
+at exactly those longwords; the addresses stored outside the mask; the FDC model's ledger, its chip and port A; every ordered
 ledger; THE GEMDOS TRAPS IN ORDER, each with its arguments (`GEMDOS_ARGUMENT_BYTES`); the blanks taken; the clock's
 answers. Instructions and cycles are the price, not a surface — but OUR OWN COST IS PINNED EXACTLY (`OUR_OWN_COST`).
 """
@@ -112,6 +116,20 @@ def product(which=SHIPPED):
 def overlay(code=None, which=SHIPPED):
     """THE STAGING our side runs on: the product (or `code`, a case's own bytes) over the ROM window (`boot.overlaid`)."""
     return boot.overlaid(product(which).base, product(which).code if code is None else code)
+
+
+def our_pieces(code=None, which=SHIPPED):
+    """EVERYTHING OUR SIDE LAYS (D4 P5a, R-P5-1): the launch's overlay (`overlay`) and OUR LOWER FLOPPY DRIVER beside it —
+    its body and the jump at each ROM entry it ports (`boot_floppy.pieces`, R-P4-2) — each its own labelled staging."""
+    import boot_floppy
+    return boot.overlays(overlay(code, which), *boot_floppy.pieces())
+
+
+def never_run_on_ours():
+    """THE ROM'S TEXT OUR SIDE MUST SPEND NO CYCLE IN: its launch and runner, and its lower driver's ported text past
+    each jump (`boot_floppy.NEVER_RUN`) — ours that fell into it would be measured equal on the ROM's instructions."""
+    import boot_floppy
+    return (*THE_ROM_S_SPANS, *boot_floppy.NEVER_RUN)
 
 
 def our_span(laid=None):
@@ -312,30 +330,95 @@ class AnsweringTheClock(aes_boot._Run):
         return False
 
 
+# ---- THE FLOPPY THROUGH THE FDC MODEL (D4 P5a, ruling R-P5-1 "Sliced P5a->P5c") -----------------------------------------
+# THE UPPER DRIVER IS NO LONGER ANSWERED HERE: GEMDOS's Getbpb, Mediach and Rwabs run as the ROM's own code, on both shores,
+# down to the LOWER driver — the ROM's on its shore, OURS on ours (laid beside the launch: `our_pieces`) — and below it the
+# kit's FDC/DMA model (R-D4-1), armed for the run with the capture's bays: the disk in drive A: lent READ-ONLY (B4 writes
+# nothing: a write would be refused by the model, by name), drive B: present and empty. THE CARRY INTO `$fc047a` (R-D4-2,
+# "derived, never declared"): PSG port A and the chip as the ROM's own B6 leaves them on the COLD chain's capture arm — one
+# value on all eight chains (measured, `test_boot_chain.py`). The chain hands its own B6's carry instead (`carry=`).
+class NoFloppyAnswer:
+    """No driver entry answered: every floppy call of the run reaches the FDC model (`aes_boot._Run`'s device seat)."""
+    served_at = {}
+
+
+NO_ANSWER = NoFloppyAnswer()
+
+
+@functools.cache
+def carry_at_the_mid_boot():
+    """THE CARRY INTO `$fc047a` (R-D4-2): `boot_late.Carry` (port A, the chip) the ROM's own B6 leaves on the COLD chain."""
+    import boot_chain                   # (it imports this module: the carry is read off its ROM chain, lazily)
+    chain = boot_chain.Chain(boot.COLD, boot_chain.CAPTURE_ARM[boot.COLD])
+    return boot_chain.the_rom_s(chain)[-2].carry
+
+
+def bays(disk_image):
+    """The FDC model's two bays for a run of the slice: `disk_image` in drive A: (read-only), drive B: as the capture's."""
+    import boot_late
+    return emu.FdcDrive(bytes(disk_image)), boot_late.drives(boot_late.CAPTURE_DRIVES).drive_b
+
+
+def gpip_at_the_mid_boot():
+    """GPIP's other bits as the COLD capture arm declares them (its bit 5 the model's while armed, R-D4-3)."""
+    import boot_late
+    return boot_late.gpip_of(boot.COLD)
+
+
+def driver_spans(laid=None):
+    """Where the lower floppy driver runs on a shore: the ROM's own text (on ours only the jumps laid at its entries may
+    spend a cycle there) and, where laid, our body."""
+    import boot_floppy
+    body = boot_floppy.product()
+    return (boot_floppy.LOWER_DRIVER, (body.base, body.base + len(body.code))) if laid else (boot_floppy.LOWER_DRIVER,)
+
+
 # ---- THE RUN -------------------------------------------------------------------------------------------------------------
-Launch = namedtuple("Launch", "ram registers stop instructions cycles own calls disk blanks gemdos io_reads "
-                              "hardware_reads hardware_writes stored clock")
+Launch = namedtuple("Launch", "ram registers stop instructions cycles own driver fdc_events fdc_chip port_a blanks gemdos "
+                              "io_reads hardware_reads hardware_writes stored clock")
 Launch.__doc__ = """One run of the slice: the megabyte it left, the CPU's `registers` there, the `stop` arrived at, its
-`instructions` and `cycles` (the run's whole), `own` (its cycles in `spans`: the shore's own code), the floppy's
-`calls` and the `disk` as it left it, the horizontal `blanks` taken, the `gemdos` ledger, the ordered ledgers and the
-RAM `stored` (runs), and how many times the CLOCK's probe was answered at its entry (`clock`)."""
+`instructions` and `cycles` (the run's whole), `own` (its cycles in `spans`: the shore's own code), `driver` (its cycles in
+the lower floppy driver: the ROM's text, and our body where laid), the FDC model's ordered ledger `fdc_events`, the chip it
+left (`fdc_chip`) and PSG port A after the run (`port_a`), the horizontal `blanks` taken, the `gemdos` ledger, the ordered
+ledgers and the RAM `stored` (runs), and how many times the CLOCK's probe was answered at its entry (`clock`)."""
 LAUNCH_INSNS = 400_000                  # the budget: the longest arm (two programs) is ~77,000 instructions
 
 
-def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock_carry=True):
-    """THE SLICE RUN from `machine` (its PC, its whole register file) with `disk_image` in drive A: (`NeverLoggedIn`),
-    to its first arrival at `until`, profiled: `own` its cycles in `spans`. `laid`: an `Overlay`, laid over a copy of
-    the image for this run. Refused by name: a store at `$0..$7`, a saturated write ledger, anything the kit's vet or
-    the device model refuses. THE CLOCK's probe is answered at its entry (`clock_carry`: the flag it hands back)."""
+def carry_of(launch):
+    """The carry `launch` hands the run after it (R-D4-2): `boot_late.Carry(port A, the chip)`."""
+    import boot_late
+    return boot_late.Carry(launch.port_a, launch.fdc_chip)
+
+
+def _port_a_after(before):
+    for kind, register, value in emu.psg_events():
+        if kind == emu.os_map.OS_PSG_EVENT_WRITE and register == addrs.PSG_PORT_A:
+            before = value
+    return before
+
+
+def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock_carry=True, carry=None, gpip=None):
+    """THE SLICE RUN from `machine` (its PC, its whole register file) with `disk_image` in drive A: — THE FLOPPY THROUGH THE
+    FDC MODEL, no driver entry answered (`carry`: port A and the chip it starts from, `carry_at_the_mid_boot()` by default;
+    `gpip`: GPIP's other bits, the COLD arm's by default) — to its first arrival at `until`, profiled: `own` its cycles in
+    `spans`. `laid`: an `Overlay`, or several (`boot.overlays`), laid over a copy of the image for this run. Refused by
+    name: a store at `$0..$7`, a saturated write ledger, anything the kit's vet or the FDC model refuses. THE CLOCK's probe
+    is answered at its entry (`clock_carry`: the flag it hands back). Returns the `Launch` and `elsewhere`: the run's
+    cycles in every span the who-ran checks read (`never_run_on_ours`, and each piece laid), read inside the run."""
+    carry = carry_at_the_mid_boot() if carry is None else carry
+    gpip = gpip_at_the_mid_boot() if gpip is None else gpip
     memory = bytearray(BASE_IMAGE)
     memory[:RAM_BYTES] = machine.ram
-    if laid:
-        memory[laid.at:laid.at + len(laid.code)] = laid.code
-    floppy = NeverLoggedIn(memory, disk_image)
+    for piece in boot.pieces_of(laid) if laid else ():
+        memory[piece.at:piece.at + len(piece.code)] = piece.code
     trap = gemdos_entry(machine.ram)
-    the_run = AnsweringTheClock(memory, floppy, budget, until=until, observing={trap: ("gemdos", _trap_read)},
-                                carry=clock_carry)
+    seeds = {"psg_seed": {addrs.PSG_PORT_A: carry.port_a}, "hw_seed": {addrs.MFP_GPIP: gpip}}
+    the_run = AnsweringTheClock(memory, NO_ANSWER, budget, until=until, observing={trap: ("gemdos", _trap_read)},
+                                carry=clock_carry, seeds=seeds)
+    drive_a, drive_b = bays(disk_image)
+    driver = driver_spans(laid)
     aes_boot.aes_event.vet_the_profile_is_free("a boot launch run")
+    emu.fdc_arm(drive_a, drive_b, chip=carry.chip)
     emu.prof_enable(True)
     emu.prof_reset()
     try:
@@ -343,18 +426,25 @@ def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock
         registers = stopped_cpu.registers_now()
         writes, truncated = emu.bench_writes(memory)
         ledgers = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
+        fdc_events, causes = tuple(emu.fdc_events()), emu.fdc_causes()
+        chip = None if causes else emu.fdc_state()
+        port_a = _port_a_after(carry.port_a)
         own = sum(emu.prof_cycles(lo, hi) for lo, hi in spans)
-        elsewhere = {span: emu.prof_cycles(*span) for span in (*THE_ROM_S_SPANS, our_span(laid) if laid else None) if span}
+        driver_cycles = sum(emu.prof_cycles(lo, hi) for lo, hi in driver)
+        elsewhere = {span: emu.prof_cycles(*span) for span in (*never_run_on_ours(), *_spans_of(laid))}
     finally:
         emu.prof_enable(False)
+        emu.fdc_disarm()
         stopped_cpu.CPU.m68k_set_irq(aes_boot.NO_INTERRUPT)
         emu.bench_abort()
+    if causes:
+        raise boot.Refused(f"{machine.label}: " + "; ".join(causes))
     aes_boot._vet_nothing_stored_under_the_rom_s_shadow(machine.ram, memory, writes, machine.label)
     if truncated:
         raise boot.Refused(f"{machine.label}: the run's write ledger saturated — what it stored is not known")
     boot._vetted(machine, {until})
     launch = Launch(bytes(memory[:RAM_BYTES]), registers, registers["pc"], result["ninsns"], result["cycles"], own,
-                    tuple(floppy.calls), bytes(floppy.disk), the_run.blanks,
+                    driver_cycles, fdc_events, chip, port_a, the_run.blanks,
                     tuple(read for _name, read in the_run.observed), *ledgers, the_run.stored(writes),
                     the_run.clock_answers)
     return launch, elsewhere
@@ -402,11 +492,15 @@ def stop_of(the_slice, ours, which=SHIPPED):
 
 
 def the_rom_s(the_slice, laid=None):
-    """The ROM's own slice (`laid`: with an overlay it must not reach — the ROM's shore with and without it)."""
+    """The ROM's own slice (`laid`: overlays it must not reach — the ROM's shore with and without them)."""
     machine = start_of(the_slice)
     launch, elsewhere = run(machine, disk(the_slice.disk).image, stop_of(the_slice, False), THE_ROM_S_SPANS, laid=laid)
-    _vet_who_ran(machine.label, elsewhere, ran=THE_ROM_S_SPANS, not_ran=(our_span(laid),) if laid else ())
+    _vet_who_ran(machine.label, elsewhere, ran=THE_ROM_S_SPANS, not_ran=_spans_of(laid))
     return launch
+
+
+def _spans_of(laid):
+    return tuple((piece.at, piece.at + len(piece.code)) for piece in boot.pieces_of(laid)) if laid else ()
 
 
 def our_entry(the_slice, which=SHIPPED):
@@ -417,12 +511,12 @@ def our_entry(the_slice, which=SHIPPED):
 def our_side(the_slice, code=None, which=SHIPPED):
     """OUR slice — of `which` product — from the same machine, on its overlay (the product, or `code`), entered at our
     instruction where the ROM's stands; refused by name if it ran a cycle of the ROM's own spans."""
-    laid = overlay(code, which)
+    laid = our_pieces(code, which)
     machine = boot.entered_at(start_of(the_slice), our_entry(the_slice, which))
-    machine = machine._replace(label=f"{machine.label}; {which}; {laid.label}")
-    launch, elsewhere = run(machine, disk(the_slice.disk).image, stop_of(the_slice, True, which), (our_span(laid),),
+    machine = machine._replace(label=f"{machine.label}; {which}; {boot.label_of(laid)}")
+    launch, elsewhere = run(machine, disk(the_slice.disk).image, stop_of(the_slice, True, which), (our_span(laid[0]),),
                             laid=laid)
-    _vet_who_ran(machine.label, elsewhere, ran=(our_span(laid),), not_ran=THE_ROM_S_SPANS)
+    _vet_who_ran(machine.label, elsewhere, ran=(our_span(laid[0]),), not_ran=never_run_on_ours())
     return launch
 
 
@@ -492,7 +586,8 @@ def differences(rom, ours, kind, links=None, which=SHIPPED):
         found.append("the megabyte outside the pre-init mask at " + ", ".join(f"{at:#x}+{n}" for at, n in differing[:8]))
     if _outside_the_mask(ours.stored) != _outside_the_mask(rom.stored):
         found.append("the addresses stored outside the mask")
-    for surface in ("calls", "disk", "blanks", "gemdos", "io_reads", "hardware_reads", "hardware_writes", "clock"):
+    for surface in ("fdc_events", "fdc_chip", "port_a", "blanks", "gemdos", "io_reads", "hardware_reads", "hardware_writes",
+                    "clock"):
         if getattr(ours, surface) != getattr(rom, surface):
             found.append(f"the {surface}")
     return found
@@ -523,19 +618,19 @@ def noised(machine, registers, spans, seed=NOISE_SEED):
     return machine._replace(ram=aes_boot.noise_over(machine.ram, spans, seed), registers=noisy)
 
 
-def continued(machine, disk_name):
-    """The ROM's own launch from `machine` (standing where the runner returned) to gem_entry."""
-    return run(machine, disk(disk_name).image, GEM_ENTRY, THE_ROM_S_SPANS)[0]
+def continued(machine, disk_name, carry=None):
+    """The ROM's own launch from `machine` (standing where the runner returned) to gem_entry — `carry` the FDC model's
+    (`carry_of` the run that left `machine`; the mid-boot's by default)."""
+    return run(machine, disk(disk_name).image, GEM_ENTRY, THE_ROM_S_SPANS, carry=carry)[0]
 
 
 # ---- THE END SURFACE: THE PRE-INIT CAPTURE OF THE SAME DISK -----------------------------------------------------------------
-# What the oracle's run of the launch reaches against what Hatari's boot reached: EQUAL in every register and every byte
-# outside the pre-init mask BUT THE FLOPPY'S LOWER DRIVER'S OWN STATE — its transaction record, the registers it saves,
-# its two drives' records ($fc1c48 `movem.l d3-d7/a3-a6,$a28`, `st $a04`, `lea $a4c/$a50,a1`): the device model answers
-# at the driver's entries and does not advance what lies below them (`aes_boot`'s docstring, "WHAT THE MODEL DOES NOT
-# DO"). Pinned exactly, not masked: the bytes the ROM's own oracle run differs from the capture in, ours the same.
+# What the oracle's run of the launch reaches against what Hatari's boot reached: EQUAL in every register and EVERY BYTE
+# outside the pre-init mask (D4 P5a). Until P5a the device model answered at the driver's entries and did not advance the
+# lower driver's own state below them — its transaction record, the registers it saves, its two drives' records
+# ($fc1c48 `movem.l d3-d7/a3-a6,$a28`, `st $a04`, `lea $a4c/$a50,a1`) — and the run differed from the capture in 22-23 of
+# those bytes, pinned exactly. With the upper driver run and the lower one through the FDC model, they are the capture's.
 FLOPPY_LOWER_DRIVER_STATE = (0xa04, 0xa54)
-FLOPPY_STATE_DIFFERS = {BLANK: 23, INF: 23, FILES: 22}      # bytes of it the capture and the oracle's run differ in
 
 
 def against_the_capture(launch, capture, links=None):
@@ -548,8 +643,10 @@ def against_the_capture(launch, capture, links=None):
 # ---- THE PRICE (D9: each shore on its own cycles) ----------------------------------------------------------------------------
 Priced = namedtuple("Priced", "the_rom_s ours own rest")
 Priced.__doc__ = """One row measured on both shores: the two `Launch`es, `own` (ours the overlay's cycles, the ROM's its
-spans' — each shore's own) and `rest` (each run's other cycles: GEMDOS, the BIOS and the floppy model's answers both
-run), held equal."""
+spans' — each shore's own) and `rest` (each run's other cycles but the lower floppy driver's: GEMDOS, the BIOS and the
+upper floppy driver both run), held equal. THE LOWER DRIVER (D4 P5a) is each shore's own — ours laid beside the launch,
+the ROM's its text — and is priced in NEITHER column here (ruling R-P5-4: its natural calls are no rows of their own; its
+cost shows in the chain rows): `Launch.driver` on each shore, taken out of the rest."""
 
 
 def name_of(the_slice):
@@ -558,10 +655,15 @@ def name_of(the_slice):
 
 def priced(the_slice):
     """`the_slice` PRICED: both shores run, every held surface equal (refused by name otherwise)."""
-    rom, ours = the_rom_s(the_slice), our_side(the_slice)
-    found = differences(rom, ours, the_slice.kind, linked(the_slice.kind))
+    return priced_pair(the_slice, the_rom_s(the_slice), our_side(the_slice))
+
+
+def priced_pair(the_slice, rom, ours, which=SHIPPED):
+    """...the two shores' runs of `the_slice` (ours of `which` product) PRICED — the one place a row's price is made, the
+    battery's and tier 3's: every held surface equal and the rest equal (refused by name otherwise)."""
+    found = differences(rom, ours, the_slice.kind, linked(the_slice.kind, which), which)
     assert not found, f"{name_of(the_slice)}: ours differs from the ROM's — {'; '.join(found)}"
-    rest = (ours.cycles - ours.own, rom.cycles - rom.own)
+    rest = (ours.cycles - ours.own - ours.driver, rom.cycles - rom.own - rom.driver)
     assert rest[0] == rest[1], f"{name_of(the_slice)}: beside its own, ours spent {rest[0]} cycles, the ROM's {rest[1]}"
     return Priced(rom, ours, (ours.own, rom.own), rest[0])
 
@@ -614,8 +716,8 @@ def runner_without_its_drive(which=SHIPPED):
     machine = poked(start_of(the_slice), addrs.SYSVAR_DRVBITS, bytes(LONG_BYTES), "_drvbits 0 — no drive mounted")
     image = disk(BLANK).image
     the_rom_s = run(machine, image, SHELL_ARM_AUTO_RAN, THE_ROM_S_SPANS)[0]
-    laid, symbols = overlay(which=which), product(which).symbols
+    laid, symbols = our_pieces(which=which), product(which).symbols
     ours, elsewhere = run(boot.entered_at(machine, symbols[OUR_RUNNER_CALL]), image, symbols[OUR_AUTO_RAN],
-                          (our_span(laid),), laid=laid)
-    _vet_who_ran(machine.label, elsewhere, ran=(our_span(laid),), not_ran=THE_ROM_S_SPANS)
+                          (our_span(laid[0]),), laid=laid)
+    _vet_who_ran(machine.label, elsewhere, ran=(our_span(laid[0]),), not_ran=never_run_on_ours())
     return the_rom_s, ours

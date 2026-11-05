@@ -271,8 +271,9 @@ def test_the_answers_and_the_launch_s_ledgers_are_the_slices_own(machine):
         served = boot_display.GPIP_OF[chain.arm.monitor] & ~boot_late.GPIP_INTRQ
         expected = tuple(("poll", served, entry[2]) if entry[0] == "poll" else entry for entry in late.slice.fdc_events)
         assert (b6.ledgers["fdc_events"], b6.ledgers["fdc_chip"]) == (expected, late.slice.fdc_chip), name
-        assert (b4.ledgers["gemdos"], b4.ledgers["calls"], b4.ledgers["clock"], b4.ledgers["blanks"]) == (
-            launch.gemdos, launch.calls, launch.clock, launch.blanks), name
+        expected = tuple(("poll", served, entry[2]) if entry[0] == "poll" else entry for entry in launch.fdc_events)
+        assert (b4.ledgers["gemdos"], b4.ledgers["fdc_events"], b4.ledgers["clock"], b4.ledgers["blanks"]) == (
+            launch.gemdos, expected, launch.clock, launch.blanks), name
 
 
 def test_the_mono_arm_s_poll_is_answered_in_the_chain():
@@ -294,15 +295,14 @@ def test_at_fc047a_both_shores_are_the_mid_boot_capture_but_d1(cold_pair):
 
 
 def test_at_gem_entry_both_shores_are_the_pre_init_capture_but_its_own_named_set(cold_pair):
-    """D1 (memctrl, `$424`) and the lower floppy driver's own state the LAUNCH never lays (B4 answers the floppy at the
-    upper driver's entries, R-D4-3: the reads Hatari's launch made through the lower driver are on no shore) — every
-    register equal."""
+    """D1 (memctrl, `$424`) ALONE — every register equal. Until D4 P5a the lower floppy driver's own state was apart too (B4
+    answered the floppy at the upper driver's entries); since P5a B4 runs it through the FDC model and the set is empty."""
     rom, ours = cold_pair
     capture = boot_launch.disk(boot_launch.BLANK).capture()
     theirs = bc.against_the_preinit(rom[-1], capture, ours_side=False)
     mine = bc.against_the_preinit(ours[-1], capture, ours_side=True)
-    assert theirs == mine == (set(), {*bc.END_PREINIT_MEMCTRL, *bc.END_PREINIT_LOWER_DRIVER})
-    assert all(boot_late.LOWER_DRIVER_STATE[0] <= at < boot_late.LOWER_DRIVER_STATE[1] for at in bc.END_PREINIT_LOWER_DRIVER)
+    assert theirs == mine == (set(), {*bc.END_PREINIT_MEMCTRL})
+    assert bc.END_PREINIT_LOWER_DRIVER == ()
 
 
 # ---- THE HAND-OFF NO SLICE SEES -------------------------------------------------------------------------------------------
@@ -369,12 +369,39 @@ def _ram_apart(rom_step, our_step, lo, hi):
     return {at for at in range(lo, hi) if rom_step.machine.ram[at] != mine[at]}
 
 
-def test_the_frames_apart_are_measured_from_74ff_at_fc047a_and_exactly_eleven_bytes_at_gem_entry(pair):
+def test_the_frames_apart_are_measured_from_74ff_at_fc047a_and_exactly_twenty_three_bytes_at_gem_entry(pair):
+    """At gem_entry: the BIOS stack's eleven (R-P4-5) and GEMDOS's stack's twelve (R-P5a-1) — and nothing else of the
+    megabyte (`differences`' own compare holds the rest)."""
     _chain, rom, ours = pair
     lo, hi = boot_late.STACK_RESIDUE
     at_b6 = bc.STEP_NAMES.index(bc.B6)
     assert min(_ram_apart(rom[at_b6], ours[at_b6], lo, hi)) == bc.FRAMES_APART_FROM
-    assert _ram_apart(rom[-1], ours[-1], lo, hi) == bc.APART_AT_THE_END
+    assert _ram_apart(rom[-1], ours[-1], lo, hi) == bc.B3_FRAMES_LEFT | bc.OUR_DRIVER_S_DEAD_FRAMES
+    assert _ram_apart(rom[-1], ours[-1], *GEMDOS_STACK_DEAD_FRAMES) == bc.GEMDOS_STACK_DRIVER_FRAMES
+    assert _ram_apart(rom[-1], ours[-1], 0, boot.RAM_BYTES) == bc.APART_AT_THE_END
+    mine = bc.ram_held(ours[-1])
+    assert {at: (rom[-1].machine.ram[at], mine[at]) for at in bc.APART_AT_THE_END} == bc.VALUES_AT_THE_END
+
+
+def _a_third_value(pair_of_values):
+    return next(value for value in range(0x100) if value not in pair_of_values)
+
+
+@pytest.mark.parametrize("at", sorted(bc.APART_AT_THE_END))
+def test_a_byte_of_the_twenty_three_apart_with_a_third_value_is_seen(cold_pair, at):
+    """THE VALUES' NEGATIVE (review RP5a's REQ-1): ours holding neither shore's byte there — still apart, so a position set
+    would pass it — is named."""
+    rom, ours = cold_pair
+    step = _changed_ram(ours[-1], at, _a_third_value(bc.VALUES_AT_THE_END[at]))
+    assert bc.differences(rom[-1], step, COLD_CHAIN) == [f"ram, first at {at:#x}"]
+
+
+def test_a_byte_of_the_rom_s_frames_moved_is_seen(cold_pair):
+    """...and the ROM's side of a byte moved (the low byte of its return into its own driver, `$fc1df0`) is named too."""
+    rom, ours = cold_pair
+    at = 0x14b7
+    moved = _changed_ram(rom[-1], at, _a_third_value(bc.VALUES_AT_THE_END[at]))
+    assert bc.differences(moved, ours[-1], COLD_CHAIN) == [f"ram, first at {at:#x}"]
 
 
 @pytest.mark.parametrize("step_name", (bc.B6, bc.B4))
@@ -388,8 +415,9 @@ def test_a_stray_store_in_the_bios_stack_s_dead_frames_is_seen(cold_pair, step_n
     assert bc.differences(rom[index], step, COLD_CHAIN) == [f"ram, first at {stray:#x}"]
 
 
-@pytest.mark.parametrize("at", (min(bc.B3_FRAMES_LEFT), min(bc.OUR_DRIVER_S_DEAD_FRAMES), max(bc.OUR_DRIVER_S_DEAD_FRAMES)))
-def test_one_of_the_eleven_bytes_made_equal_is_seen(cold_pair, at):
+@pytest.mark.parametrize("at", (min(bc.B3_FRAMES_LEFT), min(bc.OUR_DRIVER_S_DEAD_FRAMES), max(bc.OUR_DRIVER_S_DEAD_FRAMES),
+                                min(bc.GEMDOS_STACK_DRIVER_FRAMES), max(bc.GEMDOS_STACK_DRIVER_FRAMES)))
+def test_one_of_the_twenty_three_bytes_made_equal_is_seen(cold_pair, at):
     rom, ours = cold_pair
     step = _changed_ram(ours[-1], at, rom[-1].machine.ram[at])
     assert bc.differences(rom[-1], step, COLD_CHAIN) == [f"ram, first at {at:#x}"]
@@ -407,7 +435,76 @@ def test_our_driver_s_dead_frames_lie_in_b6_s_last_probe_s_frame_span_where_the_
     assert all(lo <= at < hi for at in bc.OUR_DRIVER_S_DEAD_FRAMES)
     stored = {at for start, length in rom[bc.STEP_NAMES.index(bc.B6)].stored for at in range(start, start + length)}
     assert bc.OUR_DRIVER_S_DEAD_FRAMES <= stored
-    assert bc.APART_AT_THE_END == bc.B3_FRAMES_LEFT | bc.OUR_DRIVER_S_DEAD_FRAMES and len(bc.APART_AT_THE_END) == 11
+    assert bc.APART_AT_THE_END == bc.B3_FRAMES_LEFT | bc.OUR_DRIVER_S_DEAD_FRAMES | bc.GEMDOS_STACK_DRIVER_FRAMES
+    assert len(bc.APART_AT_THE_END) == 23
+
+
+# GEMDOS's own stack's dead frames: the pre-init MASK's field (`preinit_snapshot.MASK`, "dead frames of GEMDOS's own stack")
+GEMDOS_STACK_DEAD_FRAMES = (bc.preinit_snapshot.GEMDOS_STACK_FLOOR, bc.preinit_snapshot.GEMDOS_STACK_TOP)
+OURS_ALONE_STORES = frozenset({0x14a9, 0x14aa})     # the two of the twelve inside our deeper store: the ROM's B4 stores neither
+
+
+def test_our_driver_s_gemdos_stack_frames_lie_in_its_masked_field_where_the_rom_s_b4_stores_too(cold_pair):
+    """R-P5a-1 "Widen to 23, named": the twelve bytes our lower driver leaves apart on GEMDOS's stack at gem_entry lie in
+    the pre-init mask's field of GEMDOS's dead frames; the ROM's own B4 run stores every one of them but the two inside the
+    four bytes ours stores deeper (`OUR_DRIVER_S_DEEPER_STORE`, stored by ours alone) — frames, not state."""
+    rom, ours = cold_pair
+    field = next((base, base + size) for base, size, why in bc.preinit_snapshot.MASK if "GEMDOS's own stack" in why)
+    assert field == GEMDOS_STACK_DEAD_FRAMES
+    lo, hi = field
+    assert all(lo <= at < hi for at in bc.GEMDOS_STACK_DRIVER_FRAMES | bc.OUR_DRIVER_S_DEEPER_STORE)
+    floor, top = bc.B4_LAST_FLOPRD_FRAMES
+    assert min(bc.OUR_DRIVER_S_DEEPER_STORE) == floor and max(bc.GEMDOS_STACK_DRIVER_FRAMES) < top
+
+    def stored(step):
+        return {at for start, length in step.stored for at in range(start, start + length)}
+    assert bc.GEMDOS_STACK_DRIVER_FRAMES - bc.OUR_DRIVER_S_DEEPER_STORE <= stored(rom[-1])      # the ROM's frames
+    assert bc.GEMDOS_STACK_DRIVER_FRAMES & bc.OUR_DRIVER_S_DEEPER_STORE == OURS_ALONE_STORES     # ...ours alone stores these
+    assert stored(ours[-1]) - stored(rom[-1]) == bc.OUR_DRIVER_S_DEEPER_STORE == bc.STORED_APART[bc.B4]
+    assert not stored(rom[-1]) - stored(ours[-1])
+
+
+def _without(runs, addresses):
+    """`runs` (address, length) with the contiguous `addresses` cut out of them, every other byte kept."""
+    lo, hi = min(addresses), max(addresses) + 1
+    kept = []
+    for start, length in runs:
+        end = start + length
+        kept += [(start, length)] if end <= lo or start >= hi else []
+        kept += [(start, lo - start)] if start < lo < end else []
+        kept += [(hi, end - hi)] if start < hi < end else []
+    return tuple(kept)
+
+
+@pytest.mark.parametrize("change", ("the deeper store gone", "one more store", "a store the ROM's alone"))
+def test_the_deeper_store_is_named_exactly(cold_pair, change):
+    """R-P5a-1's negative of the stored set: the four bytes ours stores deeper missing (and nothing else: the ROM's
+    direction stays equal, so only the deeper-store check can name it — review RP5a's REQ-2), one more of ours, or one of
+    the ROM's ours does not make — each named."""
+    rom, ours = cold_pair
+    one, other = rom[-1], ours[-1]
+    if change == "the deeper store gone":
+        other = other._replace(stored=_without(other.stored, bc.OUR_DRIVER_S_DEEPER_STORE))
+    elif change == "one more store":
+        other = other._replace(stored=(*other.stored, (min(bc.OUR_DRIVER_S_DEEPER_STORE) - 1, 1)))
+    else:
+        one = one._replace(stored=(*one.stored, (0xe000, 1)))
+    assert bc.differences(one, other, COLD_CHAIN) == ["stored: the addresses stored outside the residue differ"]
+
+
+@pytest.mark.parametrize("at", sorted(set(range(*bc.B4_LAST_FLOPRD_FRAMES)) - bc.GEMDOS_STACK_DRIVER_FRAMES)[:3])
+def test_a_further_byte_of_our_driver_s_gemdos_stack_frames_moving_is_seen(cold_pair, at):
+    """R-P5a-1's negative: a byte of the same frames outside the twelve, made apart, still reds — the set is exact."""
+    rom, ours = cold_pair
+    step = _changed_ram(ours[-1], at, rom[-1].machine.ram[at] ^ 0xff)
+    assert bc.differences(rom[-1], step, COLD_CHAIN) == [f"ram, first at {at:#x}"]
+
+
+def test_every_chain_hands_b4_the_carry_b4_s_battery_starts_from():
+    """R-D4-2 at `$fc047a`: the ROM's own B6 leaves ONE carry (port A, the chip) on all eight chains — the one B4's own battery
+    is handed from the mid-boot capture (`boot_launch.carry_at_the_mid_boot`)."""
+    assert {bc.the_rom_s(chain)[bc.STEP_NAMES.index(bc.B6)].carry for chain in bc.SLICES.values()} == {
+        boot_launch.carry_at_the_mid_boot()}
 
 
 @pytest.mark.parametrize("at", sorted(set(range(*bc.B6_LAST_PROBE_FRAMES)) - bc.OUR_DRIVER_S_DEAD_FRAMES)[:3])
@@ -467,16 +564,18 @@ def test_a_foreign_xbios_vector_is_still_refused(what):
 # Each chain's OWN cycles, pinned EXACTLY: (ours, the ROM's) — its only surface is cost. Ours +16 in every chain since the
 # floppy ran through the FDC model (ruling D4): B6's two `lea`s that call hdv_boot at the ROM's depth. Since D4 P4a (R-P4-3)
 # B6 runs OUR lower floppy driver: since P4b its probes AND hdv_boot's Floprd — ours +30,780 over D4's (the driver's three
-# calls, in place), the ROM's +31,152 (its own three: its whole driver, none of it run by ours, `bc.replaced_calls`).
+# calls, in place), the ROM's +31,152 (its own three: its whole driver, none of it run by ours, `bc.replaced_calls`). Since D4
+# P5a (R-P5-1) B4 runs our lower driver too — its two Floprds (the log-in's boot sector, the root): ours +24,652, the ROM's
+# +24,576 (its whole driver, `bc.replaced_calls`), in every chain.
 OWN = {
-    "boot chain, WARM": (2568988, 2595044),
-    "boot chain, COLD": (5487064, 5513120),
-    "boot chain, WARM, mono, ST low, blitter ABSENT": (2569048, 2595100),
-    "boot chain, WARM, colour, ST low, blitter PRESENT": (2568988, 2595044),
-    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2569018, 2595070),
-    "boot chain, COLD, mono, ST low, blitter ABSENT": (5487124, 5513176),
-    "boot chain, COLD, colour, ST low, blitter PRESENT": (5487064, 5513120),
-    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5487094, 5513146),
+    "boot chain, WARM": (2593640, 2619620),
+    "boot chain, COLD": (5511716, 5537696),
+    "boot chain, WARM, mono, ST low, blitter ABSENT": (2593700, 2619676),
+    "boot chain, WARM, colour, ST low, blitter PRESENT": (2593640, 2619620),
+    "boot chain, WARM, colour, ST medium, blitter ABSENT": (2593670, 2619646),
+    "boot chain, COLD, mono, ST low, blitter ABSENT": (5511776, 5537752),
+    "boot chain, COLD, colour, ST low, blitter PRESENT": (5511716, 5537696),
+    "boot chain, COLD, colour, ST medium, blitter ABSENT": (5511746, 5537722),
 }
 
 
@@ -510,28 +609,28 @@ def test_the_rest_beside_each_shore_s_own_is_held_equal_step_by_step(monkeypatch
 
 
 # ---- THE CARRIES (R-D4-2), every boundary, from each shore's own runs ----------------------------------------------------------
-PORT_A_AT = {bc.HEAD: 0x07, bc.B2: 0x07, bc.B3: 0x27, bc.B5: 0x27, bc.B6: 0x25, bc.B4: 0x25}
+PORT_A_AT = {bc.HEAD: 0x07, bc.B2: 0x07, bc.B3: 0x27, bc.B5: 0x27, bc.B6: 0x25, bc.B4: 0x24}
 
 
 def test_port_a_and_the_chip_are_carried_at_every_boundary(pair):
     """PSG port A: the head's store `$07`, through B3's own RMWs (DTR, RTS low, the strobe high: `$27`), and B6's last
-    select (drive A:, side 0: `$25`) — on both shores. THE CHIP: MR's (None) until B6 runs the floppy, then the chip B6
-    left, through B4 (answered at the upper driver's entries: no FDC access)."""
+    select (drive A:, side 0: `$25`), and B4's last (`$24`: side 1, the root's sector, D4 P5a) — on both shores. THE CHIP:
+    MR's (None) until B6 runs the floppy, then the chip B6 left, then the chip B4 left (through the FDC model since P5a)."""
     _chain, rom, ours = pair
     for steps in (rom, ours):
         assert {step.name: step.carry.port_a for step in steps} == PORT_A_AT
         assert [step.carry.chip for step in steps[:bc.STEP_NAMES.index(bc.B6)]] == [None] * bc.STEP_NAMES.index(bc.B6)
-        assert _b6(steps).carry.chip == _b6(steps).ledgers["fdc_chip"] == steps[-1].carry.chip is not None
+        assert _b6(steps).carry.chip == _b6(steps).ledgers["fdc_chip"] is not None
+        assert steps[-1].carry.chip == steps[-1].ledgers["fdc_chip"] not in (None, _b6(steps).carry.chip)
 
 
-def test_no_step_but_b6_touches_the_fdc(pair):
-    """WHY THE CHIP AT `$fc0452` IS MR's AND B6's CHIP REACHES gem_entry UNCHANGED: the head, B2, B3, B5 and B4 reach no
-    register of the DMA block — no store, no declared read, no modelled read — on either shore; and none but B6 arms the
-    model."""
+def test_no_step_but_b6_and_b4_touches_the_fdc(pair):
+    """WHY THE CHIP AT `$fc0452` IS MR's: the head, B2, B3 and B5 reach no register of the DMA block — no store, no declared
+    read, no modelled read — on either shore; and none but B6 and B4 (since D4 P5a) arms the model."""
     _chain, rom, ours = pair
     for steps in (rom, ours):
         for step in steps:
-            if step.name == bc.B6:
+            if step.name in bc.FLOPPY_STEPS:
                 continue
             ledgers = step.ledgers
             addresses = [entry[0] for name in ("hardware_writes", "io_reads", "hardware_reads") for entry in ledgers[name]]
@@ -549,11 +648,11 @@ def test_b3_in_the_chain_reads_the_carried_port_a_not_its_battery_s_seed(cold_pa
         assert first_read[2] == PORT_A_AT[bc.HEAD]
 
 
-def test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6(pair):
+def test_the_text_under_our_floppy_body_runs_on_no_step_but_our_b6_and_b4(pair):
     """THE SPAN OUR LOWER DRIVER'S BODY IS LAID OVER IS FREE (D4 P4b, widened by R-P4c-1: the VDI's GDP text,
     `[$fcc400, $fcd400)`): the ROM's
-    own boot spends no cycle there in any step, and ours none but in B6, where our driver lies there."""
+    own boot spends no cycle there in any step, and ours none but in B6 and B4 (since D4 P5a), where our driver lies there."""
     _chain, rom, ours = pair
     assert all(step.spent["our floppy"] == 0 for step in rom)
-    assert all(step.spent["our floppy"] == 0 for step in ours if step.name != bc.B6)
-    assert ours[bc.STEP_NAMES.index(bc.B6)].spent["our floppy"] > 0
+    assert all(step.spent["our floppy"] == 0 for step in ours if step.name not in bc.FLOPPY_STEPS)
+    assert all(ours[bc.STEP_NAMES.index(name)].spent["our floppy"] > 0 for name in bc.FLOPPY_STEPS)

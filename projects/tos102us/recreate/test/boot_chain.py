@@ -19,7 +19,8 @@ THE STEPS (`STEPS`), each the slice's own staging and declarations, the next sta
   B3    [$fc03b6, $fc03e0)   its two legs (the 6850's shared address, B3's interim call), B3's declarations
   B5    [$fc03e0, $fc0452)   the arm's declarations; the mono arm's poll answered (R-B5-1)
   B6    [$fc0452, $fc047a)   the four waits answered, the three observed entries watched for the ledger and not for the price
-  B4    [$fc047a, gem_entry) the launch on the blank disk through `boot_launch.run` (the floppy model, the clock answered)
+  B4    [$fc047a, gem_entry) the launch on the blank disk through `boot_launch.run` — the floppy through the FDC model, B6's
+                             carry handed in, ours laying our lower driver beside the launch (D4 P5a); the clock answered
 At each boundary OUR run must arrive at the ROM's next slice start (the head: at its own end, the ROM's by offset) and
 is ENTERED at our next product's entry (`steering`) — read off the products (`link_check`), never typed twice.
 
@@ -30,9 +31,9 @@ mappings — the linked vectors (B2's and B3's `LINKED`), at gem_entry the launc
 RETURN ADDRESSES INTO OUR CODE that GEMDOS's and the AUTO runner's dead frames keep INSIDE the pre-init mask
 (`our_returns`) — outside each boundary's derived stack residue (B2's, B3's, B6's dead classes; the BIOS stack's
 dead frames TIGHTENED for the chain: `FRAMES_APART_FROM`, and at gem_entry the exact `APART_AT_THE_END`); every ordered ledger of
-every step; B6's answers; B4's GEMDOS, floppy, clock and blank ledgers. THE END SURFACES (COLD): at `$fc047a` the mid-boot
-capture apart in exactly B6's D1 class (D4's gone: B6 runs the floppy through the FDC model); at gem_entry the
-pre-init capture apart in its own exact set (`END_PREINIT`).
+every step; B6's answers; B4's GEMDOS, FDC, clock and blank ledgers and the carry it leaves. THE END SURFACES (COLD): at
+`$fc047a` the mid-boot capture apart in exactly B6's D1 class (D4's gone: B6 runs the floppy through the FDC model); at
+gem_entry the pre-init capture apart in D1's memctrl alone (D4 P5a: B4 runs the floppy through the model too).
 
 THE HAND-OFF NO SLICE SEES: B2 and B3 store our linked entries in the vectors, and the ROM's own code after them enters
 them — the BIOS/XBIOS traps GEMDOS makes, the horizontal blanks the launch takes. Counted (`trap_calls`, `Step.spent`), on ours in our
@@ -325,7 +326,7 @@ its `instructions` and `cycles`, the RAM it `stored` (address runs), its ordered
 step (R-D4-2: PSG port A and the FDC/DMA chip, `boot_late.Carry`). B6's ledgers hold the FDC model's ledger and the chip it
 left (`fdc_events`, `fdc_chip`): compared exactly at its boundary."""
 SLICE_LEDGERS = boot_hwinit.LEDGERS
-LAUNCH_LEDGERS = ("io_reads", "hardware_reads", "hardware_writes", "gemdos", "calls", "blanks", "clock", "disk")
+LAUNCH_LEDGERS = ("io_reads", "hardware_reads", "hardware_writes", "gemdos", "fdc_events", "fdc_chip", "blanks", "clock")
 
 
 def _joined_step(name, legs, spent, carry, answers=()):
@@ -386,14 +387,15 @@ def _answered_step(name, machine, until, laid, mono, carry, floppy=None, **decla
     return _joined_step(name, legs, spent, left if floppy else _carried_through(legs, carry), ledger)
 
 
-def _launch_step(machine, laid, carry):
-    """B4 through `boot_launch.run` — the floppy answered at the upper driver's entries there (R-D4-3: `aes_boot.Floppy`
-    stays everywhere but B6): the FDC model is not armed, so the chip passes through as B6 left it."""
-    launch, _elsewhere = boot_launch.run(machine, boot_launch.disk(DISK).image, END, (), laid=laid)
+def _launch_step(machine, laid, carry, chain):
+    """B4 through `boot_launch.run` — THE FLOPPY THROUGH THE FDC MODEL (D4 P5a, R-P5-1: `aes_boot.Floppy` retired there),
+    B6's `carry` handed in, GPIP's other bits the chain's B5 arm's; the carry it leaves (port A, the chip) its own."""
+    _drives, gpip = _floppy(chain)
+    launch, _elsewhere = boot_launch.run(machine, boot_launch.disk(DISK).image, END, (), laid=laid, carry=carry, gpip=gpip)
     spent = _read()
     left = machine._replace(ram=launch.ram, registers=launch.registers)
     return Step(B4, left, launch.stop, launch.instructions, launch.cycles, launch.stored,
-                {ledger: getattr(launch, ledger) for ledger in LAUNCH_LEDGERS}, spent, (), carry)
+                {ledger: getattr(launch, ledger) for ledger in LAUNCH_LEDGERS}, spent, (), boot_launch.carry_of(launch))
 
 
 def _labelled(machine, chain):
@@ -462,7 +464,7 @@ def the_rom_s(chain, with_the_blob=True):
     steps, carry = _rom_to_interrupts_opened(chain, with_the_blob)
     steps = list(steps)
     steps.append(_answered_step(B6, steps[-1].machine, boot.MIDBOOT, None, False, carry, floppy=_floppy(chain)))
-    steps.append(_launch_step(steps[-1].machine, None, steps[-1].carry))
+    steps.append(_launch_step(steps[-1].machine, None, steps[-1].carry, chain))
     return tuple(steps)
 
 
@@ -493,7 +495,7 @@ def ours(chain, steering_map=None):
     steps.append(_answered_step(B6, machine, boot.MIDBOOT, boot_late.laid_with(floppy=True), False, steps[-1].carry,
                                 floppy=_floppy(chain)))
     machine = steered(steps[-1].machine, boot.MIDBOOT, steering_map)
-    steps.append(_launch_step(machine, boot_launch.overlay(), steps[-1].carry))
+    steps.append(_launch_step(machine, boot_launch.our_pieces(), steps[-1].carry, chain))
     _vet_who_ran(machine.label, steps)
     return tuple(steps)
 
@@ -512,8 +514,9 @@ def rom_own(step):
 
 # THE PRODUCTS EACH STEP LAYS beside the blob: an overlay's span is the ROM's own text in every other step (the head's lies
 # over GEMDOS's file system, which the launch runs: 1,782 cycles — D10's first item owed; a floppy jump over the ROM's
-# own driver), so it is ours in its own step only. B6 lays the late slice and our lower floppy driver (R-P4-3).
-OVERLAY_OF = {HEAD: ("head",), B2: (), B3: (), B5: ("display",), B6: ("late", *FLOPPY_PRODUCTS), B4: ("launch",)}
+# own driver), so it is ours in its own step only. B6 lays the late slice and our lower floppy driver (R-P4-3); B4 the
+# launch and our lower floppy driver (D4 P5a, R-P5-1).
+OVERLAY_OF = {HEAD: ("head",), B2: (), B3: (), B5: ("display",), B6: ("late", *FLOPPY_PRODUCTS), B4: ("launch", *FLOPPY_PRODUCTS)}
 
 
 def our_own(step):
@@ -521,12 +524,16 @@ def our_own(step):
     return step.spent["our blob"] + sum(step.spent[f"our {overlay}"] for overlay in OVERLAY_OF[step.name])
 
 
+FLOPPY_STEPS = (B6, B4)                 # the steps that run our lower floppy driver (B6 since D4 P4a, B4 since P5a)
+
+
 def replaced_calls(rom_step, our_step):
-    """THE ROM'S OWN CYCLES IN THE DRIVER CALLS OURS REPLACES (B6's; 0 in any other step): the ROM's whole lower driver on
-    its shore less the driver text ours still runs (Floprd's: the same calls on both shores) — read off each plain run.
+    """THE ROM'S OWN CYCLES IN THE DRIVER CALLS OURS REPLACES (B6's and B4's; 0 in any other step): the ROM's whole lower
+    driver on its shore less the driver text ours still runs (none since P4d: no boot run takes the VBL) — read off each
+    plain run.
     It depends on our driver never running the ROM's driver text on its own behalf: every ported entry's arrival rows hold
     the whole call in our spans (`boot_floppy.priced`, review RP4a's N6)."""
-    if rom_step.name != B6:
+    if rom_step.name not in FLOPPY_STEPS:
         return 0
     return rom_step.spent["the ROM's lower driver"] - our_step.spent["the ROM's lower driver ours still runs"]
 
@@ -577,7 +584,45 @@ FRAMES_APART_FROM = 0x74ff
 B3_FRAMES_LEFT = frozenset({0x74ff, 0x7500, 0x7501})
 B6_LAST_PROBE_FRAMES = (0x7508, 0x751c)
 OUR_DRIVER_S_DEAD_FRAMES = frozenset({0x7508, 0x7509, 0x750d, 0x750e, 0x750f, 0x7512, 0x7513, 0x7515})
-APART_AT_THE_END = B3_FRAMES_LEFT | OUR_DRIVER_S_DEAD_FRAMES
+# AND, SINCE D4 P5a (ruling R-P5a-1 "Widen to 23, named", 2026-11-04): TWELVE MORE — OUR LOWER DRIVER'S DEAD FRAMES ON
+# GEMDOS'S OWN STACK from B4's last Floprd (GEMDOS's Rwabs -> floprw `$fc1478` -> Floprd), inside the pre-init MASK's field
+# `[$1455, $16ce)` and stored over by nothing after it. Each byte, the ROM's | ours (measured at gem_entry, all 8 chains):
+GEMDOS_STACK_DRIVER_FRAMES = frozenset({  # by word, the ROM's | ours (`m2` of P5a's hand-back)
+    0x14a9,     # $14a8: $0000 | $00a4 — below the ROM's deepest frame (it stores none there); ours: its saved word
+    0x14aa,     # $14aa: $0000 | $2300 — ...and ours its saved SR, $2300 (the 4 bytes ours stores deeper)
+    0x14ac,     # $14ac: $ffff | $00a4 — the ROM's: a word its frame saves ($ffff, a count's residue); ours: a saved word
+    0x14ad,
+    0x14b1,     # $14b0: $00a4 $2300 | $00fc $c72c — the ROM's: its settle's saved word and SR; ours: a RETURN into our
+    0x14b2,     #   body, $fcc72c
+    0x14b3,
+    0x14b6,     # $14b6: $1df0 | $cbc2 — the low word of a return: the ROM's into its own driver ($fc1df0, the type-I
+    0x14b7,     #   issue and wait), ours into our body ($fccbc2)
+    0x14b9,     # $14b8: $00fc $1cf2 | $0000 $0000 — the ROM's: a return into its own driver ($fc1cf2, the exit); ours:
+    0x14ba,     #   no frame of ours reaches that high
+    0x14bb,
+})
+APART_AT_THE_END = B3_FRAMES_LEFT | OUR_DRIVER_S_DEAD_FRAMES | GEMDOS_STACK_DRIVER_FRAMES
+# THE VALUES TOO, NOT ONLY WHERE (review RP5a's REQ-1): every byte of the 23, `(the ROM's, ours)` — ONE set on all eight
+# chains, measured (`scratchpad/boot/FDC/p5/p5a/fix/f1_values.log`) and held exactly by `differences`: a byte apart with a
+# third value, or a byte of the ROM's frames moved, is named like a byte made equal.
+VALUES_AT_THE_END = {
+    # B3's frames' leftovers
+    0x74ff: (0x00, 0x06), 0x7500: (0x00, 0x97), 0x7501: (0x00, 0x9c),
+    # our driver's dead frames from B6's last probe (R-P4-5)
+    0x7508: (0xff, 0x00), 0x7509: (0xff, 0xe4), 0x750d: (0xe4, 0xfc), 0x750e: (0x23, 0xc7), 0x750f: (0x00, 0x2c),
+    0x7512: (0x1d, 0xca), 0x7513: (0xf0, 0x30), 0x7515: (0xfc, 0x00),
+    # our driver's dead frames on GEMDOS's stack from B4's last Floprd (R-P5a-1)
+    0x14a9: (0x00, 0xa4), 0x14aa: (0x00, 0x23), 0x14ac: (0xff, 0x00), 0x14ad: (0xff, 0xa4), 0x14b1: (0xa4, 0xfc),
+    0x14b2: (0x23, 0xc7), 0x14b3: (0x00, 0x2c), 0x14b6: (0x1d, 0xcb), 0x14b7: (0xf0, 0xc2), 0x14b9: (0xfc, 0x00),
+    0x14ba: (0x1c, 0x00), 0x14bb: (0xf2, 0x00),
+}
+assert set(VALUES_AT_THE_END) == APART_AT_THE_END, "the values pin names exactly the 23 bytes"
+# The frame span of B4's last Floprd on GEMDOS's stack: our deeper store at its floor, the ROM's last return at its top.
+B4_LAST_FLOPRD_FRAMES = (0x14a8, 0x14be)
+# ...AND THE ONE STORE OURS MAKES THAT THE ROM'S DOES NOT (R-P5a-1, named): our Floprd's path from floprw stands four bytes
+# deeper on GEMDOS's stack than the ROM's — `$14a8..$14ab`, exactly (the stored-set comparison at gem_entry).
+OUR_DRIVER_S_DEEPER_STORE = frozenset(range(0x14a8, 0x14ac))
+STORED_APART = {B4: OUR_DRIVER_S_DEEPER_STORE}     # the addresses OURS stores and the ROM's does not, EXACTLY, at a step's end
 
 
 @functools.cache
@@ -594,7 +639,7 @@ def residue(chain, name):
     return FRAMES_APART_FROM, boot_late.STACK_RESIDUE[1]
 
 
-APART = {B4: APART_AT_THE_END}           # the bytes a step's end is apart in, EXACTLY (set equality), outside its residue
+APART = {B4: VALUES_AT_THE_END}          # the bytes a step's end is apart in and their two values, EXACTLY, outside its residue
 
 
 LINKED = {**boot_sysvars.LINKED, **boot_hwinit.LINKED}
@@ -698,10 +743,12 @@ def differences(rom, mine, chain):
     span = residue(chain, mine.name)
     rom_ram, our_ram = _outside(rom.machine.ram, span), _outside(ram_held(mine), span)
     if rom_ram != our_ram or APART.get(mine.name):
-        apart = {at for at, (one, other) in enumerate(zip(rom_ram, our_ram)) if one != other}
-        if apart != APART.get(mine.name, frozenset()):
-            found.append(f"ram, first at {min(apart ^ APART.get(mine.name, frozenset())):#x}")
-    if _stored_outside(rom, span) != _stored_outside(mine, span):
+        apart = {at: (one, other) for at, (one, other) in enumerate(zip(rom_ram, our_ram)) if one != other}
+        expected = APART.get(mine.name, {})
+        if apart != expected:
+            found.append(f"ram, first at {min(set(apart.items()) ^ set(expected.items()))[0]:#x}")
+    theirs_stored, our_stored = _stored_outside(rom, span), _stored_outside(mine, span)
+    if theirs_stored - our_stored or our_stored - theirs_stored != STORED_APART.get(mine.name, frozenset()):
         found.append("stored: the addresses stored outside the residue differ")
     for ledger in rom.ledgers:
         if rom.ledgers[ledger] != mine.ledgers[ledger]:
@@ -714,13 +761,12 @@ def differences(rom, mine, chain):
 
 
 # ---- THE END SURFACES (COLD: the captures are a power-on's) ------------------------------------------------------------------
-# AT gem_entry against the pre-init capture of the blank disk: D1's memctrl, and the lower floppy driver's own state the
-# LAUNCH never lays — B6 now leaves it the capture's (the driver run through the FDC model, R-D4-3), but B4 answers the
-# floppy at the upper driver's entries (`aes_boot.Floppy`, which R-D4-3 keeps there), so the reads Hatari's launch made
-# through the lower driver (its request, its save area, its records) are on no shore: this exact set, measured.
+# AT gem_entry against the pre-init capture of the blank disk: D1's memctrl ALONE. Until D4 P5a the lower floppy driver's
+# own state was apart there too (23 bytes: B4 answered the floppy at the upper driver's entries, so the reads Hatari's
+# launch made through the lower driver were on no shore); since P5a B4 runs the floppy through the FDC model on both
+# shores (ruling R-P5-1) and those bytes are the capture's: the set is empty, kept by name for its history.
 END_PREINIT_MEMCTRL = (boot_late.MEMCTRL_COPIES[0],)
-END_PREINIT_LOWER_DRIVER = (0xa0d, 0xa0f, 0xa14, 0xa15, 0xa2a, 0xa2b, 0xa2e, 0xa2f, 0xa31, 0xa33, 0xa35, 0xa37, 0xa39,
-                            0xa3b, 0xa3d, 0xa3e, 0xa3f, 0xa42, 0xa43, 0xa46, 0xa47, 0xa4a, 0xa4b)
+END_PREINIT_LOWER_DRIVER = ()        # D4 P5a: B4 runs the floppy through the model too — the 23 bytes are the capture's
 
 
 def against_the_midboot(step, capture, ours_side):
