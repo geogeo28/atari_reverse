@@ -71,10 +71,9 @@ STACK_DEAD_BYTES = preinit_snapshot.STACK_DEAD_BYTES
 MASK = (
     (0x000462, 0x008, "_vbclock and _frclock: the vertical blanks counted"),
     (0x0004ba, 0x004, "_hz_200: the 200 Hz ticks counted"),
-    # drive A:'s write-protect latch held, as the pre-init mask holds it (R-P5a-2: the ROM's Getbpb reads it at $fc1156)
-    (preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[0],
-     preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[1] - preinit_snapshot.FLOPPY_VBL_WORDS_MASKED[0],
-     "the floppy's vertical-blank service's own words but drive A:'s latch ($fc1bc4: drive B:'s latch, the motor)"),
+    # drive A:'s write-protect latch and seen byte held, as the pre-init mask holds them (R-P5a-2: the ROM's Getbpb reads
+    # the latch at $fc1156; R-P5b-1: its Mediach the seen byte at $fc11aa)
+    *preinit_snapshot.FLOPPY_VBL_FIELDS,
     (0x000e88, 0x002, "the timer-C divider: which of its four states the 200 Hz tick left it in"),
     (preinit_snapshot.GEMDOS_STACK_FLOOR, preinit_snapshot.GEMDOS_STACK_TOP - preinit_snapshot.GEMDOS_STACK_FLOOR,
      "dead frames of GEMDOS's own stack, to its top at $16ce (`movea.l #$16ce,sp` at every `trap #1`)"),

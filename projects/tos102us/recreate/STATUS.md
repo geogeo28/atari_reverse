@@ -220,7 +220,10 @@ MAYBE). B0's rule "the capture's masked bytes are read by no run to gem_entry" s
 all six captures; held by `test_every_capture_holds_drive_a_s_latch_clear`. The negatives: a capture with the latch
 apart is caught by `--twice`'s verdict on both masks, and the launch with the latch set runs another way (+3
 instructions on the blank disk). All six captures were re-taken under the new tool keys, and `make midboot-twice
-preinit-twice` is identical outside the narrowed masks on all six. THE TWO CASES ON A CASE'S OWN POKES
+preinit-twice` is identical outside the narrowed masks on all six. DRIVE A:'S WRITE-PROTECT-SEEN BYTE `$9fa` IS HELD TOO
+(D4 P5b, ruling R-P5b-1 "Unmask $9fa too", 2026-11-05): every AES boot runs the ROM's Mediach from the pre-init capture,
+which reads it (`$fc11aa tst.b 0(a0,d7.w)`); the masks' field is now exactly `$9f9` and `[$9fb,$a08)`
+(`preinit_snapshot.FLOPPY_VBL_FIELDS`, one source), held both ways; `$00` in all six captures. THE TWO CASES ON A CASE'S OWN POKES
 (R-B4-3): the environment's letter from `_bootdev`'s HIGH byte (a ROM bug, kept: `$0001` 'A', `$0100` 'B') and the
 runner with `_drvbits` 0 (no GEMDOS call) — nothing else poked, but THE TWIN'S environment case's own call frame
 ("A CASE'S POKES: the call's frame": the return address and the image base laid under the stack top for
@@ -8798,8 +8801,8 @@ logged in `scratchpad/gatespeed/FIX/sweep.log`, restored by copy and `cmp`):
 
 ## Suite
 
-`make gates` (BOOT D4 P5a, the orchestrator's from-empty gate, build/ and every `__pycache__` moved aside; `make guarded`
-collects the same ids): **35,876 passed**, 8 skipped (the `RUN_SLOW`-gated
+`make gates` (BOOT D4 P5b, the orchestrator's from-empty gate, build/ and every `__pycache__` moved aside; `make guarded`
+collects the same ids): **35,918 passed**, 8 skipped (the `RUN_SLOW`-gated
 placement search; Crawio's read arm, a parameter its own case drives; and, since slice C, the six `RUN_SLOW` chunks
 of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 failed.
 - BOOT D4 P4a, THE FLOPPY'S LOWER DRIVER's PROBE IN C (2026-11-02, the user's rulings: R-P4-1 "Yes, staged calls" (P4b),
@@ -8905,6 +8908,64 @@ of the dispatcher's-own-calls rule over every other row), **0 xfailed**, 0 faile
   BOOT; tier3.txt: no line added (9,587). KEPT, not retired by P5a: the Getbpb latch limit (2026-10-29, the AES device
   battery: the AES runs still answer the floppy until P5b / P5c), W6-R9's THE_FORMATTER label and W6-R8's copy refusal,
   each waiting for its slice (R-P5-4). The count above is the orchestrator's gate: 35,876.
+- BOOT D4 P5b, THE AES BOOTS THROUGH THE FDC MODEL (2026-11-04/05, the user's rulings: R-P5-1 "Sliced P5a→P5c" (the
+  ROM's driver on both shores in AES runs, decision 6a) and R-P5-2 "Launch on its own disk" (the per-disk carry at
+  gem_entry derived, never declared — now a kept derivation), 2026-11-03; R-P5b-1 "Unmask $9fa too", R-P5b-2 "Accept,
+  pinned by value", R-P5b-3 "Named rule: stamp = _hz_200" and R-P5b-4 "Accept, per-disk, by value", 2026-11-05):
+  `aes_boot.booted` no longer answers the floppy. Every boot `booted` makes — the ROM's, a takeover's, a door's, an
+  our-boot's — runs GEMDOS's Mediach / Rwabs as the ROM's upper driver down to the ROM's lower driver and the kit's FDC
+  model (the boot's disk in A: read-only, B: as the capture's), from THE CARRY its capture's own disk derives
+  (`boot_launch.carry_at_gem_entry`: the ROM's B4 launch on that disk from the mid-boot capture with B6's carry; one
+  carry, port A `$24` / chip `c47d…`, for the blank, accessory, seven-accessory and DESKTOP.INF disks, `$25` / `c47b…`
+  for the files disk; KEPT itself, by the mid-boot machine's content and the disk's, and an ARGUMENT of the kept
+  `_booted` — a boot already kept runs nothing, not even the launch, and is served under a held profile (review RP5b's
+  REQ-4, pinned over a private cache)). `Floppy` is built for its vets alone (the vectors, the record is the disk's).
+  `Boot` gains `fdc_events`, `fdc_chip` and `port_a`; `continued` carries the chip and port A (its floppy still
+  answered until P5c: its ledger empty). The five boots: idle, registers, screen, polls and blanks EQUAL to the
+  answered ones; instructions +162 (desk 593,055), +3,972 (INF), +4,161 (files), +8,565 (two accessories 733,796),
+  +26,370 (seven 1,035,365); every byte apart inside the driver's state `[$9f6,$a54)` ∪ GEMDOS's stack, each named.
+  HELD, ON ALL FIVE BOOTS (desk, two accessories, seven, DESKTOP.INF, files; review RP5b's REQ-1): each boot's FDC
+  ledger — one-sector Floprds `$17 $80 $13`, THE RECORDS READ DECODED from the DMA chip's stores (track, sector) and
+  the ledger (side) and held IN ORDER against the disk's layout (`aes_boot.records_read`: each loaded file's records,
+  then the root's first; review RP5b's REQ-3: HEAD's "the root and each accessory's first sector" restored), each DMA
+  where measured (GEMDOS's two buffers; the desk's `$010fb4` for DESKTOP.INF's first sector), no restore, no write;
+  the chip and port A each boot leaves; the FDC/DMA register stores BY VALUE (R-P5b-2: `$ff8604`/`$ff8606` words,
+  `$ff8609/b/d`, `aes_boot.fdc_register_stores`; nothing else joins the IKBD's byte in the boot's declared off-image
+  store set); both shores' ledgers, chips, port A and register stores equal and as pinned (our-boot, blank and
+  DESKTOP.INF); the model disarmed after every boot and launch. R-P5b-1: both capture masks narrowed by drive A:'s
+  write-protect-SEEN byte `$9fa` (the ROM's Mediach `tst.b` at `$fc11aa`) to exactly `{$9f9} ∪ [$9fb,$a08)`, `$00` in
+  all six captures (pinned both ways); all six re-taken, twice-identical. R-P5b-3: the noise test's inside rule gains
+  ONE named exception — after a disk read, drive A:'s last-access stamp `$9fc..$9ff` must equal that run's own
+  `_hz_200`, in the noised and the plain run — bounded both ways (the bytes below and above caught: review RP5b's
+  REQ-2). R-P5b-4: our-boot's first idle holds GEMDOS's stack per disk, {blank: 17, INF: 20} bytes apart, the three
+  new ones on the DESKTOP.INF disk by value (`$150e` 23|00, `$1512` 00|98, `$1513` 00|06) on both blobs. Negatives: a
+  wrong carry (the blank disk's on the files capture: the recalibrate arm, 14 commands for 9), a capture with `$9fa`
+  apart, an FDC store of another value, dropped or stray, an off-image store outside both sets, a read of the wrong
+  record with the same stores and two reads swapped, a stamp off its run's clock (noise carried / the plain run's /
+  the plain run's own stale), the exception hiding no other byte and absent on the desk, the frames' third value and
+  a byte made equal. The author's batteries are the hand-back's (`scratchpad/boot/FDC/p5/p5b/handback4.md`, which
+  supersedes handback1..3.md; each alone at -n 8 after `make derived`): test_aes_boot.py 582 (+1 watchdog timeout, a
+  lone worker's tier-3 import; green in the full suite), test_aes_ourboot.py 135, test_boot_launch.py 242,
+  test_aes_desk_ours.py 155, test_aes_lineftable.py 647, test_aes_devices.py 43 (untouched), test_boot_chain.py 144,
+  test_boot_harness.py 51, test_aes_boot_w4.py 104; the author's one full `make test` 35,918 passed, 8 skipped.
+  Mutation (`scratchpad/boot/FDC/p5/p5b/mut/`): the author's 25 (21 KILLED, M15 once its negative was added); review
+  RP5b's 16 (9 KILLED; R4, R8, R14, R15 real gaps); the fix pass (review RP5b: 0 BLOCKER, REQ-1..4 and NIT-1..6 all
+  fixed): 24 = the reviewer's 16 re-anchored + R8b / R14b (test_aes_ourboot alone) + 6 of the fix's own, 20 KILLED.
+  SURVIVING, each equivalent on today's data, UNPINNED BY NAME: the boot's FDC refusal ignored (no boot makes the model
+  refuse: P5a's `fdc_causes_ignored` class), drive A: lent writable (no boot writes), GPIP's other bits zero or flipped
+  (the driver tests bit 5 alone), drive B: absent (no boot selects B:), port A's seeded side bit flipped (the driver
+  selects drive and side before every command), the carry launch's clock flag (the clock touches neither the FDC nor
+  the PSG), the stamp exception keyed on any FDC event (no boot has events without a read). Prices: tier3.txt
+  byte-identical (9,587 lines, sha `f7e6497a…`), so no price moved: no AES row's priced run crosses a disk access
+  through the model (the priced runs are continued ones, still answered) — no KNOWN PRICING GAP row moved. KEPT, not
+  retired by P5b (P5c): the Getbpb latch limit, W6-R9's THE_FORMATTER label and W6-R8's copy refusal text; and THREE
+  BOOTS FROM A PRE-INIT CAPTURE THAT STILL ANSWER THE FLOPPY at the driver's entries, both shores alike (no false
+  green), now apart from a `booted` machine in the stamp and GEMDOS's dead frames: `aes_stack._door_run` (the
+  accessory capture), `aes_stack`'s start-up run (the W6-R4 stack gate measures answered boots), and
+  `aes_ourboot.watched_over` for passes with no answer (review RP5b's NIT-3). THE ORCHESTRATOR'S FROM-EMPTY GATE caught what every warm
+  run missed: the snapshot's vet boots the desk, and the boot's derived carry reads the mid-boot capture and every product
+  the COLD chain lays, none yet built from empty (three refusals, one product each). The Makefile's `CARRY_READS` orders
+  them before the vet and `derived`, order-only: no capture key moved. The count above is the orchestrator's gate: 35,918.
 
 - BOOT D4, THE FLOPPY THROUGH THE KIT'S FDC/DMA MODEL (2026-11-01, rulings R-D4-1..4): P2 80fc801 (the kit; tos102us
   35,287 unchanged from empty) and P3 (this): +28 tests (test_boot_late.py, test_boot_chain.py, test_boot_sysvars.py);

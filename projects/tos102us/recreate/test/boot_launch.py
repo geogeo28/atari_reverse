@@ -61,6 +61,7 @@ import st_build
 
 import aes_boot
 import boot
+import derived
 import case
 import layouts
 import stopped_cpu
@@ -397,6 +398,18 @@ def _port_a_after(before):
     return before
 
 
+def fdc_seeds(carry, gpip):
+    """`aes_boot._Run`'s declarations for a run through the FDC model: port A as `carry` holds it, GPIP's other bits."""
+    return {"psg_seed": {addrs.PSG_PORT_A: carry.port_a}, "hw_seed": {addrs.MFP_GPIP: gpip}}
+
+
+def fdc_left(carry):
+    """WHAT THE RUN JUST MADE LEFT OF THE FLOPPY, read while the model is armed: `(its ordered ledger, the model's refusals,
+    the chip — None where refused — and PSG port A after it, from `carry`'s)`."""
+    events, causes = tuple(emu.fdc_events()), emu.fdc_causes()
+    return events, causes, None if causes else emu.fdc_state(), _port_a_after(carry.port_a)
+
+
 def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock_carry=True, carry=None, gpip=None):
     """THE SLICE RUN from `machine` (its PC, its whole register file) with `disk_image` in drive A: — THE FLOPPY THROUGH THE
     FDC MODEL, no driver entry answered (`carry`: port A and the chip it starts from, `carry_at_the_mid_boot()` by default;
@@ -412,9 +425,8 @@ def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock
     for piece in boot.pieces_of(laid) if laid else ():
         memory[piece.at:piece.at + len(piece.code)] = piece.code
     trap = gemdos_entry(machine.ram)
-    seeds = {"psg_seed": {addrs.PSG_PORT_A: carry.port_a}, "hw_seed": {addrs.MFP_GPIP: gpip}}
     the_run = AnsweringTheClock(memory, NO_ANSWER, budget, until=until, observing={trap: ("gemdos", _trap_read)},
-                                carry=clock_carry, seeds=seeds)
+                                carry=clock_carry, seeds=fdc_seeds(carry, gpip))
     drive_a, drive_b = bays(disk_image)
     driver = driver_spans(laid)
     aes_boot.aes_event.vet_the_profile_is_free("a boot launch run")
@@ -426,9 +438,7 @@ def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock
         registers = stopped_cpu.registers_now()
         writes, truncated = emu.bench_writes(memory)
         ledgers = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
-        fdc_events, causes = tuple(emu.fdc_events()), emu.fdc_causes()
-        chip = None if causes else emu.fdc_state()
-        port_a = _port_a_after(carry.port_a)
+        fdc_events, causes, chip, port_a = fdc_left(carry)
         own = sum(emu.prof_cycles(lo, hi) for lo, hi in spans)
         driver_cycles = sum(emu.prof_cycles(lo, hi) for lo, hi in driver)
         elsewhere = {span: emu.prof_cycles(*span) for span in (*never_run_on_ours(), *_spans_of(laid))}
@@ -448,6 +458,23 @@ def run(machine, disk_image, until, spans, laid=None, budget=LAUNCH_INSNS, clock
                     tuple(read for _name, read in the_run.observed), *ledgers, the_run.stored(writes),
                     the_run.clock_answers)
     return launch, elsewhere
+
+
+# ---- THE CARRY INTO A PRE-INIT CAPTURE (D4 P5b, ruling R-P5-2 "Launch on its own disk") ----------------------------------------
+# A capture stands at gem_entry with no FDC or PSG state of Hatari's in it, so what an AES boot through the model starts from is
+# DERIVED, never declared (R-D4-2): the ROM's own B4 launch ON THE CAPTURE'S OWN DISK, from the mid-boot capture with B6's
+# carry, to gem_entry. One carry for every capture would not do: the blank chain's chip on the files capture (whose driver
+# record says track 1) sends the boot's first read through the recalibrate arm, which Hatari never took (measured, P5 e7).
+# KEPT (review RP5b's REQ-4), by the mid-boot machine's content and the disk's: a booted machine already kept is then served
+# with its carry and RUNS NOTHING — the launch this makes is profiled, and a caller holding the profile is never refused
+# (nor its tallies reset) by a boot it asked beforehand.
+@derived.kept
+def carry_at_gem_entry(midboot, disk_image):
+    """THE CARRY AT gem_entry of a capture booted with `disk_image` (bytes), from the mid-boot machine `midboot`
+    (`boot.midboot_machine()`): `boot_late.Carry` the ROM's launch on that disk leaves."""
+    aes_boot.aes_event.vet_the_profile_is_free("the carry into a pre-init capture")
+    launch, _elsewhere = run(midboot, disk_image, GEM_ENTRY, ())
+    return carry_of(launch)
 
 
 def _vet_who_ran(label, elsewhere, ran, not_ran):

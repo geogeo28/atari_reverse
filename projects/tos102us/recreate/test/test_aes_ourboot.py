@@ -41,6 +41,7 @@ import aes_switch
 import case
 import isr
 import transcription
+import test_aes_boot as boot_pins
 import test_aes_stack as pinned
 from aes_boot import Refused
 
@@ -112,6 +113,10 @@ every_pass = pytest.mark.parametrize("label", THE_PASSES)
 THE_MACHINES = {"the blank disk": (aes_boot.our_desk_machine, aes_boot.desk_machine),
                 "the DESKTOP.INF disk": (aes_boot.our_inf_machine, aes_boot.inf_machine)}
 every_machine = pytest.mark.parametrize("disk", THE_MACHINES)
+# the FDC ledger's events of each disk's boot, measured (D4 P5b): the blank disk's reads nothing, DESKTOP.INF's three sectors
+INF = "the DESKTOP.INF disk"
+FDC_EVENTS_OF_A_BOOT = {"the blank disk": 0, INF: 48}
+assert FDC_EVENTS_OF_A_BOOT["the blank disk"] == 0 < FDC_EVENTS_OF_A_BOOT[INF], "no reading boot left in the equality"
 THE_ROM_ENTERS_DESKMAIN_AT = pinned.PD0_S[1] - pinned.THE_ROM_S_SP_IN_SH_MAIN - LONG_BYTES     # `$a364`
 
 
@@ -145,11 +150,17 @@ def test_labelled_staging_our_boot_reaches_deskmain_s_entry_and_its_first_idle_a
 @every_blob
 @every_machine
 def test_labelled_staging_our_boot_makes_the_calls_of_the_disk_the_rom_s_boot_makes(disk, blob):
-    """...and it is THE SAME BOOT to the device: every call of the floppy driver, in order, with the same arguments
-    and answers as the ROM's own boot of that disk; one horizontal blank taken; the disk left as it was."""
+    """...and it is THE SAME BOOT to the device: since D4 P5b the floppy runs through the kit's FDC model, the ROM's own
+    driver on both shores — the same FDC ledger, in order (as many events as pinned), the same chip and port A left, the
+    same FDC/DMA register stores AS PINNED BY VALUE (`test_aes_boot.FDC_REGISTER_STORES`: a defect both shores share is
+    caught there, review RP5b's REQ-1); one horizontal blank taken; the disk left as it was. (The blank disk's boot reads
+    nothing — 0 events, pinned so; the DESKTOP.INF disk's keeps the equality a reading boot's, review RP5b's NIT-5.)"""
     ours_boots, the_rom_boots = THE_MACHINES[disk]
     ours, the_rom_s = ours_boots(the_blob(blob)).boot, the_rom_boots().boot
-    assert ours.floppy == the_rom_s.floppy and len(ours.floppy) > 0
+    assert (ours.fdc_events, ours.fdc_chip, ours.port_a) == (the_rom_s.fdc_events, the_rom_s.fdc_chip, the_rom_s.port_a)
+    assert len(ours.fdc_events) == FDC_EVENTS_OF_A_BOOT[disk]
+    pinned_as = boot_pins.INF_DISK if disk == INF else boot_pins.BLANK_DISK
+    assert aes_boot.fdc_register_stores(ours.hardware_writes) == boot_pins.FDC_REGISTER_STORES[pinned_as]
     assert (ours.blanks, ours.disk, ours.io) == (the_rom_s.blanks, the_rom_s.disk, the_rom_s.io)
     assert ours.hardware_writes == the_rom_s.hardware_writes, "the same bytes to the IKBD, the same off-image stores"
 
@@ -976,15 +987,50 @@ def test_labelled_staging_the_machine_at_its_first_idle_differs_in_the_classes_a
     # since band 6 W3b (863 on the shipped blob and 734 on the bench one before it, on both disks, a bound then; 343 /
     # 326 before band 6's binding). PINNED at the flip (O5: the classes re-derived).
     within = {name: count for name, count in found.within.items() if name != ob.THE_BLOB}
-    assert within == AT_THE_FIRST_IDLE[blob], within
+    assert within == {**AT_THE_FIRST_IDLE[blob], ob.GEMDOS_S_STACK: GEMDOS_STACK_AT_THE_FIRST_IDLE[disk]}, within
+    assert the_driver_s_frames_held(disk, the_rom_s.ram, ours.ram) == []
+
+
+# GEMDOS'S OWN STACK AT THE FIRST IDLE, PER DISK (D4 P5b, ruling R-P5b-4 "Accept, per-disk, by value"): since the boot reads
+# its disk through the ROM's own driver on both shores, the DESKTOP.INF disk's read — made under OUR reader on our shore, at
+# another depth — leaves the driver's dead frames three more bytes apart in GEMDOS's stack, each held BY VALUE `{address:
+# (the ROM's, ours)}` on both blobs (measured: a byte `$23` on the ROM's shore, `$00` on ours, and a word `$0000` against
+# `$0698` — dead frames, laid at each shore's own depth); the blank disk's boot reads nothing, and there they are equal.
+THE_DRIVER_S_FRAMES_UNDER_OUR_READER = {0x150e: (0x23, 0x00), 0x1512: (0x00, 0x98), 0x1513: (0x00, 0x06)}
+GEMDOS_STACK_APART_ON_EITHER_DISK = 17
+GEMDOS_STACK_AT_THE_FIRST_IDLE = {
+    "the blank disk": GEMDOS_STACK_APART_ON_EITHER_DISK,
+    "the DESKTOP.INF disk": GEMDOS_STACK_APART_ON_EITHER_DISK + len(THE_DRIVER_S_FRAMES_UNDER_OUR_READER),
+}
+
+
+def the_driver_s_frames_held(disk, rom_ram, our_ram):
+    """The bytes of `THE_DRIVER_S_FRAMES_UNDER_OUR_READER` not as pinned: on the DESKTOP.INF disk each `(the ROM's, ours)`
+    exactly, on the blank disk each equal on both shores."""
+    pinned_apart = disk == "the DESKTOP.INF disk"
+    return [at for at, values in THE_DRIVER_S_FRAMES_UNDER_OUR_READER.items()
+            if ((rom_ram[at], our_ram[at]) != values if pinned_apart else rom_ram[at] != our_ram[at])]
+
+
+@pytest.mark.parametrize("negative", ("a third value", "a byte made equal"))
+def test_the_driver_s_frames_under_our_reader_are_held_by_value(negative):
+    """THE NEGATIVES (R-P5b-4): one of the three bytes holding a third value on our shore, or made the ROM's, is caught."""
+    disk = "the DESKTOP.INF disk"
+    ours_boots, the_rom_boots = THE_MACHINES[disk]
+    rom, ours = the_rom_boots().ram, bytearray(ours_boots(the_blob("the shipped blob")).ram)
+    assert the_driver_s_frames_held(disk, rom, bytes(ours)) == []
+    at, (theirs, mine) = next(iter(THE_DRIVER_S_FRAMES_UNDER_OUR_READER.items()))
+    ours[at] = theirs if negative == "a byte made equal" else (theirs | mine) ^ 0xff
+    assert the_driver_s_frames_held(disk, rom, bytes(ours)) == [at]
 
 
 # `{blob: {class: the bytes the two machines differ in there}}` at the first idle, on both disks alike (measured, W3b's flip)
+# — but GEMDOS's own stack, per disk since D4 P5b (`GEMDOS_STACK_AT_THE_FIRST_IDLE`, above)
 AT_THE_FIRST_IDLE = {
-    "the bench blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11, ob.CONDITION_CODES: 1,
+    "the bench blob": {ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11, ob.CONDITION_CODES: 1,
                        ob.DISPATCHER_STACK: 140, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 156,
                        ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 44, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
-    "the shipped blob": {ob.GEMDOS_S_STACK: 17, ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
+    "the shipped blob": {ob.THE_BIOS_S_STACK: 3, ob.TRAP_SAVE: 8, ob.BASEPAGE_SAVE: 11,
                          ob.DISPATCHER_STACK: 143, ob.PD0_CONTEXT: 28, ob.MANAGER_CONTEXT: 18, ob.MANAGER_STACK: 164,
                          ob.LINE_F_MASK: 2, ob.FIRST_STACK_RESIDUE: 52, ob.PD0_FRAMES: 572, ob.PD0_PARKED: 1},
 }   # (1,000 / 1,019 bytes all told; 734 / 863 before the flip, when the ROM's desk ran over our AES. The shipped blob's

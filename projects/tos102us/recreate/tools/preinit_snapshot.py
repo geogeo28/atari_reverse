@@ -127,14 +127,23 @@ STACK_DEAD_BYTES = 0x100                # how far below the last two the mask re
 # copies it to `$9fa`, and set it stores the drive's media-change mode MAYBE — and since P5a the boot's last slice runs
 # that Getbpb from the mid-boot capture, so a byte of it in the mask would be one a run reads. $00 in every capture
 # measured (drive A: holds an unprotected disk from power-on). The rest of the service's words stay masked.
+# AND DRIVE A:'S WRITE-PROTECT-SEEN BYTE (D4 P5b, ruling R-P5b-1 "Unmask $9fa too"): THE ROM'S MEDIACH READS IT —
+# `$fc11aa tst.b 0(a0,d7.w)` over `movea.l #$9fa,a0` — and since P5b every AES boot runs that Mediach from the pre-init
+# capture: set (with the last access 300 ticks old) it answers MAYBE and checkmedia reads the boot sector again (measured:
+# noise there moved every boot). $00 in every capture measured. Drive B:'s latch `$9f9` and its seen byte `$9fb` are phase
+# ($ff in a capture whose service polled an empty bay) and stay masked, with the rest of the service's words.
 DRIVE_A_WRITE_PROTECT_LATCH = 0x9f8
+DRIVE_A_WRITE_PROTECT_SEEN = 0x9fa      # (`include/boot/floppy.h`'s FLOPPY_WP_SEEN: drive A:'s byte of it)
 FLOPPY_VBL_WORDS_END = 0xa08            # ...and the service's words end where the driver's request begins ($a08: its drive)
-FLOPPY_VBL_WORDS_MASKED = (DRIVE_A_WRITE_PROTECT_LATCH + 1, FLOPPY_VBL_WORDS_END)    # the mask's field, both masks'
+FLOPPY_VBL_WORDS_MASKED = ((DRIVE_A_WRITE_PROTECT_LATCH + 1, DRIVE_A_WRITE_PROTECT_SEEN),      # the mask's two fields,
+                           (DRIVE_A_WRITE_PROTECT_SEEN + 1, FLOPPY_VBL_WORDS_END))             # both masks'
+FLOPPY_VBL_WORDS_WHY = ("the floppy's vertical-blank service's drive B: latch ($fc1bc4)",
+                        "the floppy's vertical-blank service's other words: drive B:'s seen byte, the access times, the motor")
+FLOPPY_VBL_FIELDS = tuple((lo, hi - lo, why) for (lo, hi), why in zip(FLOPPY_VBL_WORDS_MASKED, FLOPPY_VBL_WORDS_WHY))
 MASK = (
     (0x000462, 0x008, "_vbclock and _frclock: the vertical blanks counted"),
     (0x0004ba, 0x004, "_hz_200: the 200 Hz ticks counted"),
-    (FLOPPY_VBL_WORDS_MASKED[0], FLOPPY_VBL_WORDS_MASKED[1] - FLOPPY_VBL_WORDS_MASKED[0],
-     "the floppy's vertical-blank service's own words but drive A:'s latch ($fc1bc4: drive B:'s latch, the motor)"),
+    *FLOPPY_VBL_FIELDS,
     (0x000e88, 0x002, "the timer-C divider: which of its four states the 200 Hz tick left it in"),
     (GEMDOS_STACK_FLOOR, GEMDOS_STACK_TOP - GEMDOS_STACK_FLOOR,
      "dead frames of GEMDOS's own stack, to its top at $16ce (boot_snapshot's $1464 region, wider)"),

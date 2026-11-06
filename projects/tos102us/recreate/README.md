@@ -174,13 +174,14 @@ ever re-captures the snapshot or moves a kept derivation.
 capture's whole register file, in user mode, on the capture's stacks — to THE DESKTOP'S FIRST IDLE: the first arrival
 at idle's poll with nothing ready, nothing woken, no fork queued. GEMDOS, the BIOS, the XBIOS, the VDI, Line-A and
 Line-F are the image's own code through the image's own vectors. `desk_machine()` boots the blank disk's capture
-(592,893 instructions); `accessory_machine(first, second)` the accessory disk's (714,383 for the quiet pair), each
+(593,055 instructions since D4 P5b's floppy through the model); `accessory_machine(first, second)` the accessory disk's (733,796 for the quiet pair), each
 accessory in its mode. Kept derivations (`derived.kept`), keyed by the pre-init machine's CONTENT: 0.25 s / 0.59 s
 cold, 11 ms served.
 
 **What the oracle serves for that run — the device model** (a boot that meets anything else is refused by name):
 
-1. **The floppy, at the ROM driver's entries**: the addresses the machine's own `hdv_bpb` / `hdv_mediach` /
+1. **The floppy, at the ROM driver's entries — in a continued run** (a boot's own floppy runs through the FDC model,
+   the sub-item below): the addresses the machine's own `hdv_bpb` / `hdv_mediach` /
    `hdv_rw` hold and — for a drive's window, since band 5 wave 4 — XBIOS `Floprd` at its own routine (read out of
    the XBIOS dispatcher's table through the machine's own vector). The run is stopped there and answered: `Rwabs`
    and `Floprd` copy sectors between the caller's buffer and a 720 KB image held OFF the machine; `Mediach` says
@@ -196,6 +197,18 @@ cold, 11 ms served.
    the last record written at `$18da`). The disk served must be THE DISK THE CAPTURE BOOTED WITH — the driver's own
    record must hold its BPB, its geometry and its serial, or the boot is refused. The driver's private scratch and
    timers are not advanced; no hardware register is declared for any of it.
+   - **The floppy through the kit's FDC model** (D4 P5b, R-P5-1 decision 6a): a boot `booted` makes answers no driver
+     entry (three boots elsewhere still answer it, kept for P5c: `aes_stack._door_run`, `aes_stack`'s start-up run,
+     `aes_ourboot.watched_over`). GEMDOS's Mediach and Rwabs run as the ROM's own upper driver, and the ROM's lower
+     driver runs on BOTH shores (our driver's laid span `[$fcc400,$fcd3d2)` is VDI text in an AES run). THE CARRY into
+     a capture is derived per disk (`boot_launch.carry_at_gem_entry`, R-P5-2: the ROM's B4 launch on that disk from
+     the mid-boot capture with B6's carry), KEPT itself by the mid-boot machine's content and the disk's, and passed to
+     the kept `_booted` as an argument: a boot already kept runs nothing. The records each boot reads are decoded from
+     the DMA chip's stores and held in order (`aes_boot.records_read`, `fdc_register_stores`). `Boot.fdc_events` /
+     `fdc_chip` / `port_a` hold the ledger and the carry; `continued` carries the chip and port A (its floppy is
+     answered by `Floppy` until P5c, its ledger empty). The FDC/DMA register stores join the boot's off-image stores,
+     pinned by value (R-P5b-2). The noise test's inside rule names ONE exception (R-P5b-3): after a disk read, drive
+     A:'s last-access stamp `$9fc..$9ff` equals that run's own `_hz_200`.
 2. **The blitter probe's bus error.** XBIOS `Blitmode`'s probe (`$fc0f1a`) touches `$ffff8a00` behind a bus-error
    vector; the oracle's CPU takes no bus error and the read is of an unmodelled I/O byte. The run is stopped at that
    one instruction (`$fc0f34`) and the exception taken as a 68000 takes it: the 14-byte group-0 frame pushed, the PC
@@ -302,10 +315,11 @@ snapshot's own procedure and prints what the accessory machine differs from it i
 
 **Capture-phase facts, and the second mask.** Unlike the snapshot, a pre-init capture's CLOCKS move: it stops at an
 instruction, and when the boot reaches it depends on the emulated disk's rotation (`_hz_200` 396..450 over eighteen
-captures). `preinit_snapshot.MASK`: `_vbclock`/`_frclock`, `_hz_200`, the floppy VBL service's words (EXACTLY `$9f9..$a08`,
-`preinit_snapshot.FLOPPY_VBL_WORDS_MASKED`, one source for both masks: drive A:'s write-protect latch `$9f8` is HELD,
-not masked, since D4 P5a — R-P5a-2: the ROM's Getbpb reads it at `$fc1156`, and B4 runs that Getbpb from the mid-boot
-capture; the mid-boot mask holds it too), the
+captures). `preinit_snapshot.MASK`: `_vbclock`/`_frclock`, `_hz_200`, the floppy VBL service's words (EXACTLY `$9f9` and `[$9fb,$a08)`,
+`preinit_snapshot.FLOPPY_VBL_FIELDS`, one source for both masks: drive A:'s write-protect latch `$9f8` is HELD since D4
+P5a — R-P5a-2: the ROM's Getbpb reads it at `$fc1156`, and B4 runs that Getbpb from the mid-boot capture — and drive
+A:'s write-protect-SEEN byte `$9fa` since D4 P5b — R-P5b-1: the ROM's Mediach reads it at `$fc11aa`, and every AES boot
+runs that Mediach from the pre-init capture; the mid-boot mask holds both too), the
 timer-C divider, GEMDOS's 20 ms accumulator, `GEMDOS_TIME`, the 50 Hz millisecond count, and THE FOUR STACKS THE
 BOOT RAN ON, EACH DEAD AT THE STOP (the machine stops in user mode at the launched program's first instruction) and
 each masked TO ITS TOP, the top read off the ROM and the capture's own registers:

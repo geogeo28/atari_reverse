@@ -545,8 +545,18 @@ test guarded gates: $(BOOTFLOPPY_BIN)
 # stretch (65 s); made over every core first, it is 29 s and the glue's import 5 s (gate-speed pass, 2026-10-15). So the
 # shipped blob is NOT among this step's prerequisites: no derivation reads it at import (the tree's key does not name
 # it, and a warm with the blob present after one without it makes no new answer — measured, 1,978 kept either way).
+# SINCE D4 P5b EVERY AES BOOT DERIVES ITS CARRY (`aes_boot.booted` -> `boot_launch.carry_at_gem_entry`, R-P5-2): the
+# ROM's launch from the mid-boot capture (`$(MIDBOOT)`), its run reading our floppy body's span (`driver_spans`) and its
+# carry B6's on the COLD boot chain (`carry_at_the_mid_boot`), whose `products()` loads EVERY product the chain lays —
+# the head, the bench blob (`isr.blob`: build/bench, never the shipped one, which would wait on `derived`: a cycle), the
+# display, the late slice, the launch .S and the floppy driver. Measured: the files a vet opens, nothing kept. So every
+# boot at build time reads them: the snapshot's vet ORDER-ONLY (as it reads $(PREINIT); no part of the capture's key),
+# and `derived`, which keeps the boots. Named here, below every variable it names.
+CARRY_READS := $(MIDBOOT) $(BENCH_BIN) $(BOOTHEAD_BIN) $(BOOTDISPLAY_BIN) $(BOOTLATE_BIN) $(BOOTLAUNCH_BIN) $(BOOTFLOPPY_BIN)
+$(SNAPSHOT): | $(CARRY_READS)
+
 .PHONY: derived
-derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN)
+derived: $(CAND) $(ORACLE) $(REGISTRY_READS) $(BENCH_BIN) $(CARRY_READS)
 	@$(PY) test/derived.py
 
 # The measuring pass is spread over every core (`bench/tier3.py --jobs`, its default): the table is the one a single

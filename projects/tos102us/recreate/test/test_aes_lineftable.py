@@ -913,8 +913,10 @@ HANDLER_BYTES = aes.AES_LINEF_TABLE - addrs.AES_ROM_LINEF_HANDLER      # the han
 def our_boot_over_the_table(blob):
     """THE RUN ITSELF, made now (never served: who ran is read off its profile) — an `OurBootOverTheTable`."""
     aes_event.vet_the_profile_is_free("our boot over the table")
+    disk = aes_boot.blank_disk()
+    carry = aes_boot._carry_into(disk)  # (D4 P5b: derived BEFORE the reset — the launch it runs is profiled too)
     emu.prof_reset()
-    boot = aes_boot.booted.__wrapped__(aes_boot.preinit(), aes_boot.blank_disk(), ours=aes_boot.ours_of(blob), laid=aes_boot.AT_GEM_ENTRY)
+    boot = aes_boot._booted.derive(aes_boot.preinit(), disk, carry, ours=aes_boot.ours_of(blob), laid=aes_boot.AT_GEM_ENTRY)
     defined, copy = symbols_of(blob), aes.AES_LINEF_COPY
     thunks = [defined[linef_table.thunk_symbol(routine)] for routine in THUNKED]
     ours = sorted({entry.target for entry in linef_table.entries() if entry.verdict != THE_ROM_S})

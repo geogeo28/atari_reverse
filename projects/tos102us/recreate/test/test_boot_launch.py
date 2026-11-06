@@ -580,11 +580,15 @@ def test_noise_outside_the_capture_s_mask_is_seen_at_gem_entry():
     assert bl.masked(bl.continued(plain, bl.BLANK).ram) != bl.masked(bl.continued(noisy, bl.BLANK).ram)
 
 
-# ---- DRIVE A:'S WRITE-PROTECT LATCH, HELD BY BOTH CAPTURE MASKS (D4 P5a, ruling R-P5a-2) ----------------------------------
-# The ROM's Getbpb, which B4 runs since P5a, reads the latch (`$fc1156`); the floppy's vertical-blank service's other
-# words, `[$9f9,$a08)`, stay masked — EXACTLY those (`preinit_snapshot.FLOPPY_VBL_WORDS_MASKED`, both masks' one source).
+# ---- DRIVE A:'S WRITE-PROTECT LATCH AND SEEN BYTE, HELD BY BOTH CAPTURE MASKS (D4 P5a R-P5a-2, P5b R-P5b-1) ---------------
+# The ROM's Getbpb, which B4 runs since P5a, reads the latch (`$fc1156`); its Mediach, which every AES boot runs since P5b,
+# reads the seen byte (`$fc11aa`). The floppy's vertical-blank service's other words, `$9f9` and `[$9fb,$a08)`, stay
+# masked — EXACTLY those (`preinit_snapshot.FLOPPY_VBL_WORDS_MASKED`, both masks' one source).
 DRIVE_A_LATCH = preinit_snapshot.DRIVE_A_WRITE_PROTECT_LATCH
+DRIVE_A_SEEN = preinit_snapshot.DRIVE_A_WRITE_PROTECT_SEEN
 FLOPPY_VBL_WORDS_END = preinit_snapshot.FLOPPY_VBL_WORDS_END
+HELD_IN_THE_FIELD = (DRIVE_A_LATCH, DRIVE_A_SEEN)
+MEDIACH_READS_THE_SEEN_BYTE = 0xfc11a4  # `movea.l #<the seen bytes>,a0`, then `tst.b 0(a0,d7.w)`: drive A: added
 LATCH_SET, LATCH_CLEAR = 0xff, 0x00     # a latch as the service leaves a protected drive's, and an unprotected one's
 
 
@@ -592,9 +596,9 @@ def masked_bytes(mask):
     return {at for lo, size, _why in mask for at in range(lo, lo + size)}
 
 
-def with_drive_a_latched(ram):
+def with_drive_a_latched(ram, at=DRIVE_A_LATCH):
     latched = bytearray(ram)
-    latched[DRIVE_A_LATCH] = LATCH_SET
+    latched[at] = LATCH_SET
     return bytes(latched)
 
 
@@ -613,29 +617,40 @@ def test_drive_a_s_write_protect_latch_is_the_byte_getbpb_reads_and_the_field_be
     assert FLOPPY_VBL_WORDS_END == boot_floppy.CONSTANTS["FLOPPY_DRIVE"]
 
 
+def test_drive_a_s_seen_byte_is_the_byte_mediach_reads():
+    """(R-P5b-1) The seen byte is read out of Mediach's own instruction (`$fc11a4 movea.l #<the seen bytes>,a0`, then
+    `tst.b 0(a0,d7.w)`, drive A: added) and is the driver header's `FLOPPY_WP_SEEN`."""
+    assert texts(MEDIACH_READS_THE_SEEN_BYTE, MEDIACH_READS_THE_SEEN_BYTE + 10) == [
+        f"moveal #{DRIVE_A_SEEN},%a0", "tstb %a0@(0,%d7:w)"]
+    assert DRIVE_A_SEEN == boot_floppy.CONSTANTS["FLOPPY_WP_SEEN"]
+
+
 @pytest.mark.parametrize("mask", (preinit_snapshot.MASK, midboot_snapshot.MASK), ids=("pre-init", "mid-boot"))
-def test_each_mask_holds_drive_a_s_latch_and_masks_exactly_the_service_s_other_words(mask):
-    """BOTH DIRECTIONS (review RP5a's REQ-3): from the latch to one byte past the service's words, the mask covers
-    EXACTLY `[$9f9, $a08)` — the latch held, and neither a word of the service left unmasked nor the driver's request
-    (`$a08`) masked."""
+def test_each_mask_holds_drive_a_s_latch_and_seen_byte_and_masks_exactly_the_service_s_other_words(mask):
+    """BOTH DIRECTIONS (review RP5a's REQ-3, R-P5b-1): from the latch to one byte past the service's words, the mask covers
+    EXACTLY `$9f9` and `[$9fb, $a08)` — the latch and the seen byte held, and neither a word of the service left unmasked
+    nor the driver's request (`$a08`) masked."""
     around = set(range(DRIVE_A_LATCH, FLOPPY_VBL_WORDS_END + 1))
-    assert masked_bytes(mask) & around == set(range(DRIVE_A_LATCH + 1, FLOPPY_VBL_WORDS_END))
+    assert masked_bytes(mask) & around == {DRIVE_A_LATCH + 1, *range(DRIVE_A_SEEN + 1, FLOPPY_VBL_WORDS_END)}
 
 
-def test_every_capture_holds_drive_a_s_latch_clear():
+@pytest.mark.parametrize("at", HELD_IN_THE_FIELD, ids=("the latch", "the seen byte"))
+def test_every_capture_holds_drive_a_s_latch_and_seen_byte_clear(at):
     """WHAT IS HELD: drive A: holds an unprotected disk from power-on, so the mid-boot capture and all five pre-init
-    captures leave its latch clear. (Drive B:'s latch `$9f9` is phase: `$ff` in some captures, `$00` in others — the
-    service's poll of an empty bay — and stays masked.)"""
-    assert [capture.ram[DRIVE_A_LATCH] for capture in every_capture()] == [LATCH_CLEAR] * 6
+    captures leave its latch and its seen byte clear. (Drive B:'s latch `$9f9` and seen byte `$9fb` are phase: `$ff` in
+    some captures, `$00` in others — the service's poll of an empty bay — and stay masked.)"""
+    assert [capture.ram[at] for capture in every_capture()] == [LATCH_CLEAR] * 6
 
 
-def test_a_capture_with_drive_a_s_latch_apart_is_caught_by_both_masks():
-    """THE NEGATIVE: a capture whose drive-A: latch differs is a disagreement `--twice` says, on both captures' masks."""
+@pytest.mark.parametrize("at", HELD_IN_THE_FIELD, ids=("the latch", "the seen byte"))
+def test_a_capture_with_drive_a_s_latch_or_seen_byte_apart_is_caught_by_both_masks(at):
+    """THE NEGATIVE: a capture whose drive-A: latch, or seen byte, differs is a disagreement `--twice` says, on both
+    captures' masks."""
     mid = midboot_snapshot.load()
-    assert midboot_snapshot.disagreements(mid, mid._replace(ram=with_drive_a_latched(mid.ram))) == (
+    assert midboot_snapshot.disagreements(mid, mid._replace(ram=with_drive_a_latched(mid.ram, at))) == (
         "the RAM outside the mask",)
     pre = preinit_snapshot.load()
-    assert preinit_snapshot.masked(pre.ram) != preinit_snapshot.masked(with_drive_a_latched(pre.ram))
+    assert preinit_snapshot.masked(pre.ram) != preinit_snapshot.masked(with_drive_a_latched(pre.ram, at))
 
 
 def test_the_launch_reads_drive_a_s_latch():

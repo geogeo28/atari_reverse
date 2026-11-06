@@ -17,7 +17,9 @@ shell — so it needs two more, and both are made the same way the principle ask
 WHAT THE ORACLE MUST SERVE for that run, MEASURED (a boot that meets anything else is refused by name —
 `rom_bench.vet_the_run_just_made`, and the device model's own refusals below):
 
-  1. THE FLOPPY, AT THE DRIVER'S ENTRIES. GEMDOS reaches a disk through `hdv_bpb`, `hdv_mediach` and `hdv_rw`,
+  1. THE FLOPPY, AT THE DRIVER'S ENTRIES — IN A CONTINUED RUN (D4 P5b: A BOOT'S FLOPPY RUNS THROUGH THE KIT'S FDC MODEL
+     instead, the ROM's own driver on both shores, no entry answered — `_booted`; what follows is the continued runs' and
+     the served door's, until P5c). GEMDOS reaches a disk through `hdv_bpb`, `hdv_mediach` and `hdv_rw`,
      which on this machine name the ROM's floppy driver; below those entries is the FDC and its DMA — transactions,
      which `TRAP_MODEL.md` puts out of the model's reach. So the run is STOPPED at the three addresses the machine's
      own vectors hold and the call is answered there (`Floppy`): `Rwabs` copies sectors between the caller's buffer
@@ -165,6 +167,7 @@ import aes_switch
 import bus_error
 import case
 import fs_pexec
+import layouts
 import routines
 import staging
 import stopped_cpu
@@ -730,13 +733,13 @@ def _return_from_the_driver(answer, to, sp):
 # Where the bench door's two entry stores go (the sentinel, an argument): OFF THE MACHINE — past its RAM, below the
 # I/O page and the ROM, where the oracle drops a store as the bus does. The run's stacks are the capture's.
 OFF_THE_MACHINE = 0x200000
-BOOT_INSNS = 4_000_000                  # measured: 718,522 with two quiet accessories, 592,893 with none
+BOOT_INSNS = 4_000_000                  # measured: 733,796 with two quiet accessories, 593,055 with none
 ONE_INSTRUCTION = stopped_cpu.ONE_INSTRUCTION      # the segment a run leaves a stop by (`_Run._stepped_off`)
 THE_ROM_S, OURS = "the ROM's", "ours"     # whose code a PC is, and whose dispatcher an idle is (`whose`)
 Boot = namedtuple("Boot", "ram registers disk instructions cycles polls blanks floppy io_reads hardware_reads "
                           "hardware_writes stored bus_error_frame writes_truncated io idle takeover observed served "
-                          "our_boot drive_b devices printed printer",
-                  defaults=(None, THE_ROM_S, None, (), (), None, None, (), b"", False))
+                          "our_boot drive_b devices printed printer fdc_events fdc_chip port_a",
+                  defaults=(None, THE_ROM_S, None, (), (), None, None, (), b"", False, (), None, None))
 Boot.__doc__ = """One boot of the ROM from a pre-init machine to the first idle: the megabyte of `ram` it left and the
 CPU's `registers` there (REGISTER_NAMES; the PC is idle's poll), the `disk` as it left it, its cost, how many times
 idle polled on the way (`polls`, the last the idle), how many horizontal blanks it took (`blanks`), every `floppy`
@@ -754,7 +757,11 @@ gem_entry booted (`laid=AT_GEM_ENTRY`: a labelled staging), or None. WAVE 4's DE
 in drive B: as the run left it (None: no image there — every capture's, whose drive B: was never logged in); `devices`, the CLASSES of answer the run
 was given that no hardware here gives (`THE_FORMATTER`, `DRIVE_B`, `THE_PRINTER`), sorted; `printed`, the bytes it
 handed the printer, in order (`PRINTER_SEND`); `printer`, whether the machine has a printer on line
-(`with_a_printer_on_line`: its runs are served the GPIP and the port's transaction; False for every capture's)."""
+(`with_a_printer_on_line`: its runs are served the GPIP and the port's transaction; False for every capture's). THE FLOPPY
+THROUGH THE FDC MODEL (D4 P5b): `fdc_events`, the kit's FDC ledger of the run that made it — a boot's; empty for a
+`continued` run, whose floppy is still answered at the driver's entries (`Floppy`, until P5c) — and `fdc_chip` and
+`port_a`, THE CARRY (R-D4-2): the chip and PSG port A as the boot left them, carried by every run continued from it (the
+answered run touches neither)."""
 
 
 def devices_answered(floppy, hardware_reads, printed):
@@ -1679,7 +1686,6 @@ class BootingOurs:
         return OurBoot(self.ours, self._at_the_desk, ran)
 
 
-@derived.kept
 def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_FIRST_ENTRY):
     """THE ROM'S OWN BOOT (the module's docstring) from the pre-init `machine` (`preinit_snapshot.PreInit`) with
     `disk` — the one it booted with — in drive A:, to the first idle: a `Boot`. `until`: STOPPED EARLIER, at the
@@ -1690,17 +1696,101 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     machine's, the disk's and the blob's — a rebuilt blob is another question. `laid`: when the blob is (the RED's;
     `AT_GEM_ENTRY`: THE OUR-BOOT MACHINE, ruling W4-R1's LABELLED STAGING — its premises vetted against the ROM's own
     run, the blob laid before the run's first instruction and the run entered at the blob's own gem_entry; no
-    takeover, no door: the `Boot`'s `our_boot` says what it is and who ran to deskmain's entry)."""
+    takeover, no door: the `Boot`'s `our_boot` says what it is and who ran to deskmain's entry).
+    THE FLOPPY THROUGH THE FDC MODEL (D4 P5b, `_booted`): no driver entry answered, the ROM's own driver on both shores,
+    from THE CARRY its capture's own disk derives (`boot_launch.carry_at_gem_entry`, ruling R-P5-2) — an argument of the
+    kept derivation, so a re-taken mid-boot capture is another question; the carry is KEPT itself, by the mid-boot
+    machine's content and the disk's, so a boot already kept runs nothing — not even the launch (review RP5b's REQ-4)."""
+    return _booted(machine, disk, _carry_into(disk), budget=budget, until=until, ours=ours, laid=laid)
+
+
+def _carry_into(disk):
+    return _carry_of_the_disk(bytes(disk))
+
+
+@functools.cache
+def _carry_of_the_disk(disk_image):
+    """...asked once a process (a process with nothing kept — a test that patches — makes the launch once, as before it
+    was kept), kept across processes (`boot_launch.carry_at_gem_entry`)."""
+    import boot_launch                  # (it imports this module: the carry is the launch's, read lazily)
+    return boot_launch.carry_at_gem_entry(_midboot(), disk_image)
+
+
+@functools.cache
+def _midboot():
+    import boot
+    return boot.midboot_machine()
+
+
+def _derive_booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_FIRST_ENTRY):
+    return _booted.derive(machine, disk, _carry_into(disk), budget=budget, until=until, ours=ours, laid=laid)
+
+
+booted.derive = _derive_booted          # the boot made here and now, never kept (as `kept`'s own attribute was)
+
+
+# ---- WHAT A RUN THROUGH THE FDC MODEL STORED TO THE DMA CHIP (D4 P5b; review RP5b's REQ-1 / REQ-3) --------------------------
+# Read back out of a `Boot`'s off-image stores (`hardware_writes`) and its FDC ledger: the register stores by value, and the
+# logical record each one-sector read took — its track (the data register a seek-verify is handed, `FDC_MODE_DATA`), its
+# sector (`FDC_MODE_SECTOR`) and its side (the read command's, in the ledger). The constants are the C header's.
+_FLOPPY_H = layouts.parse_constants((Path(__file__).resolve().parents[1] / "include" / "boot" / "floppy.h",))
+FDC_ACCESS, FDC_MODE = _FLOPPY_H["FDC_DMA_ACCESS"], _FLOPPY_H["FDC_DMA_ACCESS"] + WORD_BYTES
+FDC_REGISTERS = (FDC_ACCESS, FDC_MODE, _FLOPPY_H["FDC_DMA_ADDRESS_HI"], _FLOPPY_H["FDC_DMA_ADDRESS_MID"],
+                 _FLOPPY_H["FDC_DMA_ADDRESS_LO"])
+WD1772_READ_SECTOR = _FLOPPY_H["WD1772_READ_SECTOR"]
+LEDGER_SIDE_MASK = 0xff                 # an FDC ledger command's `b`: (drive << 8) | side
+
+
+def fdc_register_stores(hardware_writes):
+    """`{(address, width, value): how many}` of the stores among `hardware_writes` to the FDC/DMA registers."""
+    stores = {}
+    for at, width, value in hardware_writes:
+        if at in FDC_REGISTERS:
+            stores[(at, width, value)] = stores.get((at, width, value), 0) + 1
+    return stores
+
+
+def records_read(hardware_writes, fdc_events):
+    """THE LOGICAL RECORDS a run's one-sector reads took, in order — decoded from what the driver stored to the DMA chip
+    (each register by the mode word selecting it) and the side each read command ran on."""
+    sides = [b & LEDGER_SIDE_MASK for kind, a, b in fdc_events if kind == "command" and a == WD1772_READ_SECTOR]
+    selected = track = sector = None
+    placed = []
+    for at, _width, value in hardware_writes:
+        if at == FDC_MODE:
+            selected = value
+        elif at == FDC_ACCESS and selected == _FLOPPY_H["FDC_MODE_SECTOR"]:
+            sector = value
+        elif at == FDC_ACCESS and selected == _FLOPPY_H["FDC_MODE_DATA"]:
+            track = value
+        elif at == FDC_ACCESS and selected == _FLOPPY_H["FDC_MODE_STATUS"] and value == WD1772_READ_SECTOR:
+            placed.append((track, sector))
+    assert len(placed) == len(sides), f"{len(placed)} read commands stored, {len(sides)} in the ledger"
+    return [(track * st_build.HEADS + side) * st_build.SECTORS_PER_TRACK + sector - 1
+            for (track, sector), side in zip(placed, sides)]
+
+
+# THE FLOPPY THROUGH THE FDC MODEL (D4 P5b, rulings R-P5-1 and decision 6a): GEMDOS's Getbpb, Mediach and Rwabs run as the
+# ROM's own code down to the ROM's lower driver ON BOTH SHORES — a takeover's, a door's and an our-boot's too — and below it
+# the kit's FDC/DMA model, armed for the run (R-D4-1): the boot's disk in drive A: lent READ-ONLY (a boot writes nothing: a
+# write would be refused by the model, by name), drive B: as the capture's (present, empty), GPIP's other bits the COLD arm's,
+# port A and the chip THE CARRY. `Floppy` is constructed for its vets alone — the vectors name the ROM's driver, the driver's
+# record is the disk's — and answers nothing: its calls and its classes are empty.
+@derived.kept
+def _booted(machine, disk, carry, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_FIRST_ENTRY):
+    import boot_launch
     ours_boots = laid == AT_GEM_ENTRY
     if ours_boots:
         vet_an_our_boot_is_asked_right(machine, disk, ours)
     memory = bytearray(BASE_IMAGE)                  # ...for the ROM in it: the megabyte below is the pre-init machine's
     memory[:RAM_BYTES] = machine.ram
     floppy = Floppy(memory, disk)
+    drive_a, drive_b = boot_launch.bays(disk)
+    seeds = boot_launch.fdc_seeds(carry, boot_launch.gpip_at_the_mid_boot())
     booting = BootingOurs(memory, ours) if ours_boots else None
     taking = _TakingOver(memory, ours, laid) if ours is not None and not ours_boots else None
-    run = (_Run(memory, floppy, budget, until=until, ours=ours, observing=booting.watched) if ours_boots
-           else _Run(memory, floppy, budget, until=until, taking=taking))
+    run = (_Run(memory, boot_launch.NO_ANSWER, budget, until=until, ours=ours, observing=booting.watched, seeds=seeds)
+           if ours_boots else _Run(memory, boot_launch.NO_ANSWER, budget, until=until, taking=taking, seeds=seeds))
     profiled = ours_boots or (taking is not None and taking.profiled)
     if profiled:
         aes_event.vet_the_profile_is_free("an our-boot" if ours_boots else "a door boot")      # ...refused by name, before
@@ -1714,6 +1804,7 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
         # `BootingOurs.made`), on for this run alone: its tallies are read as DIFFERENCES, nothing reset — but the
         # profile is one switch of the oracle's, so such a boot is never derived inside another measurement's
         # profiled run (it would be left off for the rest of it).
+        emu.fdc_arm(drive_a, drive_b, chip=carry.chip)
         if profiled:
             emu.prof_enable(True)
         if ours_boots:
@@ -1723,6 +1814,9 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
         registers = _registers_now()
         writes, truncated = emu.bench_writes(memory)
         streams = (tuple(emu.io_events()), tuple(emu.hw_events()), tuple(emu.hw_writes()))
+        fdc_events, causes, chip, port_a = boot_launch.fdc_left(carry)
+        if causes:
+            raise Refused("THE BOOT: " + "; ".join(causes))
         _vet_nothing_stored_under_the_rom_s_shadow(machine.ram, memory, writes, "THE BOOT")
         if ours is not None and truncated:
             raise Refused("the boot's write ledger saturated: what it stored over the blob's span is not known")
@@ -1734,12 +1828,14 @@ def booted(machine, disk, budget=BOOT_INSNS, until=None, ours=None, laid=AT_THE_
     finally:
         if profiled:
             emu.prof_enable(False)
+        emu.fdc_disarm()
         _CPU.m68k_set_irq(NO_INTERRUPT)
         emu.bench_abort()
     rom_bench.vet_the_run_just_made("the ROM's boot from the pre-init machine")
     return Boot(bytes(memory[:RAM_BYTES]), registers, bytes(floppy.disk), result["ninsns"], result["cycles"], run.polls,
                 run.blanks, tuple(floppy.calls), *streams, run.stored(writes), run.frame, truncated, machine.io, run.idle,
-                takeover, our_boot=our_boot, **surfaced(floppy, streams[1], run.printed))
+                takeover, our_boot=our_boot, **surfaced(floppy, streams[1], run.printed), fdc_events=fdc_events,
+                fdc_chip=chip, port_a=port_a)
 
 
 # ---- THE TEST ACCESSORY (`tools/accessory_disk.py` builds it and its disk) ---------------------------------------------------
@@ -2326,7 +2422,7 @@ def _continue(boot, received, budget=CONTINUED_INSNS, until=None, at=None, watch
                          instructions=result["ninsns"], cycles=result["cycles"], polls=run.polls, blanks=run.blanks,
                          floppy=tuple(floppy.calls), io_reads=streams[0], hardware_reads=streams[1],
                          hardware_writes=streams[2], stored=run.stored(writes), bus_error_frame=run.frame,
-                         writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed),
+                         writes_truncated=truncated, idle=run.idle, observed=tuple(run.observed), fdc_events=(),
                          **surfaced(floppy, streams[1], run.printed))
 
 

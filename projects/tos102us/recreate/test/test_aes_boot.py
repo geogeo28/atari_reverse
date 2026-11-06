@@ -27,6 +27,7 @@ import hashlib
 import random
 import re
 import struct
+import types
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,9 @@ import aes_gemctrl
 import aes_pdpipe as pp
 import aes_switch
 import aes_trapdoor
+import boot
+import boot_floppy
+import boot_launch
 import case
 import fs_pexec
 import isr
@@ -585,26 +589,256 @@ def test_the_blitter_probe_took_its_bus_error_on_the_stack_it_ran_on(label):
 FUNCTION_CODE = 0x7                     # a bus error's status word: the function code of the access
 
 
+# ---- THE FLOPPY THROUGH THE FDC MODEL (D4 P5b): what each boot asks of the disk, DERIVED from the disk's layout ------------------
+FLOPPY = boot_floppy.CONSTANTS
+STEP_RATE = FLOPPY["WD1772_STEP_RATE_MASK"]
+SEEK_VERIFY, SEEK = FLOPPY["WD1772_SEEK_VERIFY"] | STEP_RATE, FLOPPY["WD1772_SEEK"] | STEP_RATE
+ONE_SECTOR_READ = (SEEK_VERIFY, FLOPPY["WD1772_READ_SECTOR"], SEEK)     # the lower driver's Floprd of one sector
+ROOT = st_build.RESERVED_SECTORS + st_build.FAT_COPIES * st_build.SECTORS_PER_FAT      # the root directory's first record
+GEMDOS_BUFFERS = (0x79c4, 0x7bc4)       # the two sector buffers GEMDOS's cache hands Rwabs here, in turn (measured)
+DESK_INF_BUFFER = 0x10fb4               # the desk's own buffer DESKTOP.INF's first, whole sector is read straight into (measured)
+BLANK_DISK, ACCESSORY_DISK = "the blank disk", "the accessories' disk"
+SEVEN_DISK, INF_DISK, FILES_DISK = "the seven accessories' disk", "the DESKTOP.INF disk", "the files disk"
+# THE BOOT OF EACH DISK, one machine each: every AES boot from a capture (review RP5b's REQ-1)
+DISK_BOOTS = {BLANK_DISK: lambda: machine("the desk alone"), ACCESSORY_DISK: lambda: machine("two quiet accessories"),
+              SEVEN_DISK: aes_boot.seven_accessory_machine, INF_DISK: aes_boot.inf_machine, FILES_DISK: aes_boot.files_machine}
+every_disk_boot = pytest.mark.parametrize("disk", DISK_BOOTS)
+
+
+@functools.cache
+def disk_boot(disk):
+    return DISK_BOOTS[disk]()
+
+
+def file_records(start, file_bytes):
+    """The records a file of `file_bytes` from record `start` occupies: whole clusters (GEMDOS reads them whole)."""
+    return range(start, start + accessory_disk.clusters_of(file_bytes) * st_build.SECTORS_PER_CLUSTER)
+
+
+def loads(files):
+    """WHAT GEMDOS READS TO LOAD `files` ((first record, bytes), in order): each one's records, then the root's first
+    record (the directory entry's access, measured: after every file)."""
+    return [record for start, size in files for record in (*file_records(start, size), ROOT)]
+
+
+def _inf_on(image):
+    """DESKTOP.INF's first record and its size, found by its text in `image`."""
+    text = aes_boot.default_inf()
+    return image.index(text) // st_build.SECTOR_BYTES, len(text)
+
+
+def _accessories(count):
+    size = len(aes_boot.accessory().file)
+    return [(accessory_disk.file_at(nth, size) // st_build.SECTOR_BYTES, size) for nth in range(count)]
+
+
+@functools.cache
+def records_of(disk):
+    """`{disk: the records its boot reads, IN ORDER}`, derived from the disk's layout: the desk none (GEMDOS answers from
+    what it cached before gem_entry); the accessory boots each accessory the loader takes (six of seven); the INF and
+    files boots their DESKTOP.INF."""
+    return {BLANK_DISK: [], ACCESSORY_DISK: loads(_accessories(len(aes_boot.ACCESSORY_NAMES))),
+            SEVEN_DISK: loads(_accessories(aes_boot.ACCESSORY_SLOTS)),
+            INF_DISK: loads([_inf_on(aes_boot.inf_disk_of())]), FILES_DISK: loads([_inf_on(aes_boot.files_disk_of())])}[disk]
+
+
+def dma_targets(disk):
+    """Where each read's DMA lands (measured): GEMDOS's two buffers in turn — but DESKTOP.INF's first, whole sector,
+    straight into the desk's own buffer."""
+    reads = len(records_of(disk))
+    first = (DESK_INF_BUFFER,) if disk in (INF_DISK, FILES_DISK) else ()
+    return [*first, *(GEMDOS_BUFFERS[nth % 2] for nth in range(reads - len(first)))]
+
+
+def side_of(record):
+    return record // st_build.SECTORS_PER_TRACK % st_build.HEADS
+
+
+# ...and the chip and PSG port A every boot leaves (measured: the head on track 0 — the root read last — drive A: selected,
+# side 0): the carry the blank track's launch leaves too (`CARRY_AT_THE_BLANK_TRACK`, below); what every continued run carries
+CARRY_AT_THE_BLANK_TRACK = (0x24, "c47d00008000a40013000300a00000010100010000000000")
+THE_CARRY_A_BOOT_LEAVES = CARRY_AT_THE_BLANK_TRACK
+
+
+def disk_of_boot(label):
+    return BLANK_DISK if label == "the desk alone" else ACCESSORY_DISK
+
+
+def ledger_kinds(boot, kind):
+    return [(a, b) for each, a, b in boot.fdc_events if each == kind]
+
+
+def read_through_the_model(boot, disk):
+    """The boot `boot` of `disk`, its floppy as the FDC model saw it: each record of `records_of(disk)` one Floprd
+    (seek-verify, read, seek) on its side, in order — the records decoded from the stores — each DMA where measured, NO
+    RESTORE, no DMA out; the chip and port A left as pinned; the floppy answered nowhere."""
+    records = records_of(disk)
+    assert ledger_kinds(boot, "command") == [(command, side_of(record)) for record in records for command in ONE_SECTOR_READ]
+    assert aes_boot.records_read(boot.hardware_writes, boot.fdc_events) == records
+    assert ledger_kinds(boot, "dma_in") == [(at, st_build.SECTOR_BYTES) for at in dma_targets(disk)]
+    assert not ledger_kinds(boot, "dma_out")
+    assert (boot.port_a, boot.fdc_chip.hex()) == THE_CARRY_A_BOOT_LEAVES
+    assert boot.floppy == () and boot.devices == ()
+
+
+@every_disk_boot
+def test_each_boot_reads_its_disk_through_the_fdc_model_the_records_its_layout_says_in_order(disk):
+    """(D4 P5b; review RP5b's REQ-1 / REQ-3: HEAD's "the root and each accessory's first sector are read", derived from
+    the disk's layout, re-pinned on the FDC model — and IN ORDER.) No driver entry is answered: GEMDOS's Mediach and Rwabs
+    run as the ROM's, and the ROM's lower driver reads through the model."""
+    boot = disk_boot(disk).boot
+    read_through_the_model(boot, disk)
+    if disk in (ACCESSORY_DISK, SEVEN_DISK):
+        assert {ROOT} | {start for start, _size in _accessories(2)} <= set(aes_boot.records_read(boot.hardware_writes,
+                                                                                                 boot.fdc_events))
+
+
 @every_boot
-def test_the_driver_is_asked_whether_the_disk_changed_and_to_read(label):
-    """Over the disk its capture booted with, a boot asks the driver two things only: whether the medium changed —
-    it did not — and to READ; the disk is left as it was. The desk alone reads nothing (GEMDOS answers from what it
-    cached before `gem_entry`); the accessories' boot reads each accessory's own first sector, and the root."""
+def test_the_boot_reads_its_disk_through_the_fdc_model_one_sector_at_a_time_and_writes_nothing(label):
+    """...on every accessory mode too: the same reads (a mode is a word of an accessory's text, which the loader reads in
+    place), the disk lent read-only and left as it was."""
     booted = machine(label)
-    calls = booted.boot.floppy
-    assert calls and {call.function for call in calls} <= {aes_boot.MEDIACH, aes_boot.RWABS}
-    assert {call.answer for call in calls if call.function == aes_boot.MEDIACH} == {addrs.MEDIACH_UNCHANGED}
-    reads = [call.arguments for call in calls if call.function == aes_boot.RWABS]
-    assert not any(flag & aes_boot.RWABS_WRITE for flag, *_rest in reads)
-    records = {record for _flag, _buffer, count, first, _device in reads for record in range(first, first + count)}
+    read_through_the_model(booted.boot, disk_of_boot(label))
     if label == "the desk alone":
-        assert not reads and booted.boot.disk == aes_boot.blank_disk()
+        assert booted.boot.disk == aes_boot.blank_disk()
         return
-    root = st_build.RESERVED_SECTORS + st_build.FAT_COPIES * st_build.SECTORS_PER_FAT
-    files = {accessory_disk.file_at(index) // st_build.SECTOR_BYTES for index in range(len(aes_boot.ACCESSORY_NAMES))}
-    assert {root} | files <= records
     modes = (booted.accessory_word(booted.named(name), "acc_mode") for name in aes_boot.ACCESSORY_NAMES)
     assert booted.boot.disk == aes_boot.accessory_disk_of(*modes)
+
+
+def _reads_of(hardware_writes):
+    """`hardware_writes` cut at each read's first store (its track register's select): `(before, [each read's stores])`."""
+    track = FLOPPY["FDC_MODE_TRACK"]
+    cuts = [nth for nth, (at, _w, value) in enumerate(hardware_writes) if at == aes_boot.FDC_MODE and value == track]
+    pieces = [hardware_writes[lo:hi] for lo, hi in zip(cuts, (*cuts[1:], len(hardware_writes)))]
+    return hardware_writes[:cuts[0]], pieces
+
+
+@pytest.mark.parametrize("negative", ("a wrong record, the same stores", "two reads swapped"))
+def test_a_read_of_the_wrong_record_or_out_of_order_is_caught(negative):
+    """THE NEGATIVES (review RP5b's REQ-3): the accessory boot's stores re-cut — the sector values of two reads exchanged
+    (every store's value kept: the multiset R-P5b-2 pins is the same), or two reads' stores exchanged whole — is caught by
+    the records decoded, where the store multiset alone sees nothing."""
+    boot = disk_boot(ACCESSORY_DISK).boot
+    before, reads = _reads_of(tuple(boot.hardware_writes))
+    if negative == "two reads swapped":
+        reads[0], reads[3] = reads[3], reads[0]
+    else:
+        sector = FLOPPY["FDC_MODE_SECTOR"]
+
+        def sector_at(read):
+            return next(nth + 1 for nth, (at, _w, value) in enumerate(read) if at == aes_boot.FDC_MODE and value == sector)
+        one, other = sector_at(reads[0]), sector_at(reads[1])
+        reads[0], reads[1] = (reads[0][:one] + reads[1][other:other + 1] + reads[0][one + 1:],
+                              reads[1][:other] + reads[0][one:one + 1] + reads[1][other + 1:])
+    tampered = before + sum(reads, ())
+    assert aes_boot.fdc_register_stores(tampered) == aes_boot.fdc_register_stores(boot.hardware_writes)
+    assert aes_boot.records_read(tampered, boot.fdc_events) != records_of(ACCESSORY_DISK)
+
+
+def test_a_continued_run_carries_the_boot_s_chip_and_port_a_and_keeps_no_ledger_of_the_boot_s():
+    """`continued` CARRIES THE CARRY (R-D4-2: leg to leg): its floppy still answered at the driver's entries (until P5c),
+    the run touches neither the chip nor port A, so the machine it leaves holds the boot's — and an FDC ledger of its
+    own, empty: not the boot's, which it did not make."""
+    booted = machine("two quiet accessories")
+    on = booted.continued(aes_boot.mouse_to(*aes_event.THE_VIEW_TITLE_S_POINT))
+    assert (on.boot.fdc_chip, on.boot.port_a) == (booted.boot.fdc_chip, booted.boot.port_a) != (None, None)
+    assert booted.boot.fdc_events and on.boot.fdc_events == ()
+
+
+def test_a_boot_and_a_launch_leave_the_fdc_model_disarmed():
+    """(Review RP5b's NIT-6.) The model is the run's alone: after a boot — and after a B4 launch — it is DISARMED, so the
+    next run in the process (a continued one, answered at the driver's entries) never inherits its bays or its chip."""
+    capture, disk = aes_boot.preinit(), aes_boot.blank_disk()
+    aes_boot._booted.derive(capture, disk, aes_boot._carry_into(disk))
+    assert not emu.fdc_armed()
+    boot_launch.run(boot.midboot_machine(), bytes(disk), boot_launch.GEM_ENTRY, ())
+    assert not emu.fdc_armed()
+
+
+# THE CARRY INTO EACH CAPTURE (R-P5-2 "Launch on its own disk"): `{the capture's disk: (port A, the chip)}` the ROM's own
+# B4 launch on that disk leaves at gem_entry, from the mid-boot capture with B6's carry — MEASURED: one carry for every
+# capture but the files one, whose driver record says track 1 (its last launch read was on track 1).
+CARRY_AT_GEM_ENTRY = {
+    BLANK_DISK: CARRY_AT_THE_BLANK_TRACK, ACCESSORY_DISK: CARRY_AT_THE_BLANK_TRACK, SEVEN_DISK: CARRY_AT_THE_BLANK_TRACK,
+    INF_DISK: CARRY_AT_THE_BLANK_TRACK, FILES_DISK: (0x25, "c47b00008000a00013010101a00000010100010100000000"),
+}
+CAPTURE_DISKS = {
+    BLANK_DISK: aes_boot.blank_disk, ACCESSORY_DISK: lambda: aes_boot.accessory_disk_of(QUIET, QUIET),
+    SEVEN_DISK: lambda: aes_boot.seven_accessory_disk_of(*(QUIET,) * len(aes_boot.SEVEN_ACCESSORY_NAMES)),
+    INF_DISK: aes_boot.inf_disk_of, FILES_DISK: aes_boot.files_disk_of,
+}
+# ...and every other disk a boot is asked with: one disk to its capture's machine (a word, a line of a file the launch
+# never reads), so one carry
+VARIANT_DISKS = {
+    "accessories, the first busy": (ACCESSORY_DISK, lambda: aes_boot.accessory_disk_of(BUSY, QUIET)),
+    "DESKTOP.INF, as text": (INF_DISK, lambda: aes_boot.inf_disk_of(aes_boot.VIEW_AS_TEXT)),
+    "DESKTOP.INF, the resolution changed": (
+        INF_DISK, lambda: aes_boot.inf_disk_of(aes_boot.VIEW_AS_ICONS, aes_boot.RESOLUTION_CHANGED)),
+    "the cartridge's line a drive": (INF_DISK, aes_boot.cartridge_drive_disk),
+    "files, as text": (FILES_DISK, lambda: aes_boot.files_disk_of(aes_boot.VIEW_AS_TEXT)),
+}
+
+
+@pytest.mark.parametrize("disk", CAPTURE_DISKS)
+def test_each_capture_s_carry_is_the_rom_s_own_launch_on_its_disk(disk):
+    """DERIVED, NEVER DECLARED (R-D4-2, R-P5-2): the carry a boot from the capture starts from is what the ROM's B4
+    launch on that disk leaves, run from the mid-boot capture with B6's own carry (`$fc047a`) — pinned by value."""
+    carry = aes_boot._carry_into(CAPTURE_DISKS[disk]())
+    launch, _elsewhere = boot_launch.run(boot.midboot_machine(), bytes(CAPTURE_DISKS[disk]()), boot_launch.GEM_ENTRY, (),
+                                         carry=boot_launch.carry_at_the_mid_boot())
+    assert carry == boot_launch.carry_of(launch)
+    assert (carry.port_a, carry.chip.hex()) == CARRY_AT_GEM_ENTRY[disk]
+
+
+@pytest.mark.parametrize("variant", VARIANT_DISKS)
+def test_a_disk_patched_where_the_launch_never_reads_has_its_capture_s_carry(variant):
+    disk, disk_of = VARIANT_DISKS[variant]
+    assert aes_boot._carry_into(disk_of()) == aes_boot._carry_into(CAPTURE_DISKS[disk]())
+
+
+def test_a_kept_boot_asked_inside_a_held_profile_runs_nothing(tmp_path, monkeypatch):
+    """THE CONTRACT (review RP5b's REQ-4; `aes_event.vet_the_profile_is_free`: "a kept derivation asked beforehand is
+    served and runs nothing"): the carry is kept as the boot is, so a boot already kept, asked while a measurement holds
+    the cycle profile, is SERVED — not refused, and the profile's tallies not reset (nothing ran: still zero). Over a cache
+    of the test's own, made here first (so the question holds whatever ran before it); sampling, which makes a served
+    answer again on purpose, switched off for it."""
+    monkeypatch.setattr(derived, "ROOT", tmp_path / "derived")
+    monkeypatch.setattr(derived, "_CLAIMS_HELD", [])
+    monkeypatch.delenv(derived.DERIVED_OFF, raising=False)
+    monkeypatch.setattr(derived, "_candidate_is_the_project_s", lambda: True)
+    monkeypatch.setattr(derived, "SAMPLED_ONE_IN", 0)
+    capture, disk = aes_boot.files_preinit(), aes_boot.files_disk_of()
+    def as_a_fresh_process():               # ...nothing remembered in this one: what a new process finds
+        for per_process in (aes_boot._midboot, aes_boot._carry_of_the_disk, boot_launch.carry_at_gem_entry):
+            getattr(per_process, "cache_clear", lambda: None)()
+    as_a_fresh_process()
+    kept = aes_boot.booted(capture, disk)       # ...made into the test's own cache: the boot AND its carry
+    as_a_fresh_process()
+    emu.prof_enable(True)
+    emu.prof_reset()
+    try:
+        with aes_event.profile_held("the contract's own measurement"):
+            served = aes_boot.booted(capture, disk)
+        ran = emu.prof_cycles(0, RAM_BYTES) + emu.prof_cycles(emu.ROM_BASE, emu.ROM_END)
+        assert ran == 0, "the served boot ran something under the held profile"
+    finally:
+        emu.prof_enable(False)
+    assert served == kept
+
+
+def test_the_blank_disk_s_carry_on_the_files_capture_is_caught():
+    """THE NEGATIVE (R-P5-2): the files capture booted from ANOTHER disk's carry — the blank one's, its head on track 0
+    where the capture's record says 1 — sends the first read through the recalibrate arm (a restore, $03: 14 commands)
+    that Hatari never took; from its own, the boot's FDC ledger is its reads alone, and it leaves the blank track's carry
+    (the head back on track 0, the root read last) where it began from the files disk's."""
+    capture, disk = aes_boot.files_preinit(), aes_boot.files_disk_of()
+    own = aes_boot._booted.derive(capture, disk, aes_boot._carry_into(disk))
+    other = aes_boot._booted.derive(capture, disk, aes_boot._carry_into(aes_boot.blank_disk()))
+    restore = FLOPPY["WD1772_RESTORE"] | STEP_RATE
+    assert [a for a, _b in ledger_kinds(own, "command")] == list(ONE_SECTOR_READ) * len(records_of(FILES_DISK))
+    assert (own.port_a, own.fdc_chip.hex()) == THE_CARRY_A_BOOT_LEAVES != CARRY_AT_GEM_ENTRY[FILES_DISK]
+    assert restore in [a for a, _b in ledger_kinds(other, "command")] and other.fdc_events != own.fdc_events
 
 
 def test_a_disk_the_machine_did_not_boot_with_is_refused():
@@ -658,7 +892,9 @@ def test_the_floppy_answers_drive_a_alone_only_inside_the_disk_and_a_getbpb_rewr
 def test_the_hardware_the_boot_touches_is_the_hardware_declared(label):
     """Every I/O read was served by a declaration — the palette's sixteen words and the resolution byte, each as the
     capture read it — or by the kit's own model of the keyboard ACIA's status; every off-image store is a byte for
-    the IKBD. (A read of anything else refuses the boot before it is kept.)"""
+    the IKBD — or, since D4 P5b (ruling R-P5b-2 "Accept, pinned by value"), one of the FDC/DMA registers the kit's
+    model serves, each store held BY VALUE (`FDC_REGISTER_STORES`). (A read of anything else refuses the boot before it
+    is kept.)"""
     boot = machine(label).boot
     declared = aes_boot.io_seed_of(pre_of(label))
     for at, width, value in boot.io_reads:
@@ -666,8 +902,80 @@ def test_the_hardware_the_boot_touches_is_the_hardware_declared(label):
     palette = {preinit_snapshot.SHIFTER_PALETTE + index * WORD_BYTES for index in range(addrs.SHIFTER_PALETTE_ENTRIES)}
     assert {at for at, _width, _value in boot.io_reads} == palette | {preinit_snapshot.SHIFTER_RESOLUTION}
     assert {at for at, _value in boot.hardware_reads} == {addrs.IKBD_ACIA_STATUS}
-    assert {(at, width) for at, width, _value in boot.hardware_writes} == {(addrs.IKBD_ACIA_DATA, 1)}
-    assert len(boot.hardware_reads) == len(boot.hardware_writes)
+    the_off_image_stores_are_declared(boot, disk_of_boot(label))
+
+
+# THE FDC/DMA REGISTERS A BOOT STORES TO (R-P5b-2), ON EVERY BOOT (review RP5b's REQ-1): the DMA chip's register window and
+# mode words (words) and the DMA address's three bytes — nothing else of the block — each store `(address, width, value):
+# how many`, MEASURED: the mode words select a register (`$80` the status/command, `$82` track, `$84` sector, `$86` data,
+# `$90`/`$190` the sector count, the direction bit toggled round it: the DMA cleared), and the window carries each one's
+# value (a track, a sector, a command); the address is where the DMA lands (GEMDOS's buffers; the desk's, `$010fb4`, for
+# DESKTOP.INF's first sector).
+_ACCESS, _MODE, _HI, _MID, _LO = aes_boot.FDC_REGISTERS
+
+
+def _modes(reads):
+    """The mode words each one-sector read stores, `reads` of them (measured: the same on every boot)."""
+    return {(_MODE, 2, 0x80): 4 * reads, (_MODE, 2, 0x82): reads, (_MODE, 2, 0x84): reads, (_MODE, 2, 0x86): 2 * reads,
+            (_MODE, 2, 0x90): 3 * reads, (_MODE, 2, 0x190): reads}
+
+
+def _commands(reads):
+    return {(_ACCESS, 2, SEEK): reads, (_ACCESS, 2, SEEK_VERIFY): reads, (_ACCESS, 2, FLOPPY["WD1772_READ_SECTOR"]): reads}
+
+
+_THE_INF_S_DMA = {(_HI, 1, 0x00): 2, (_HI, 1, 0x01): 1, (_MID, 1, 0x0f): 1, (_MID, 1, 0x79): 1, (_MID, 1, 0x7b): 1,
+                  (_LO, 1, 0xb4): 1, (_LO, 1, 0xc4): 2}
+FDC_REGISTER_STORES = {
+    BLANK_DISK: {},
+    ACCESSORY_DISK: {**_modes(6), **_commands(6), (_ACCESS, 2, 0x00): 6, (_ACCESS, 2, 0x01): 19, (_ACCESS, 2, 0x02): 1,
+                     (_ACCESS, 2, 0x03): 3, (_ACCESS, 2, 0x04): 1,
+                     (_HI, 1, 0x00): 6, (_MID, 1, 0x79): 3, (_MID, 1, 0x7b): 3, (_LO, 1, 0xc4): 6},
+    SEVEN_DISK: {**_modes(18), **_commands(18), (_ACCESS, 2, 0x00): 18, (_ACCESS, 2, 0x01): 56, (_ACCESS, 2, 0x02): 2,
+                 (_ACCESS, 2, 0x03): 8, **{(_ACCESS, 2, sector): 1 for sector in range(4, 10)},
+                 (_HI, 1, 0x00): 18, (_MID, 1, 0x79): 9, (_MID, 1, 0x7b): 9, (_LO, 1, 0xc4): 18},
+    INF_DISK: {**_modes(3), **_commands(3), (_ACCESS, 2, 0x00): 3, (_ACCESS, 2, 0x01): 10, (_ACCESS, 2, 0x02): 1,
+               (_ACCESS, 2, 0x03): 1, **_THE_INF_S_DMA},
+    FILES_DISK: {**_modes(3), **_commands(3), (_ACCESS, 2, 0x00): 2, (_ACCESS, 2, 0x01): 10, (_ACCESS, 2, 0x03): 1,
+                 (_ACCESS, 2, 0x05): 1, (_ACCESS, 2, 0x06): 1, **_THE_INF_S_DMA},
+}
+
+
+def the_off_image_stores_are_declared(boot, disk):
+    """R-P5b-2's set: every off-image store a byte for the IKBD (one a status poll) or an FDC/DMA register store, those BY
+    VALUE as pinned for `disk` — nothing else joins."""
+    others = [(at, width) for at, width, _value in boot.hardware_writes if at not in aes_boot.FDC_REGISTERS]
+    assert set(others) == {(addrs.IKBD_ACIA_DATA, 1)} and len(boot.hardware_reads) == len(others)
+    assert aes_boot.fdc_register_stores(boot.hardware_writes) == FDC_REGISTER_STORES[disk]
+
+
+@every_disk_boot
+def test_each_boot_s_off_image_stores_are_the_ikbd_s_and_the_fdc_s_by_value(disk):
+    the_off_image_stores_are_declared(disk_boot(disk).boot, disk)
+
+
+def test_an_off_image_store_outside_the_two_is_seen():
+    """THE NEGATIVE ("nothing else joins"): the DESKTOP.INF boot with one more off-image store, to the MFP's GPIP — a byte
+    of neither the IKBD nor the FDC/DMA block — is not the declared set."""
+    boot = disk_boot(INF_DISK).boot
+    the_off_image_stores_are_declared(boot, INF_DISK)
+    with pytest.raises(AssertionError):
+        the_off_image_stores_are_declared(boot._replace(hardware_writes=(*boot.hardware_writes, (addrs.MFP_GPIP, 1, 0))), INF_DISK)
+
+
+@pytest.mark.parametrize("negative", ("a value moved", "a store dropped", "a stray store"))
+def test_an_fdc_register_store_of_another_value_is_seen(negative):
+    """THE NEGATIVES (R-P5b-2; review RP5b's mutants R8 / R14): the DESKTOP.INF boot's stores with ONE value moved (the
+    sector register's `$01` written `$02` once), its DMA-high `$01` dropped, or one stray mode word added — each not the
+    pinned set."""
+    writes = tuple(disk_boot(INF_DISK).boot.hardware_writes)
+    assert aes_boot.fdc_register_stores(writes) == FDC_REGISTER_STORES[INF_DISK]
+    if negative == "a stray store":
+        tampered = writes + ((_MODE, 2, 0x86),)
+    else:
+        at = writes.index((_ACCESS, 2, 0x01) if negative == "a value moved" else (_HI, 1, 0x01))
+        tampered = writes[:at] + (((_ACCESS, 2, 0x02),) if negative == "a value moved" else ()) + writes[at + 1:]
+    assert aes_boot.fdc_register_stores(tampered) != FDC_REGISTER_STORES[INF_DISK]
 
 
 @every_boot
@@ -737,11 +1045,82 @@ def test_no_booted_machine_depends_on_a_byte_the_capture_does_not_reproduce(labe
     assert perturbed.registers == plain.registers
     assert (perturbed.boot.instructions, perturbed.boot.cycles) == (plain.boot.instructions, plain.boot.cycles)
     assert preinit_snapshot.masked(perturbed.ram) == preinit_snapshot.masked(plain.ram)
+    assert inside_the_mask_breaks(capture.ram, noise.ram, plain, perturbed.ram) == []
+
+
+# THE ONE NAMED EXCEPTION TO THE INSIDE RULE (D4 P5b, ruling R-P5b-3 "Named rule: stamp = _hz_200"): AFTER A DISK ACCESS the
+# ROM's lower driver stamps drive A:'s last access with `_hz_200` on its way out — one masked field written from another, so
+# under noise it holds the noise of the clock, neither carried nor the plain boot's byte. Those four bytes must then EQUAL
+# THAT RUN'S OWN `_hz_200`, by value, in the noised run and the plain one alike; on a boot whose ledger shows no read the
+# stamp is under the rule as every other byte.
+DRIVE_A_LAST_ACCESS = (FLOPPY["FLOPPY_LAST_ACCESS"], FLOPPY["FLOPPY_LAST_ACCESS"] + LONG_BYTES)
+HZ_200 = (addrs.SYSVAR_HZ_200, addrs.SYSVAR_HZ_200 + LONG_BYTES)
+
+
+def read_the_disk(boot):
+    return bool(ledger_kinds(boot, "dma_in"))
+
+
+def _the_stamp_is_its_run_s_clock(ram):
+    return ram[slice(*DRIVE_A_LAST_ACCESS)] == ram[slice(*HZ_200)]
+
+
+def inside_the_mask_breaks(capture_ram, noise_ram, plain, perturbed_ram):
+    """THE INSIDE RULE: every masked byte the noised boot left is the noise carried through untouched (and the plain boot
+    left the capture's there) or the very byte the plain boot stored there — but drive A:'s stamp after a disk access,
+    which must be each run's own `_hz_200` (above). The addresses that break it, in order."""
     stored = {at for start, length in plain.boot.stored for at in range(start, start + length)}
-    for at, size, _why in preinit_snapshot.MASK:
-        for offset in range(at, at + size):
-            carried = perturbed.ram[offset] == noise.ram[offset] and plain.ram[offset] == capture.ram[offset]
-            assert carried or (offset in stored and perturbed.ram[offset] == plain.ram[offset])
+    stamped = range(*DRIVE_A_LAST_ACCESS) if read_the_disk(plain.boot) else range(0)
+    assert set(stamped) <= set(range(*DRIVE_A_LAST_ACCESS))
+    breaks = [at for at in stamped if not (_the_stamp_is_its_run_s_clock(perturbed_ram)
+                                           and _the_stamp_is_its_run_s_clock(plain.ram))]
+    for lo, size, _why in preinit_snapshot.MASK:
+        for at in range(lo, lo + size):
+            if at in stamped:
+                continue
+            carried = perturbed_ram[at] == noise_ram[at] and plain.ram[at] == capture_ram[at]
+            if not (carried or (at in stored and perturbed_ram[at] == plain.ram[at])):
+                breaks.append(at)
+    return breaks
+
+
+def _laid(ram, at, data):
+    laid = bytearray(ram)
+    laid[at:at + len(data)] = data
+    return bytes(laid)
+
+
+@pytest.mark.parametrize("negative", ("the carried noise", "the plain run's stamp", "the plain run's stamp off its clock",
+                                      "the byte above apart", "the byte below apart", "the stamp as its clock on the desk"))
+def test_the_named_stamp_exception_catches_what_it_must(negative):
+    """THE NEGATIVES (R-P5b-3): the noised run's stamp holding anything but its own `_hz_200` — the noise carried, or the
+    plain run's stamp — is caught, and so is the PLAIN run's stamp off its own clock (the capture's stamp left there); the
+    exception hides no other byte, above it or below (one more masked byte with a third value); and on a
+    boot that read nothing (the desk) the stamp is under the ordinary rule — made its run's clock there, it is caught."""
+    label = "the desk alone" if negative == "the stamp as its clock on the desk" else "two quiet accessories"
+    capture = pre_of(label)
+    noise = noisy(capture)
+    plain, perturbed = machine(label), BOOTED_FROM[label](noise).ram
+    assert inside_the_mask_breaks(capture.ram, noise.ram, plain, perturbed) == []
+    lo, hi = DRIVE_A_LAST_ACCESS
+    if negative == "the carried noise":
+        tampered, caught = _laid(perturbed, lo, noise.ram[lo:hi]), lo
+    elif negative == "the plain run's stamp":
+        tampered, caught = _laid(perturbed, lo, plain.ram[lo:hi]), lo
+    elif negative == "the plain run's stamp off its clock":
+        stale = types.SimpleNamespace(ram=_laid(plain.ram, lo, capture.ram[lo:hi]), boot=plain.boot)
+        assert capture.ram[lo:hi] != plain.ram[slice(*HZ_200)]
+        assert lo in inside_the_mask_breaks(capture.ram, noise.ram, stale, perturbed)
+        return
+    elif negative in ("the byte above apart", "the byte below apart"):
+        # ...each side of the stamp, so the exception is bounded both ways (review RP5b's REQ-2): drive B:'s access time
+        # above it, drive B:'s write-protect-seen byte below — both masked, untouched by the boot
+        at = hi if negative == "the byte above apart" else lo - 1
+        tampered, caught = _laid(perturbed, at, bytes([noise.ram[at] ^ 0xff])), at
+    else:
+        assert not read_the_disk(plain.boot)
+        tampered, caught = _laid(perturbed, lo, perturbed[slice(*HZ_200)]), lo
+    assert caught in inside_the_mask_breaks(capture.ram, noise.ram, plain, tampered)
 
 
 @every_boot
@@ -773,20 +1152,36 @@ def test_the_snapshot_machine_is_untouched_by_the_pre_init_machine_and_its_boots
 
 
 def test_a_boot_is_kept_by_the_pre_init_machine_s_content():
-    """`booted` is a kept derivation whose key reads the pre-init machine BY VALUE: one changed byte of its RAM, one
-    register, one palette byte or another disk is another question."""
+    """`booted`'s kept derivation (`_booted`) is keyed BY VALUE by the pre-init machine, the disk AND THE CARRY (D4 P5b:
+    derived off the mid-boot capture, whose file no tree key reads): one changed byte of its RAM, one register, one
+    palette byte, another disk or another carry is another question."""
     plain, disk = pre(), aes_boot.blank_disk()
+    carry = aes_boot._carry_into(disk)
 
-    def key(machine=plain, disk=disk):
-        return derived.key_of(aes_boot.booted.derive, (machine, disk), {})
+    def key(machine=plain, disk=disk, carry=carry):
+        return derived.key_of(aes_boot._booted.derive, (machine, disk, carry), {})
 
     moved = bytearray(plain.ram)
     moved[addrs.SYSVAR_HZ_200 + 3] ^= 1
     others = (key(machine=plain._replace(ram=bytes(moved))),
               key(machine=plain._replace(registers={**plain.registers, "d1": plain.registers["d1"] ^ 1})),
               key(machine=plain._replace(io=bytes([plain.io[0] ^ 1]) + plain.io[1:])),
-              key(disk=aes_boot.accessory_disk_of(QUIET, QUIET)))
+              key(disk=aes_boot.accessory_disk_of(QUIET, QUIET)),
+              key(carry=carry._replace(port_a=carry.port_a ^ 1)),
+              key(carry=carry._replace(chip=bytes([carry.chip[0] ^ 1]) + carry.chip[1:])))
     assert key() == key() and len({key(), *others}) == 1 + len(others)
+
+
+DRIVE_A_SEEN_SET = 0xff                 # drive A:'s seen byte as the service leaves it for a protected disk
+
+
+def test_the_boot_reads_drive_a_s_seen_byte():
+    """WHY IT IS HELD BY THE CAPTURE MASK (R-P5b-1): from the blank capture with drive A:'s write-protect-seen byte set,
+    the ROM's Mediach (`$fc11aa`) takes another arm — other instructions — where its noise alone would be masked."""
+    plain = pre()
+    seen = bytearray(plain.ram)
+    seen[preinit_snapshot.DRIVE_A_WRITE_PROTECT_SEEN] = DRIVE_A_SEEN_SET
+    assert aes_boot.desk_machine(plain._replace(ram=bytes(seen))).boot.instructions != machine("the desk alone").boot.instructions
 
 
 AUTO_RUNNER_ABANDONS_ITS_STACK = 0xfc0d42          # the BIOS's AUTO runner, no program found: `lea $755a,sp`
@@ -2130,6 +2525,7 @@ def test_a_door_boot_holds_the_profile_for_its_own_run_and_a_takeover_with_no_do
     by its own name for the length of its run and let go after; a takeover with no door switches no profile on and
     holds nothing."""
     capture, disk = capture_and_disk(QUIET_PAIR)
+    aes_boot._carry_into(disk)          # (D4 P5b: the carry's launch is a run of its own — derived before the boots watched)
     held = _who_holds_the_profile_inside_the_run(monkeypatch)
     aes_boot.booted.derive(capture, disk, ours=the_door_of("the shipped blob"))
     aes_boot.booted.derive(capture, disk, ours=aes_boot.ours_of(isr.blob_named("the shipped blob")))

@@ -733,9 +733,10 @@ def test_a_row_s_machine_is_the_arrival_whole_but_the_harness_s_window_and_refus
 
 
 # ---- N6: EVERY RUN OF `aes_boot`'s SURFACES ITS DEVICES ------------------------------------------------------------------------------
-@pytest.mark.parametrize("run", (aes_boot.booted, aes_boot.continued.derive, aes_boot.served))
+@pytest.mark.parametrize("run", (aes_boot._booted, aes_boot.continued.derive, aes_boot.served))
 def test_every_run_of_aes_boot_returns_what_its_devices_left(run):
-    """The three runs of the module that make a `Boot` (`_Run`'s callers there): each returns `surfaced`'s fields."""
+    """The three runs of the module that make a `Boot` (`_Run`'s callers there; a boot's is `_booted` since D4 P5b,
+    `booted` deriving its carry): each returns `surfaced`'s fields."""
     source = inspect.getsource(getattr(run, "__wrapped__", run))
     assert "_Run(" in source and "**surfaced(floppy, streams[1], run.printed)" in source
 
