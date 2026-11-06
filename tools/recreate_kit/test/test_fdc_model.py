@@ -37,6 +37,12 @@ def _enum(first):
     return re.findall(r"^\s*(FDC_[A-Z_]+)\s*(?:=\s*\d+)?,", body, re.M)
 
 
+def _define(name):
+    """The integer fdc.h `#define`s `name` as: the header is the one place a constant like the ledger's cap is spelt."""
+    return int(re.search(rf"^#define {name} (\d+)$", FDC_H.read_text(), re.M).group(1))
+
+
+FDC_LOG_MAX = _define("FDC_LOG_MAX")
 EVENTS = {name: value for value, name in enumerate(_enum("FDC_EV_COMMAND = 1"), start=1)}
 REFUSALS = {name: value for value, name in enumerate(_enum("FDC_REFUSE_NONE = 0"))}
 COMMAND, DONE, HANG, FORCED, DMA_IN, DMA_OUT, READ, POLL, HDC = (
@@ -77,7 +83,6 @@ SECTORS_STARTED = -(-TRACK_BYTES // SECTOR_BYTES)   # what one Write Track takes
 TIMEOUT_POLLS = 99                     # TIMEOUT_COUNT 100: the 100th `subq` reaches 0 before its poll
 PSG_PORT_A = 14
 GPIP_SLOT_BIT = 1                      # os.h's OS_HW_SLOT_MFP_GPIP (0), as a mask
-FDC_LOG_MAX = 4096
 REGISTERS_TRACK, REGISTERS_SECTOR, REGISTERS_DATA = 0x2A, 0x07, 0x99
 DRIVER_HW_WRITES = 11                  # 3 address bytes, 3 mode words, the count, 2 mode words, the sector, the command
 ACSI_FIRST_BYTE, ACSI_MODE = 0x08, 0x88

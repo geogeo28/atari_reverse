@@ -311,6 +311,14 @@ void g_hw_writes_the_three(uint8_t *image) {
     hw_write8(ACIA_DATA, IKBD_COMMAND);
 }
 
+/* The faithful reconstruction of the .PRG's flood: the pen store `count` times (its d1), which is how the
+ * suite reaches the write ledger's cap on both sides. */
+void g_hw_writes_the_pen_n_times(uint8_t *image, uint32_t count) {
+    (void)image;
+    for (uint32_t nth = 0; nth < count; nth++)
+        hw_write16(SHIFTER_PEN0, PEN0_COLOUR);
+}
+
 /* MUTANT: the palette longword is never stored — a port that dropped one instruction. */
 void g_hw_writes_one_short(uint8_t *image) {
     (void)image;

@@ -136,7 +136,12 @@ enum {
 #define FDC_EV_READ_REG_SHIFT 24
 #define FDC_EV_DRIVE_SHIFT    8
 #define FDC_EV_DRIVE_MASK     0xffu
-#define FDC_LOG_MAX 4096
+/* THE LEDGER'S CAP (ruling R-KIT-1, 2026-11-05). Sized from the largest single run measured: the tos102us desk's disk
+ * Copy, whose last step makes 29,374 entries in one run (its Format makes 5,977), through the model unanswered. 65,536 is
+ * x2.23 that. The cost is static and paid only by the oracle, whose g_fdc (shim.c) is the one fdc_device at run time (the
+ * C probe has its own): 9 bytes an entry, 576 KiB. Nothing clears or copies the arrays per run: entering a run zeroes log_n and log_dropped. Past the cap
+ * an entry is DROPPED and counted, and the run is refused as truncated (emu.fdc_causes). */
+#define FDC_LOG_MAX 65536
 
 /* The chip's and the drives' MECHANICAL state: plain data, saved and loaded whole. Laid out widest first
  * with the tail spelled out, so the saved bytes are all fields: no compiler padding (asserted below). */

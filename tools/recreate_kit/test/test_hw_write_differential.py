@@ -18,7 +18,7 @@ import pytest
 from kit_smoke_project import (ACIA_DATA, ACIA_RECEIVE_ENTRY, ACIA_RECEIVE_TWICE_ENTRY,
                                ACIA_SEND_ENTRY, ACIA_SEND_THEN_RECEIVE_ENTRY, ACIA_STATUS,
                                ACIA_TX_RDY,
-                               HW_RMW_ENTRY, HW_WRITE_ENTRY, IKBD_COMMAND,
+                               HW_RMW_ENTRY, HW_WRITE_ENTRY, HW_WRITE_FLOOD_ENTRY, IKBD_COMMAND,
                                MFP_ACIA_CHANNEL_BIT, MFP_IERB, MFP_ISRA,
                                PEN0_COLOUR, PEN_PAIR_COLOURS,
                                SHIFTER_MODE, SHIFTER_PEN0, SHIFTER_PEN1, bind)
@@ -445,3 +445,40 @@ def test_the_operations_refuse_the_addresses_a_store_refuses(glue, why):
     — so neither refusal can be reached by writing `hw_bset8` where `hw_write8` was refused."""
     with pytest.raises(AssertionError, match=REFUSED), _named(why):
         _rmw(glue)
+
+
+# ---- THE LEDGER'S CAP (os.h's OS_HW_WRITE_LOG_MAX, ruling R-KIT-1) ----------------------------------------------------
+# The .PRG's flood and `g_hw_writes_the_pen_n_times` make the same pen store `count` times. The cap is read from the
+# harness's mirror of os.h, which test_os_memory_map.py pins equal to the header, so no number is restated here.
+CAP = harness.OS_HW_WRITE_LOG_MAX
+FLOOD_INSNS = 3 * (CAP + 1) + 100     # three instructions a store, and the slack an entry and an rts take
+
+
+def _flood(count):
+    return harness.differential(HW_WRITE_FLOOD_ENTRY, {"d1": count},
+                                lambda lib, buf: lib.g_hw_writes_the_pen_n_times(buf, count), max_insns=FLOOD_INSNS)
+
+
+def test_a_stream_one_store_short_of_the_cap_is_compared_whole():
+    """Below the cap the two streams are compared entry for entry, and agree."""
+    diffs, info = _flood(CAP - 1)
+    assert diffs == [] and len(info["regs"]["hw_writes"]) == CAP - 1
+
+
+def test_a_stream_that_reaches_the_cap_is_refused_naming_both_counts():
+    """At the cap the oracle's ledger is complete (it counts what it drops), but the candidate has no dropped counter and
+    cannot tell full from truncated. So the comparison is refused, both counts named: deliberately over-strict."""
+    with pytest.raises(AssertionError, match=rf"the hardware write ledger hit its cap \({CAP}\): oracle={CAP} cand={CAP} "):
+        _flood(CAP)
+
+
+def test_a_store_past_the_cap_is_dropped_and_counted_and_the_oracle_run_refused():
+    """Past the cap the oracle drops the store, COUNTS it, and `emu.run` refuses the run as truncated. The candidate
+    drops it too, and keeps exactly the cap."""
+    with pytest.raises(RuntimeError, match=r"its hardware writes overflowed the ledger — 1 store\(s\) past os\.h's "
+                                           r"OS_HW_WRITE_LOG_MAX cap were DROPPED"):
+        emu.run(harness.make_image(), HW_WRITE_FLOOD_ENTRY, {"d1": CAP + 1}, max_insns=FLOOD_INSNS)
+    assert emu._LIB.osh_hw_write_count() == CAP
+    harness._lib.g_hw_reset(None, 0)
+    harness._lib.g_hw_writes_the_pen_n_times(None, CAP + 1)
+    assert harness._lib.g_hw_write_count() == CAP

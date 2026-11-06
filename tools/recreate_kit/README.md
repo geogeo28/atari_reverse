@@ -420,7 +420,7 @@ why no time source is needed — is `TRAP_MODEL.md`, "Phase 17".
 | `emu.fdc_arm(drive_a, drive_b, chip=None)` | arm; each drive an `emu.FdcDrive(image, present=True, write_protected=False)` (`image` 737,280 bytes — 80x2x9 only — a `bytearray` lent writable or a `bytes` lent read-only, whose writes are refused; None for an empty bay; `emu.FDC_ABSENT` for no drive); `chip` the chip runs start from (default MR's power-on chip). A refused input is a `ValueError` that leaves the model disarmed |
 | `emu.fdc_disarm()` / `emu.fdc_armed()` | back to the unarmed paths, the bays forgotten / is it armed? |
 | `emu.fdc_state()` / `emu.fdc_declare(chip)` / `emu.fdc_power_on_state()` | the chip the last run LEFT, as opaque bytes / declare the chip every following run starts from — the CARRY between slices (both refused while disarmed; `fdc_state` refused after a refused run) / MR's chip |
-| `emu.fdc_events()` | the ordered transaction ledger: `(kind, a, b)`, repeated GPIP polls counted in one `poll` entry |
+| `emu.fdc_events()` | the ordered transaction ledger: `(kind, a, b)`, repeated GPIP polls counted in one `poll` entry. Capped at `emu.FDC_LOG_MAX` (fdc.h, 65,536). An entry past the cap is dropped and counted, and the run is refused as truncated |
 | `emu.fdc_causes()` | why the last run could not be described (it also sinks `emu.run` and a bench segment, by name) |
 
 GPIP's other seven bits stay the case's `hw_seed` declaration of `$fffa01`; an `io_seed` on the model's registers

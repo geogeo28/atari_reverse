@@ -406,6 +406,15 @@ _OUTPUT_AND_SKIPPABLE_DROP_CODE = (
     + struct.pack(">HHI", _MOVE_B_IMM_ABSL, DROP_SPAN_VALUE, DROP_SECOND_SPAN_AT)
     + _OUTPUT_AND_DROP_CODE)
 
+# ---- the hardware WRITE ledger's cap: the pen store made d1 times ----
+# The routine that fills the ledger to os.h's OS_HW_WRITE_LOG_MAX, which no game's run reaches by itself.
+_SUBQ_L_1_D1 = 0x5381
+_PEN_STORE_LOOP_BYTES = 12            # the store (8 bytes), the subq (2), the bne (2)
+_HW_WRITE_FLOOD_CODE = (struct.pack(">HHI", 0x33FC, PEN0_COLOUR, SHIFTER_PEN0)      # .again: move.w #$777,$ff8240
+                        + struct.pack(">H", _SUBQ_L_1_D1)                           # subq.l #1,d1
+                        + struct.pack(">Bb", _BNE_SHORT, -_PEN_STORE_LOOP_BYTES)    # bne.s .again
+                        + struct.pack(">H", 0x4E75))                                # rts
+
 _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_THEN_READ_CODE,
              _WIDE_READ_CODE, _VOLATILE_TWICE_CODE, _STATIC_TWICE_CODE,
              _HW_WRITE_CODE, _ACIA_SEND_CODE, _ACIA_RECEIVE_CODE, _ACIA_RECEIVE_TWICE_CODE,
@@ -414,7 +423,7 @@ _ROUTINES = (_RMW_CODE, _GIACCESS_CODE, _HW_READ_CODE, _SYNC_ONLY_CODE, _WRITE_T
              _IO_READ_CODE, _IO_READ_PAIR_CODE, _IO_WORD_READ_CODE, _IO_WRITE_THEN_READ_CODE,
              _IO_STORE_AND_VERIFY_CODE, _IO_POLL_UNTIL_READY_CODE, _HW_POLL_UNTIL_IDLE_CODE,
              _OUTPUT_AND_DROP_CODE, _OUTPUT_AND_BRANCHING_DROP_CODE, _READS_ITS_DROP_CODE,
-             _OUTPUT_AND_SKIPPABLE_DROP_CODE)
+             _OUTPUT_AND_SKIPPABLE_DROP_CODE, _HW_WRITE_FLOOD_CODE)
 
 
 def _entries():
@@ -434,7 +443,7 @@ def _entries():
  IO_READ_ENTRY, IO_READ_PAIR_ENTRY, IO_WORD_READ_ENTRY, IO_WRITE_THEN_READ_ENTRY,
  IO_STORE_AND_VERIFY_ENTRY, IO_POLL_UNTIL_READY_ENTRY, HW_POLL_UNTIL_IDLE_ENTRY,
  OUTPUT_AND_DROP_ENTRY, OUTPUT_AND_BRANCHING_DROP_ENTRY, READS_ITS_DROP_ENTRY,
- OUTPUT_AND_SKIPPABLE_DROP_ENTRY) = _entries()
+ OUTPUT_AND_SKIPPABLE_DROP_ENTRY, HW_WRITE_FLOOD_ENTRY) = _entries()
 
 # The only PC after the Pterm trap — a checkpoint the run can never reach, because it ends first.
 PTERM_AFTER_TRAP = PTERM_ENTRY + PTERM_AFTER_TRAP_OFFSET

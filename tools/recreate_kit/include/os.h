@@ -552,9 +552,15 @@ static inline void os_vsync(void) { g_os_event(OS_EVENT_VSYNC, 0); }
  *
  * ONE CAP FOR BOTH SIDES (shim.c's g_hww_* and src/hw.c's), for OS_PSG_LOG_MAX's reason: were they
  * to differ, a long run would drop entries on one side only and the streams would diverge for a
- * reason that has nothing to do with the reconstruction. Sized like the read ledger's rather than
- * like Dosound's because a palette upload is eight stores and a frame can hold several. */
-#define OS_HW_WRITE_LOG_MAX 4096
+ * reason that has nothing to do with the reconstruction.
+ *
+ * THE SIZE (ruling R-KIT-1, 2026-11-05) is set from the largest single run measured: the tos102us
+ * desk's disk Copy, whose last step makes 59,656 hardware stores in one run through the FDC model
+ * (its Format makes 12,124: every DMA and FDC register store lands here too). 131,072 is x2.2 that.
+ * The cost is static, 9 bytes an entry on each side: 1,152 KiB in liboracle.so and as much in every
+ * candidate .so. Nothing clears or copies the arrays per run, since only the count is reset. No target
+ * build has them: the 68000 builds do not compile src/hw.c (include/hw.h). */
+#define OS_HW_WRITE_LOG_MAX 131072
 
 /* WHERE A HARDWARE REGISTER IS, and the whole of what this ledger covers: the three blocks the ST
  * DECODES, and not the whole of the address space above them.

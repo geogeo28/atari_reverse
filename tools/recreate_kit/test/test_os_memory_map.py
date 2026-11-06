@@ -213,9 +213,10 @@ def test_every_low_model_address_is_guarded_or_declared_unvetted():
         # because these addresses are POLLED (an FDC wait loop reads $fffa01 once per iteration), so
         # a modest cap would truncate an ordinary run. Not a place in the image either.
         "OS_HW_LOG_MAX",
-        # 4096 entries — the hardware WRITE ledger's cap on both sides. One palette upload is eight
-        # stores and a frame can hold several, so it is sized like the read ledger's rather than like
-        # Dosound's. Not a place in the image either.
+        # 131,072 entries — the hardware WRITE ledger's cap on both sides, sized from the tos102us
+        # disk Copy's 59,656 stores in one run (ruling R-KIT-1). That is above LOW_REGION_END, so the
+        # scan no longer sees it. It stays listed so that a cap lowered back into range is already
+        # classified. Not a place in the image either.
         "OS_HW_WRITE_LOG_MAX",
         # 4096 POLLS — the candidate's runaway guard on one busy-wait (src/sched.c's sched_wait8),
         # not a place in the image. It is a count of iterations, and it is this large so that only a

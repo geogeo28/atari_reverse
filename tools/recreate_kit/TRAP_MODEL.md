@@ -2089,6 +2089,24 @@ store; `src/hw.c` records every `hw_write8()`/`hw_write16()`/`hw_write32()` a re
 `harness.differential` compares them **exactly** — a missing, extra, reordered, mis-addressed,
 wrong-width or wrong-value store fails the case — and does so for **every case, by default**.
 
+**The cap** is `os.h`'s `OS_HW_WRITE_LOG_MAX`, 131,072 entries, the same on both sides (harness.py's
+mirror is pinned to the header by `test_os_memory_map.py`). It was 4,096 until ruling R-KIT-1
+(2026-11-05) raised it, measured against the largest single run: the tos102us desk's disk Copy makes
+59,656 hardware stores in its last step through the FDC model, because every DMA and FDC register
+store lands here too. Its Format makes 12,124.
+- **The cost** is static, 9 bytes an entry on each side: 1,152 KiB in `liboracle.so` and as much in
+  every candidate `.so`. No run clears or copies the arrays; only the count is reset. No 68000 build
+  has the arrays, because the target does not compile `src/hw.c`.
+- **Past the cap**, the oracle drops a store and counts it, and `emu.run` refuses the run as
+  truncated. The candidate drops it too.
+- **At the cap**, the oracle's ledger is complete (its dropped counter says so), but the candidate
+  has no dropped counter and cannot tell full from truncated. So `harness.differential` refuses the
+  comparison at the cap and names both counts. That is deliberately over-strict
+  (`_vet_ledger_below_cap`).
+- **Pinned by** `test_hw_write_differential.py`: the smoke .PRG's flood makes the cap minus one stores
+  (compared whole), the cap itself (refused), and the cap plus one (the oracle run refused, one store
+  counted; the candidate keeps exactly the cap).
+
 The **width** is compared because it is part of the instruction: `clr.w $ff8240` and `clr.l $ff8240`
 reach different registers on the machine and neither reaches the image, so nothing else could tell
 them apart. The **order** is compared because the ledger is a stream and not a set: Zynaps's screen
@@ -3867,6 +3885,13 @@ exactly the nine sectors, an unrepresentable ID or data field, a write to a read
 the count or of an HDC register, a wide read over GPIP, an `io_seed` constant or sequence on the block —
 or a sequence on GPIP — while armed (the CONFLICT: the model would silently bypass it), and a ledger
 overflow. `emu.fdc_arm` refuses any image that is not 737,280 bytes (80x2x9) as a `ValueError`.
+
+**The ledger's cap** is `fdc.h`'s `FDC_LOG_MAX`, 65,536 entries. `emu.FDC_LOG_MAX` reads it from the
+`.so`, and `test_fdc_model.py` reads it from the header. Ruling R-KIT-1 (2026-11-05) raised it from
+4,096, measured against the largest single run: the tos102us desk's disk Copy, whose last step makes
+29,374 entries through the model unanswered (its Format makes 5,977). The cost is static and paid by
+the oracle alone, whose `g_fdc` is the only `fdc_device` at run time (the C probe has its own): 9 bytes
+an entry, 576 KiB. Entering a run zeroes the count and the dropped count, and clears nothing else.
 
 `harness.differential` REFUSES to run while the model is armed: the candidate links `src/fdc.c` (kit.mk's
 SRC sweep) but nothing wires it yet — no reconstruction drives the floppy from host C — so an armed

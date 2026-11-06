@@ -304,7 +304,7 @@ OS_EVENT_LOG_MAX = 4096      # ...and the off-image OS event ledger's (shim.c, s
 OS_PSG_LOG_MAX = 4096        # ...and the direct-PSG ledger's, likewise on both (shim.c, src/psg.c)
 OS_HW_LOG_MAX = 4096         # ...and the seeded-hardware read ledger's (shim.c, src/hw.c)
 OS_IO_LOG_MAX = 4096         # ...and the DECLARED I/O MAP's served-read ledger's (likewise both)
-OS_HW_WRITE_LOG_MAX = 4096   # ...and the hardware WRITE ledger's, likewise on both
+OS_HW_WRITE_LOG_MAX = 131072  # ...and the hardware WRITE ledger's, likewise on both
 # The widths that ledger records, as the byte counts os.h tags an entry with. Mirrored (and pinned
 # equal by test_os_memory_map.py) because the field is COMPARED entry for entry between two
 # implementations, and every battery that asserts an expected stream spells these numbers.

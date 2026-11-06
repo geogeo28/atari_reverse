@@ -32,9 +32,10 @@ SECTOR_BYTES = 512
 FILL_SEED, FILL_STRIDE = 0x3B, 7
 MOVE_B_ABSL_TO_D1, RTS = 0x1239, 0x4E75
 MAX_INSNS = 100_000
-# `move.w #$82,$ff8606 / move.w #4200,d0 / loop: move.w $ff8604,d1 / dbf d0,loop / rts` — 4,201 track-register
-# reads, each its own READ entry (only polls merge): past the ledger's cap.
-FLOOD = (0x33FC, 0x0082, 0x00FF, 0x8606, 0x303C, 0x1068, 0x3239, 0x00FF, 0x8604, 0x51C8, 0xFFF8, 0x4E75)
+# `move.w #$82,$ff8606 / loop: move.w $ff8604,d1 / subq.l #1,d0 / bne.s loop / rts` — d0 track-register reads, each its
+# own READ entry (only polls merge). The count is the run's d0, so the cap is read from the .so (emu.FDC_LOG_MAX).
+FLOOD = (0x33FC, 0x0082, 0x00FF, 0x8606, 0x3239, 0x00FF, 0x8604, 0x5380, 0x66F6, 0x4E75)
+FLOOD_INSNS_PER_READ = 3
 
 
 def _driver_words():
@@ -205,8 +206,24 @@ def test_a_model_refusal_sinks_a_bench_run_by_name():
         emu.bench_abort()
 
 
+def _flood(reads):
+    """The flood's run of `reads` track-register reads, armed."""
+    return emu.run(_image(), FLOOD_AT, {"d0": reads}, max_insns=FLOOD_INSNS_PER_READ * reads + MAX_INSNS)
+
+
 def test_a_ledger_overflow_sinks_the_run_by_name():
-    """Never silent: 4,201 register reads overflow the ledger's cap, and the run is refused naming it."""
+    """Never silent: one register read past the ledger's cap is dropped, counted, and the run is refused naming it."""
+    emu.fdc_arm(emu.FdcDrive(_disk()))
+    with pytest.raises(RuntimeError, match=rf"overflowed the ledger — 1 past FDC_LOG_MAX \({emu.FDC_LOG_MAX}\) were DROPPED"):
+        _flood(emu.FDC_LOG_MAX + 1)
+
+
+def test_a_run_of_exactly_the_cap_after_an_overflow_is_read_back_whole():
+    """At the cap the ledger is complete, and `fdc_events()` hands back every entry, the last a `read`. The run follows
+    an overflowed one, so the dropped count is reset per run too: a run that dropped nothing is not refused."""
     emu.fdc_arm(emu.FdcDrive(_disk()))
     with pytest.raises(RuntimeError, match="overflowed the ledger"):
-        emu.run(_image(), FLOOD_AT, max_insns=MAX_INSNS)
+        _flood(emu.FDC_LOG_MAX + 1)
+    _flood(emu.FDC_LOG_MAX)
+    events = emu.fdc_events()
+    assert emu.fdc_causes() == [] and len(events) == emu.FDC_LOG_MAX and events[-1][0] == "read"
